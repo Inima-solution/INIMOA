@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE reauthentication_receipts\n        SET consumed_at = CURRENT_TIMESTAMP\n        WHERE id = $1\n          AND team_id = $2\n          AND principal = $3\n          AND purpose = $4\n          AND consumed_at IS NULL\n          AND expires_at > CURRENT_TIMESTAMP\n        RETURNING TRUE AS \"consumed!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "consumed!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "a3ff05b2a37e7363b6ffdcede8c89e018726204f04023be753b6745c47151025"
+}

@@ -16,6 +16,37 @@ use model::{
 };
 use tower_cookies::Cookies;
 
+fn password_login_error(error: FusionAuthClientError) -> Response {
+    let (status, message) = match error {
+        FusionAuthClientError::UserNotVerified => (
+            StatusCode::UNAUTHORIZED,
+            "user has not verified their primary email",
+        ),
+        FusionAuthClientError::UserRegistrationNotVerified => (
+            StatusCode::UNAUTHORIZED,
+            "user registration has not been verified",
+        ),
+        FusionAuthClientError::IncorrectCredentials | FusionAuthClientError::LoginPrevented => {
+            (StatusCode::UNAUTHORIZED, "unable to login user")
+        }
+        FusionAuthClientError::PasswordChangeRequired => {
+            (StatusCode::UNAUTHORIZED, "password change required")
+        }
+        FusionAuthClientError::MultiFactorAuthenticationRequired => (
+            StatusCode::UNAUTHORIZED,
+            "multi-factor authentication required",
+        ),
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, "unable to login user"),
+    };
+    (
+        status,
+        Json(ErrorResponse {
+            message: message.into(),
+        }),
+    )
+        .into_response()
+}
+
 /// Performs a password login
 #[utoipa::path(
         post,
@@ -58,15 +89,6 @@ pub async fn handler(
         Err(e) => {
             tracing::trace!(error=?e, "unable to login user");
             match e {
-                FusionAuthClientError::UserNotVerified => {
-                    return Err((
-                        StatusCode::UNAUTHORIZED,
-                        Json(ErrorResponse {
-                            message: "user has not verified their primary email".into(),
-                        }),
-                    )
-                        .into_response());
-                }
                 FusionAuthClientError::UserNotRegistered => {
                     ctx.auth_client
                         .register_user_from_email(&lowercase_email)
@@ -88,24 +110,10 @@ pub async fn handler(
                         .await
                         .map_err(|e| {
                             tracing::trace!(error=?e, "unable to login user");
-                            (
-                                StatusCode::INTERNAL_SERVER_ERROR,
-                                Json(ErrorResponse {
-                                    message: "unable to login user".into(),
-                                }),
-                            )
-                                .into_response()
+                            password_login_error(e)
                         })?
                 }
-                _ => {
-                    return Err((
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        Json(ErrorResponse {
-                            message: "unable to login user".into(),
-                        }),
-                    )
-                        .into_response());
-                }
+                error => return Err(password_login_error(error)),
             }
         }
     };
@@ -121,4 +129,43 @@ pub async fn handler(
         }),
     )
         .into_response())
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn authentication_denials_are_not_reported_as_server_failures() {
+        for (error, expected) in [
+            (
+                FusionAuthClientError::IncorrectCredentials,
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                FusionAuthClientError::UserNotVerified,
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                FusionAuthClientError::UserRegistrationNotVerified,
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                FusionAuthClientError::PasswordChangeRequired,
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                FusionAuthClientError::MultiFactorAuthenticationRequired,
+                StatusCode::UNAUTHORIZED,
+            ),
+            (
+                FusionAuthClientError::Generic(fusionauth::error::GenericErrorResponse {
+                    message: "provider unavailable".into(),
+                }),
+                StatusCode::INTERNAL_SERVER_ERROR,
+            ),
+        ] {
+            assert_eq!(password_login_error(error).status(), expected);
+        }
+    }
 }

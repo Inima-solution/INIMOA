@@ -34,6 +34,7 @@ mod oauth;
 mod oauth2;
 mod permissions;
 mod permissions_extractor;
+mod reauth;
 mod session;
 mod user;
 mod webhooks;
@@ -101,7 +102,8 @@ fn api_router(state: ApiContext) -> Router<ApiContext> {
                     entity_access_service: state.entity_access_service.clone(),
                     authorization_state: state.authorization_state.clone(),
                 },
-            ),
+            )
+            .merge(reauth::router()),
         )
         .nest(
             "/referral",

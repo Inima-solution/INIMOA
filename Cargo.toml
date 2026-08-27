@@ -64,6 +64,7 @@ members = [
   "crates/predicate_index",
   "crates/prompt",
   "crates/properties_service",
+  "crates/reauthentication",
   "crates/reminders",
   "crates/search_service",
   "crates/skills",

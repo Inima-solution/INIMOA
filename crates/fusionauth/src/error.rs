@@ -8,6 +8,9 @@ pub enum FusionAuthClientError {
     /// The user's email has not been verified.
     #[error("user not verified")]
     UserNotVerified,
+    /// The user's application registration has not been verified.
+    #[error("user registration not verified")]
+    UserRegistrationNotVerified,
     /// The user is not registered to the application.
     #[error("user not registered to application")]
     UserNotRegistered,
@@ -26,6 +29,18 @@ pub enum FusionAuthClientError {
     /// The provided code was incorrect.
     #[error("incorrect code")]
     IncorrectCode,
+    /// The supplied password did not authenticate the user.
+    #[error("incorrect credentials")]
+    IncorrectCredentials,
+    /// The user must change their password before reauthentication can complete.
+    #[error("password change required")]
+    PasswordChangeRequired,
+    /// An account action, expiry, or lock currently prevents login.
+    #[error("login prevented")]
+    LoginPrevented,
+    /// Password authentication succeeded but FusionAuth requires MFA completion.
+    #[error("multi-factor authentication required")]
+    MultiFactorAuthenticationRequired,
     /// The refresh token was not found or has expired.
     #[error("refresh token was not found or has expired")]
     InvalidRefreshToken,

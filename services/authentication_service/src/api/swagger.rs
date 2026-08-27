@@ -27,6 +27,7 @@ use crate::api::link::github::{GithubLinkStatusResponse, InitGithubLinkResponse}
 use crate::api::link::gmail::{GmailLinkStatusResponse, InitGmailLinkResponse};
 use crate::api::link::outlook::InitOutlookLinkResponse;
 use crate::api::merge::create_merge_request::CreateAccountMergeRequest;
+use crate::api::reauth::{ReauthenticateRequest, ReauthenticateResponse};
 use crate::api::user::create_user::CreateUserRequest;
 use crate::api::user::get_legacy_user_permissions::GetLegacyUserPermissionsResponse;
 use crate::api::user::get_user_link_exists::UserLinkResponse;
@@ -152,6 +153,7 @@ use model::user::{
                 teams::inbound::axum_router::get_user_teams::handler::<crate::api::context::TeamsServiceType, crate::api::context::EntityAccessServiceType, crate::api::context::AuthorizationService>,
                 teams::inbound::axum_router::remove_user_from_team::handler::<crate::api::context::TeamsServiceType, crate::api::context::EntityAccessServiceType, crate::api::context::AuthorizationService>,
                 teams::inbound::axum_router::delete_team_invite::handler::<crate::api::context::TeamsServiceType, crate::api::context::EntityAccessServiceType, crate::api::context::AuthorizationService>,
+                crate::api::reauth::handler,
 
                 /// /referral
                 referral::inbound::axum_router::get_referral_code_handler::<crate::api::context::ReferralServiceType, crate::api::context::RateLimiter, crate::api::context::AuthorizationService>,
@@ -228,6 +230,8 @@ use model::user::{
                         TeamPlan,
                         TeamWithMembers,
                         TeamInviteDetails,
+                        ReauthenticateRequest,
+                        ReauthenticateResponse,
                         CreateTeamRequest,
                         InviteToTeamRequest,
                         PatchTeamRequest,
@@ -324,5 +328,25 @@ mod tests {
                 .get("participantGithubUserIds")
                 .is_some()
         );
+    }
+
+    #[test]
+    fn team_reauthentication_openapi_includes_typed_contract() {
+        let openapi = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let operation = &openapi["paths"]["/team/reauth"]["post"];
+
+        assert_eq!(
+            operation["operationId"],
+            "reauthenticate_for_team_role_change"
+        );
+        assert_eq!(
+            operation["requestBody"]["content"]["application/json"]["schema"]["$ref"].as_str(),
+            Some("#/components/schemas/ReauthenticateRequest")
+        );
+        assert_eq!(
+            operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].as_str(),
+            Some("#/components/schemas/ReauthenticateResponse")
+        );
+        assert!(operation["responses"].get("429").is_some());
     }
 }

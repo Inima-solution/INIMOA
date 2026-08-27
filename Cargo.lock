@@ -1522,6 +1522,7 @@ dependencies = [
  "notification",
  "rand 0.9.4",
  "rate_limit",
+ "reauthentication",
  "redis",
  "referral",
  "remote_env_var",
@@ -13006,6 +13007,21 @@ name = "readonly_pool"
 version = "0.1.0"
 dependencies = [
  "sqlx",
+ "workspace-hack",
+]
+
+[[package]]
+name = "reauthentication"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "macro_db_migrator",
+ "macro_user_id",
+ "readonly",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
  "workspace-hack",
 ]
 

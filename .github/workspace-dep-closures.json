@@ -1078,6 +1078,7 @@
       "crates/prompt",
       "crates/properties",
       "crates/rate_limit",
+      "crates/reauthentication",
       "crates/referral",
       "crates/reminders",
       "crates/remote_env_var",
@@ -6242,6 +6243,12 @@
     ],
     "readonly_pool": [
       "crates/readonly_pool",
+      "crates/workspace-hack"
+    ],
+    "reauthentication": [
+      "crates/cowlike",
+      "crates/macro_user_id",
+      "crates/reauthentication",
       "crates/workspace-hack"
     ],
     "referral": [
