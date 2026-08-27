@@ -29,7 +29,7 @@ use crate::{
     domain::models::{
         AccessError, AccessLevel, AdminTeamRole, BotAccessScope, BotId, BotReceiptScope,
         CallChannelInfo, EntityAccessAuth, EntityPermission, MemberTeamRole, OwnerTeamRole,
-        TeamRole, UserTeamInfo,
+        TeamRole, UserTeamInfo, WriteApprovalDecision, WriteApprovalSubmit, WritePayroll,
     },
     inbound::axum_extractors::test_support::{
         BOT_ACTING_USER_ID, BOT_ACTING_USER_ORGANIZATION_ID, BOT_ID, BOT_TEAM_ID, BotAccessCall,
@@ -70,11 +70,26 @@ struct FakeEntityAccessService {
 
 impl FakeEntityAccessService {
     fn with_membership(mut self, user_id: &str, role: TeamRole) -> Self {
+        self = self.with_business_roles(
+            user_id,
+            role,
+            models_team::effective_business_roles(Default::default(), true),
+        );
+        self
+    }
+
+    fn with_business_roles(
+        mut self,
+        user_id: &str,
+        role: TeamRole,
+        business_roles: models_team::BusinessRoleSet,
+    ) -> Self {
         Arc::make_mut(&mut self.memberships).insert(
             user_id.to_string(),
             UserTeamInfo {
                 team_id: TEAM_ID,
                 role,
+                business_roles,
             },
         );
         self
@@ -374,6 +389,21 @@ async fn extract_required_owner_v2(
     RequiredOwnerV2Extractor::from_request_parts(&mut parts, state).await
 }
 
+async fn extract_required_company_v2<T: RequiredPermission>(
+    request: Request<Body>,
+    state: &TestState,
+) -> Result<
+    MacroUserTeamExtractorV2<T, FakeEntityAccessService, FakeAuthorizationService>,
+    ExtractorError,
+> {
+    let (mut parts, _) = request.into_parts();
+    MacroUserTeamExtractorV2::<T, FakeEntityAccessService, FakeAuthorizationService>::from_request_parts(
+        &mut parts,
+        state,
+    )
+    .await
+}
+
 async fn response_parts(response: Response) -> (StatusCode, String) {
     let status = response.status();
     let body = to_bytes(response.into_body(), usize::MAX)
@@ -431,6 +461,79 @@ async fn required_v2_accepts_bearer_credentials_for_a_qualifying_member() {
         .expect("qualifying bearer-authenticated membership should extract");
 
     assert_receipt(&extracted.entity_access_receipt, USER_ID, TeamRole::Admin);
+}
+
+#[tokio::test]
+async fn company_permission_accepts_the_derived_member_bundle() {
+    let state = state(
+        FakeEntityAccessService::default().with_membership(USER_ID, TeamRole::Member),
+        FakeAuthorizationService::default(),
+    );
+
+    let extracted =
+        extract_required_company_v2::<WriteApprovalSubmit>(bearer_request("valid"), &state)
+            .await
+            .expect("derived member permission should extract");
+
+    assert!(matches!(
+        extracted.entity_access_receipt.entity_permission(),
+        EntityPermission::TeamBusinessRoles { roles }
+            if roles.contains(models_team::BusinessRole::Member)
+    ));
+}
+
+#[tokio::test]
+async fn company_permission_accepts_a_stored_manager_bundle() {
+    let roles = models_team::effective_business_roles(
+        models_team::BusinessRoleSet::from_role(models_team::BusinessRole::Manager),
+        true,
+    );
+    let state = state(
+        FakeEntityAccessService::default().with_business_roles(USER_ID, TeamRole::Member, roles),
+        FakeAuthorizationService::default(),
+    );
+
+    extract_required_company_v2::<WriteApprovalDecision>(bearer_request("valid"), &state)
+        .await
+        .expect("manager decision permission should extract");
+}
+
+#[tokio::test]
+async fn company_permission_rejects_an_unheld_key() {
+    let state = state(
+        FakeEntityAccessService::default().with_membership(USER_ID, TeamRole::Owner),
+        FakeAuthorizationService::default(),
+    );
+
+    let error = extract_required_company_v2::<WritePayroll>(bearer_request("valid"), &state)
+        .await
+        .expect_err("workspace ownership must not imply payroll permission");
+
+    assert!(matches!(
+        error,
+        ExtractorError::UnauthorizedWithMessage("you do not have a high enough role")
+    ));
+}
+
+#[tokio::test]
+async fn team_scoped_bot_fails_closed_for_company_permissions() {
+    let state = state(
+        FakeEntityAccessService::default(),
+        FakeAuthorizationService::default(),
+    );
+
+    let error = extract_required_company_v2::<WriteApprovalSubmit>(
+        bot_request(VALID_BOT_TOKEN, BotScope::Team),
+        &state,
+    )
+    .await
+    .expect_err("team role receipts must not satisfy company permissions");
+
+    assert!(matches!(
+        error,
+        ExtractorError::UnauthorizedWithMessage("you do not have a high enough role")
+    ));
+    assert_eq!(state.entity_access.bot_calls().len(), 1);
 }
 
 #[tokio::test]

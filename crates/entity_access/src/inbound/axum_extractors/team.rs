@@ -71,8 +71,14 @@ where
         return Ok(TeamAccessOutcome::NotInTeam);
     };
 
-    let permission = EntityPermission::TeamRole {
-        role: team_info.role,
+    let permission = if T::is_company() {
+        EntityPermission::TeamBusinessRoles {
+            roles: team_info.business_roles,
+        }
+    } else {
+        EntityPermission::TeamRole {
+            role: team_info.role,
+        }
     };
     if !permission.satisfies::<T>() {
         return Ok(TeamAccessOutcome::InsufficientRole);

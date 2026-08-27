@@ -33,6 +33,8 @@ rootcause = { workspace = true }
 macro_user_id = { path = "../macro_user_id" }
 model-entity = { path = "../model-entity" }
 models_permissions = { path = "../models_permissions" }
+models_team = { path = "../models_team" }
+roles_and_permissions = { path = "../roles_and_permissions", default-features = false, features = ["ports"] }
 
 # Async runtime (for ports)
 tokio = { workspace = true, optional = true }

@@ -493,6 +493,7 @@ async fn create_team_channel_injects_the_caller_when_participants_are_empty() {
             team: Some(UserTeamInfo {
                 team_id,
                 role: TeamRole::Member,
+                business_roles: Default::default(),
             }),
             ..ToolTestAccessService::default()
         },

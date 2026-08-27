@@ -65,8 +65,20 @@ impl BusinessRole {
     }
 }
 
+const BUSINESS_ROLES: [BusinessRole; 8] = [
+    BusinessRole::Member,
+    BusinessRole::Manager,
+    BusinessRole::Approver,
+    BusinessRole::HrAdmin,
+    BusinessRole::PayrollAdmin,
+    BusinessRole::OrgAdmin,
+    BusinessRole::Auditor,
+    BusinessRole::Agent,
+];
+
 /// An unordered set of company business role bundles.
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, utoipa::ToSchema)]
+#[schema(value_type = Vec<BusinessRole>)]
 pub struct BusinessRoleSet(u8);
 
 impl BusinessRoleSet {
@@ -102,6 +114,32 @@ impl BusinessRoleSet {
     /// Returns the union of two role sets.
     pub const fn union(self, other: Self) -> Self {
         Self(self.0 | other.0)
+    }
+}
+
+impl serde::Serialize for BusinessRoleSet {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeSeq;
+
+        let mut sequence = serializer.serialize_seq(None)?;
+        for role in BUSINESS_ROLES {
+            if self.contains(role) {
+                sequence.serialize_element(&role)?;
+            }
+        }
+        sequence.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for BusinessRoleSet {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        Vec::<BusinessRole>::deserialize(deserializer).map(Self::from_roles)
     }
 }
 
@@ -256,5 +294,59 @@ mod tests {
         assert!(malformed_human.contains(BusinessRole::Member));
 
         assert_eq!(effective_business_roles(empty, false), empty);
+    }
+
+    #[test]
+    fn role_set_serializes_as_stable_role_names_without_exposing_bits() {
+        let roles = BusinessRoleSet::from_roles([
+            BusinessRole::Agent,
+            BusinessRole::Manager,
+            BusinessRole::HrAdmin,
+        ]);
+
+        assert_eq!(
+            serde_json::to_value(roles).unwrap(),
+            serde_json::json!(["manager", "hr_admin", "agent"])
+        );
+        assert_eq!(
+            serde_json::from_value::<BusinessRoleSet>(serde_json::json!([
+                "agent", "manager", "manager"
+            ]))
+            .unwrap(),
+            BusinessRoleSet::from_roles([BusinessRole::Manager, BusinessRole::Agent])
+        );
+        assert!(
+            serde_json::from_value::<BusinessRoleSet>(serde_json::json!(["unknown_role"])).is_err()
+        );
+    }
+
+    #[test]
+    fn role_set_openapi_schema_is_a_snake_case_role_name_array() {
+        #[derive(utoipa::OpenApi)]
+        #[openapi(components(schemas(BusinessRoleSet)))]
+        struct ApiDoc;
+
+        let schema = serde_json::to_value(<ApiDoc as utoipa::OpenApi>::openapi()).unwrap();
+        assert_eq!(
+            schema["components"]["schemas"]["BusinessRoleSet"]["type"],
+            "array"
+        );
+        assert_eq!(
+            schema["components"]["schemas"]["BusinessRoleSet"]["items"]["$ref"],
+            "#/components/schemas/BusinessRole"
+        );
+        assert_eq!(
+            schema["components"]["schemas"]["BusinessRole"]["enum"],
+            serde_json::json!([
+                "member",
+                "manager",
+                "approver",
+                "hr_admin",
+                "payroll_admin",
+                "org_admin",
+                "auditor",
+                "agent"
+            ])
+        );
     }
 }

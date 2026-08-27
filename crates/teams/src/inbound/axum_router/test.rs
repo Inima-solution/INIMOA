@@ -521,6 +521,7 @@ impl EntityAccessService for FakeEntityAccessService {
         Ok(Some(UserTeamInfo {
             team_id: TEAM_ID,
             role: *role,
+            business_roles: Default::default(),
         }))
     }
 }

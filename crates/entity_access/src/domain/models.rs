@@ -6,6 +6,8 @@ mod test;
 use std::marker::PhantomData;
 
 use macro_user_id::user_id::MacroUserIdStr;
+use models_team::BusinessRoleSet;
+use roles_and_permissions::domain::model::{PermissionId, has_business_permission};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -193,6 +195,17 @@ pub struct AnyEntityPermission;
 pub trait RequiredPermission: std::fmt::Debug + Send + Sync + 'static {
     /// Returns whether the provided permission satisfies this requirement.
     fn is_satisfied_by(permission: &EntityPermission) -> bool;
+
+    /// Returns whether this marker belongs to the company-permission family.
+    fn is_company() -> bool {
+        false
+    }
+}
+
+/// A marker whose requirement is one closed company permission key.
+pub trait RequiredCompanyPermission {
+    /// The closed company permission required by this marker.
+    const PERMISSION: PermissionId;
 }
 
 /// A user's permission for an entity, discriminated by entity kind.
@@ -219,6 +232,11 @@ pub enum EntityPermission {
     TeamRole {
         /// The role the user has in the team.
         role: TeamRole,
+    },
+    /// Company permissions derived from unordered business-role bundles.
+    TeamBusinessRoles {
+        /// The effective business-role bundles held by the principal.
+        roles: BusinessRoleSet,
     },
 }
 
@@ -343,6 +361,58 @@ impl RequiredPermission for OwnerTeamRole {
     }
 }
 
+macro_rules! company_permission_markers {
+    ($($marker:ident),+ $(,)?) => {
+        $(
+            #[doc = concat!("Requires the company permission `", stringify!($marker), "`.")]
+            #[derive(Debug, Clone, Copy)]
+            pub struct $marker;
+
+            impl RequiredCompanyPermission for $marker {
+                const PERMISSION: PermissionId = PermissionId::$marker;
+            }
+
+            impl RequiredPermission for $marker {
+                fn is_satisfied_by(permission: &EntityPermission) -> bool {
+                    matches!(
+                        permission,
+                        EntityPermission::TeamBusinessRoles { roles }
+                            if has_business_permission(*roles, Self::PERMISSION)
+                    )
+                }
+
+                fn is_company() -> bool {
+                    true
+                }
+            }
+        )+
+    };
+}
+
+company_permission_markers!(
+    ReadProjectWorkScoped,
+    ReadProjectWorkAll,
+    WriteProjectWorkStatusScoped,
+    WriteProjectWorkStatusAll,
+    WriteApprovalDraft,
+    WriteApprovalSubmit,
+    WriteApprovalDecision,
+    ReadHrProfileOwn,
+    ReadHrProfileAll,
+    WriteAttendanceRequestOwn,
+    WriteAttendanceManageTeam,
+    WriteAttendanceManageAll,
+    ReadPayslipOwn,
+    ReadPayslipAll,
+    WritePayroll,
+    ReadAuditBusiness,
+    ReadAuditHr,
+    ReadAuditPayroll,
+    WriteCompanyRoles,
+    WriteWebhooks,
+    WriteBuildAdministration,
+);
+
 /// The team a user belongs to and the role they hold in it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UserTeamInfo {
@@ -350,6 +420,8 @@ pub struct UserTeamInfo {
     pub team_id: Uuid,
     /// The user's role within the team.
     pub role: TeamRole,
+    /// The user's effective company business-role bundles.
+    pub business_roles: BusinessRoleSet,
 }
 
 /// Result of resolving a user's role in a channel.

@@ -318,6 +318,14 @@ pub fn bundle_permissions(roles: BusinessRoleSet) -> PermissionSet {
     permissions
 }
 
+/// Returns whether the supplied business-role bundles grant a permission.
+pub fn has_business_permission(roles: BusinessRoleSet, permission: PermissionId) -> bool {
+    BUSINESS_ROLES
+        .into_iter()
+        .filter(|role| roles.contains(*role))
+        .any(|role| role_permissions(role).contains(&permission))
+}
+
 fn role_permissions(role: BusinessRole) -> &'static [PermissionId] {
     use PermissionId::*;
 

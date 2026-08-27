@@ -5,6 +5,7 @@ mod test;
 
 use crate::domain::models::{TeamRole, UserTeamInfo};
 use macro_user_id::{lowercased::Lowercase, user_id::MacroUserId};
+use models_team::{BusinessRole, BusinessRoleSet, effective_business_roles};
 use sqlx::PgPool;
 
 /// Look up the team a user belongs to and the role they hold.
@@ -21,7 +22,18 @@ pub async fn get_user_team(
 ) -> Result<Option<UserTeamInfo>, sqlx::Error> {
     let row = sqlx::query!(
         r#"
-        SELECT team_id, team_role as "role!: TeamRole"
+        SELECT
+            team_id,
+            team_role as "role!: TeamRole",
+            COALESCE(
+                (
+                    SELECT ARRAY_AGG(tbr.business_role ORDER BY tbr.business_role)
+                    FROM team_business_role tbr
+                    WHERE tbr.team_id = team_user.team_id
+                      AND tbr.principal = $1
+                ),
+                ARRAY[]::business_role[]
+            ) as "business_roles!: Vec<BusinessRole>"
         FROM team_user
         WHERE user_id = $1
         ORDER BY team_role DESC
@@ -35,5 +47,9 @@ pub async fn get_user_team(
     Ok(row.map(|r| UserTeamInfo {
         team_id: r.team_id,
         role: r.role,
+        business_roles: effective_business_roles(
+            BusinessRoleSet::from_roles(r.business_roles),
+            true,
+        ),
     }))
 }

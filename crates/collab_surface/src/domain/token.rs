@@ -28,7 +28,9 @@ pub fn access_level_for(permission: &EntityPermission) -> Result<AccessLevel, Co
         EntityPermission::AccessLevel { access_level } => Ok(*access_level),
         EntityPermission::ChannelRole { .. } => Ok(AccessLevel::Edit),
         EntityPermission::ChannelViewOnly => Ok(AccessLevel::View),
-        EntityPermission::TeamRole { .. } => Err(CollabSurfaceError::AccessDenied),
+        EntityPermission::TeamRole { .. } | EntityPermission::TeamBusinessRoles { .. } => {
+            Err(CollabSurfaceError::AccessDenied)
+        }
     }
 }
 
@@ -55,4 +57,19 @@ pub fn encode_surface_token(
         jwt_secret,
     )
     .map_err(|e| CollabSurfaceError::Internal(rootcause::Report::new(e).into_dynamic()))
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn company_role_bundles_cannot_mint_collaboration_access() {
+        assert!(matches!(
+            access_level_for(&EntityPermission::TeamBusinessRoles {
+                roles: Default::default(),
+            }),
+            Err(CollabSurfaceError::AccessDenied)
+        ));
+    }
 }

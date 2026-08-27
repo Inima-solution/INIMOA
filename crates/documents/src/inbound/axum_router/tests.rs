@@ -923,6 +923,7 @@ fn team_member() -> UserTeamInfo {
     UserTeamInfo {
         team_id: TEAM_ID,
         role: TeamRole::Member,
+        business_roles: Default::default(),
     }
 }
 

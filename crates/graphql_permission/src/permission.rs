@@ -134,25 +134,31 @@ pub enum GraphqlEntityPermission {
 }
 
 impl GraphqlEntityPermission {
-    /// Convert a domain permission into its concrete GraphQL union member.
-    fn new(permission: EntityPermission) -> Self {
+    /// Convert a public entity permission into its concrete GraphQL union member.
+    /// Company-role bundles remain private to company authorization endpoints.
+    fn new(permission: EntityPermission) -> Option<Self> {
         match permission {
             EntityPermission::AccessLevel { access_level } => {
-                Self::AccessLevel(GraphqlAccessLevelPermission {
+                Some(Self::AccessLevel(GraphqlAccessLevelPermission {
                     access_level: GraphqlEntityAccessLevel::new(access_level),
-                })
+                }))
             }
             EntityPermission::ChannelViewOnly => {
-                Self::ChannelViewOnly(GraphqlChannelViewOnlyPermission { is_view_only: true })
+                Some(Self::ChannelViewOnly(GraphqlChannelViewOnlyPermission {
+                    is_view_only: true,
+                }))
             }
             EntityPermission::ChannelRole { role } => {
-                Self::ChannelRole(GraphqlChannelRolePermission {
+                Some(Self::ChannelRole(GraphqlChannelRolePermission {
                     role: GraphqlChannelParticipantRole::new(role),
-                })
+                }))
             }
-            EntityPermission::TeamRole { role } => Self::TeamRole(GraphqlTeamRolePermission {
-                role: GraphqlTeamRole::new(role),
-            }),
+            EntityPermission::TeamRole { role } => {
+                Some(Self::TeamRole(GraphqlTeamRolePermission {
+                    role: GraphqlTeamRole::new(role),
+                }))
+            }
+            EntityPermission::TeamBusinessRoles { .. } => None,
         }
     }
 }
@@ -313,5 +319,20 @@ where
         .load_one(OwnedEntity::from(entity))
         .await?
         .flatten()
-        .map(GraphqlEntityPermission::new))
+        .and_then(GraphqlEntityPermission::new))
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn company_role_bundles_are_not_exposed_by_the_entity_permission_union() {
+        assert!(
+            GraphqlEntityPermission::new(EntityPermission::TeamBusinessRoles {
+                roles: Default::default(),
+            })
+            .is_none()
+        );
+    }
 }

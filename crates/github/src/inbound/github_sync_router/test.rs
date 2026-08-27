@@ -162,6 +162,7 @@ impl EntityAccessService for TestEntityAccessService {
         Ok(self.team_id.map(|team_id| UserTeamInfo {
             team_id,
             role: TeamRole::Member,
+            business_roles: Default::default(),
         }))
     }
 }

@@ -55,3 +55,12 @@ INSERT INTO team_user (user_id, team_id, team_role) VALUES
     ('macro|admin@team.com',  '00000000-0000-0000-0000-0000000ea001', 'admin'),
     ('macro|owner@team.com',  '00000000-0000-0000-0000-0000000ea001', 'owner'),
     ('macro|multi@team.com',  '00000000-0000-0000-0000-0000000ea002', 'owner');
+
+------------------------------------------------------------
+-- Stored business roles. Member remains derived from team_user.
+------------------------------------------------------------
+
+INSERT INTO team_business_role (team_id, principal, business_role, granted_by) VALUES
+    ('00000000-0000-0000-0000-0000000ea001', 'macro|admin@team.com', 'manager', 'macro|owner@team.com'),
+    ('00000000-0000-0000-0000-0000000ea001', 'macro|admin@team.com', 'auditor', 'macro|owner@team.com'),
+    ('00000000-0000-0000-0000-0000000ea001', 'bot|fixture-agent', 'payroll_admin', 'macro|owner@team.com');

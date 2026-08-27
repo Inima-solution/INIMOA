@@ -475,6 +475,7 @@ fn receipt_json<T: RequiredPermission>(
         EntityPermission::ChannelViewOnly => "ViewOnly".to_string(),
         EntityPermission::ChannelRole { role } => format!("{role:?}"),
         EntityPermission::TeamRole { role } => format!("{role:?}"),
+        EntityPermission::TeamBusinessRoles { .. } => "BusinessRoles".to_string(),
     };
 
     json!({

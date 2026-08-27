@@ -1,0 +1,68 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            team_id,\n            team_role as \"role!: TeamRole\",\n            COALESCE(\n                (\n                    SELECT ARRAY_AGG(tbr.business_role ORDER BY tbr.business_role)\n                    FROM team_business_role tbr\n                    WHERE tbr.team_id = team_user.team_id\n                      AND tbr.principal = $1\n                ),\n                ARRAY[]::business_role[]\n            ) as \"business_roles!: Vec<BusinessRole>\"\n        FROM team_user\n        WHERE user_id = $1\n        ORDER BY team_role DESC\n        LIMIT 1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "team_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "role!: TeamRole",
+        "type_info": {
+          "Custom": {
+            "name": "team_role",
+            "kind": {
+              "Enum": [
+                "member",
+                "admin",
+                "owner"
+              ]
+            }
+          }
+        }
+      },
+      {
+        "ordinal": 2,
+        "name": "business_roles!: Vec<BusinessRole>",
+        "type_info": {
+          "Custom": {
+            "name": "business_role[]",
+            "kind": {
+              "Array": {
+                "Custom": {
+                  "name": "business_role",
+                  "kind": {
+                    "Enum": [
+                      "member",
+                      "manager",
+                      "approver",
+                      "hr_admin",
+                      "payroll_admin",
+                      "org_admin",
+                      "auditor",
+                      "agent"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      null
+    ]
+  },
+  "hash": "1f5caa75bafecc581cc438ddb09c6deae69a45d5d8d200369ebc53a0e6c483a2"
+}

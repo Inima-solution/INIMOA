@@ -79,6 +79,7 @@ impl FakeEntityAccessService {
             team: Some(UserTeamInfo {
                 team_id,
                 role: TeamRole::Member,
+                business_roles: Default::default(),
             }),
         }
     }

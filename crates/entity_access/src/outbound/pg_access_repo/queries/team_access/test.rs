@@ -4,6 +4,7 @@ use crate::domain::models::TeamRole;
 use anyhow::Result;
 use macro_db_migrator::MACRO_DB_MIGRATIONS;
 use macro_user_id::user_id::MacroUserIdStr;
+use models_team::BusinessRole;
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -51,6 +52,8 @@ async fn returns_member_role_for_member(pool: PgPool) -> Result<()> {
 
     assert_eq!(result.team_id, Uuid::parse_str(TEAM_ALPHA)?);
     assert_eq!(result.role, TeamRole::Member);
+    assert!(result.business_roles.contains(BusinessRole::Member));
+    assert!(!result.business_roles.contains(BusinessRole::Manager));
     Ok(())
 }
 
@@ -65,6 +68,10 @@ async fn returns_admin_role_for_admin(pool: PgPool) -> Result<()> {
 
     assert_eq!(result.team_id, Uuid::parse_str(TEAM_ALPHA)?);
     assert_eq!(result.role, TeamRole::Admin);
+    assert!(result.business_roles.contains(BusinessRole::Member));
+    assert!(result.business_roles.contains(BusinessRole::Manager));
+    assert!(result.business_roles.contains(BusinessRole::Auditor));
+    assert!(!result.business_roles.contains(BusinessRole::PayrollAdmin));
     Ok(())
 }
 

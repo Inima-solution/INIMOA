@@ -2,7 +2,7 @@ use std::str::FromStr;
 
 use models_team::{BusinessRole, BusinessRoleSet};
 
-use super::{PermissionId, PermissionSet, RoleId, bundle_permissions};
+use super::{PermissionId, PermissionSet, RoleId, bundle_permissions, has_business_permission};
 
 #[test]
 fn paid_subscription_roles_include_legacy_and_pricing_tiers() {
@@ -181,6 +181,49 @@ fn role_sets_union_permissions_without_creating_hierarchy() {
     assert!(!auditor.contains(&PermissionId::WriteProjectWorkStatusScoped));
     assert!(!auditor.contains(&PermissionId::ReadHrProfileAll));
     assert!(!auditor.contains(&PermissionId::ReadPayslipAll));
+}
+
+#[test]
+fn direct_business_permission_checks_match_bundle_boundaries() {
+    let auditor = BusinessRoleSet::from_role(BusinessRole::Auditor);
+    assert!(has_business_permission(
+        auditor,
+        PermissionId::ReadProjectWorkAll
+    ));
+    assert!(!has_business_permission(
+        auditor,
+        PermissionId::WriteProjectWorkStatusScoped
+    ));
+
+    let agent = BusinessRoleSet::from_role(BusinessRole::Agent);
+    assert!(has_business_permission(
+        agent,
+        PermissionId::WriteApprovalDraft
+    ));
+    assert!(!has_business_permission(
+        agent,
+        PermissionId::WriteApprovalSubmit
+    ));
+
+    let hr_admin = BusinessRoleSet::from_role(BusinessRole::HrAdmin);
+    assert!(has_business_permission(hr_admin, PermissionId::ReadAuditHr));
+    assert!(!has_business_permission(
+        hr_admin,
+        PermissionId::WriteCompanyRoles
+    ));
+
+    for permission in INIMAOS_PERMISSIONS {
+        assert!(!has_business_permission(
+            BusinessRoleSet::empty(),
+            permission
+        ));
+    }
+
+    let member = models_team::effective_business_roles(BusinessRoleSet::empty(), true);
+    assert!(has_business_permission(
+        member,
+        PermissionId::WriteApprovalSubmit
+    ));
 }
 
 fn expected_permissions(role: BusinessRole) -> PermissionSet {

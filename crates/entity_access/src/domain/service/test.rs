@@ -1174,6 +1174,7 @@ async fn user_scoped_bot_receives_the_acting_users_role_on_their_team() {
     let repo = MockRepo::new().with_user_team(UserTeamInfo {
         team_id,
         role: TeamRole::Admin,
+        business_roles: Default::default(),
     });
     let service = EntityAccessServiceImpl::new(repo);
 
@@ -1200,6 +1201,7 @@ async fn user_scoped_bot_cannot_access_another_team() {
     let repo = MockRepo::new().with_user_team(UserTeamInfo {
         team_id: test_team_id(),
         role: TeamRole::Owner,
+        business_roles: Default::default(),
     });
     let service = EntityAccessServiceImpl::new(repo);
 

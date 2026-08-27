@@ -108,11 +108,90 @@ fn any_entity_permission_accepts_every_permission() {
         EntityPermission::TeamRole {
             role: TeamRole::Owner,
         },
+        EntityPermission::TeamBusinessRoles {
+            roles: BusinessRoleSet::empty(),
+        },
     ];
 
     for permission in permissions {
         assert!(permission.satisfies::<AnyEntityPermission>());
     }
+}
+
+fn assert_company_requirement<T>(roles: BusinessRoleSet)
+where
+    T: RequiredPermission + RequiredCompanyPermission,
+{
+    let holding = EntityPermission::TeamBusinessRoles { roles };
+    assert!(holding.satisfies::<T>());
+    assert!(T::is_company());
+
+    let empty = EntityPermission::TeamBusinessRoles {
+        roles: BusinessRoleSet::empty(),
+    };
+    assert!(!empty.satisfies::<T>());
+    assert!(
+        !EntityPermission::TeamRole {
+            role: TeamRole::Owner
+        }
+        .satisfies::<T>()
+    );
+    assert!(
+        !EntityPermission::AccessLevel {
+            access_level: AccessLevel::Owner
+        }
+        .satisfies::<T>()
+    );
+}
+
+#[test]
+fn every_company_marker_is_closed_and_separate_from_existing_permission_families() {
+    use models_team::BusinessRole;
+
+    macro_rules! assert_markers {
+        ($($marker:ty => $role:expr),+ $(,)?) => {
+            $(assert_company_requirement::<$marker>(
+                BusinessRoleSet::from_role($role),
+            );)+
+        };
+    }
+
+    assert_markers!(
+        ReadProjectWorkScoped => BusinessRole::Member,
+        ReadProjectWorkAll => BusinessRole::Auditor,
+        WriteProjectWorkStatusScoped => BusinessRole::Member,
+        WriteProjectWorkStatusAll => BusinessRole::OrgAdmin,
+        WriteApprovalDraft => BusinessRole::Member,
+        WriteApprovalSubmit => BusinessRole::Member,
+        WriteApprovalDecision => BusinessRole::Approver,
+        ReadHrProfileOwn => BusinessRole::Member,
+        ReadHrProfileAll => BusinessRole::HrAdmin,
+        WriteAttendanceRequestOwn => BusinessRole::Member,
+        WriteAttendanceManageTeam => BusinessRole::Manager,
+        WriteAttendanceManageAll => BusinessRole::HrAdmin,
+        ReadPayslipOwn => BusinessRole::Member,
+        ReadPayslipAll => BusinessRole::PayrollAdmin,
+        WritePayroll => BusinessRole::PayrollAdmin,
+        ReadAuditBusiness => BusinessRole::Auditor,
+        ReadAuditHr => BusinessRole::Auditor,
+        ReadAuditPayroll => BusinessRole::Auditor,
+        WriteCompanyRoles => BusinessRole::OrgAdmin,
+        WriteWebhooks => BusinessRole::OrgAdmin,
+        WriteBuildAdministration => BusinessRole::OrgAdmin,
+    );
+
+    assert!(!AnyEntityPermission::is_company());
+    assert!(!ViewAccessLevel::is_company());
+    assert!(!CommentAccessLevel::is_company());
+    assert!(!EditAccessLevel::is_company());
+    assert!(!OwnerAccessLevel::is_company());
+    assert!(!ViewOnly::is_company());
+    assert!(!OwnerParticipantRole::is_company());
+    assert!(!AdminParticipantRole::is_company());
+    assert!(!MemberParticipantRole::is_company());
+    assert!(!MemberTeamRole::is_company());
+    assert!(!AdminTeamRole::is_company());
+    assert!(!OwnerTeamRole::is_company());
 }
 
 #[test]

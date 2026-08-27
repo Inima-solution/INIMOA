@@ -795,6 +795,7 @@ impl EntityAccessService for CountingEntityAccessService {
         Ok(Some(UserTeamInfo {
             team_id: Uuid::from_u128(42),
             role: TeamRole::Member,
+            business_roles: Default::default(),
         }))
     }
 }
