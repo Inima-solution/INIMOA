@@ -1,6 +1,8 @@
 //! Contains the models for roles and permissions
 
-use std::{fmt::Display, str::FromStr};
+use std::{collections::BTreeSet, fmt::Display, str::FromStr};
+
+use models_team::{BusinessRole, BusinessRoleSet};
 
 /// The product tier the user is on
 #[derive(Debug, Default)]
@@ -128,7 +130,7 @@ impl RoleId {
 mod test;
 
 /// All valid permissions that exist in our system
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum PermissionId {
     /// Write access to the stripe subscription
     WriteStripeSubscription,
@@ -152,6 +154,48 @@ pub enum PermissionId {
     ReadDocxEditor,
     /// Use the professional (paid) AI models
     WriteProAi,
+    /// Read project work within the caller's assigned scope.
+    ReadProjectWorkScoped,
+    /// Read all shared company project work.
+    ReadProjectWorkAll,
+    /// Change task or work status within the caller's assigned scope.
+    WriteProjectWorkStatusScoped,
+    /// Change task or work status across the company.
+    WriteProjectWorkStatusAll,
+    /// Create an approval draft without submitting it.
+    WriteApprovalDraft,
+    /// Submit an approval request.
+    WriteApprovalSubmit,
+    /// Decide an approval subject to its domain rule.
+    WriteApprovalDecision,
+    /// Read the caller's own HR profile.
+    ReadHrProfileOwn,
+    /// Read all company HR profiles.
+    ReadHrProfileAll,
+    /// Submit the caller's own leave or attendance request.
+    WriteAttendanceRequestOwn,
+    /// Manage leave or attendance for the caller's team.
+    WriteAttendanceManageTeam,
+    /// Manage leave or attendance across the company.
+    WriteAttendanceManageAll,
+    /// Read the caller's own payslip.
+    ReadPayslipOwn,
+    /// Read all company payslips.
+    ReadPayslipAll,
+    /// Manage company payroll.
+    WritePayroll,
+    /// Read business audit records.
+    ReadAuditBusiness,
+    /// Read HR audit records.
+    ReadAuditHr,
+    /// Read payroll audit records.
+    ReadAuditPayroll,
+    /// Manage company business-role assignments.
+    WriteCompanyRoles,
+    /// Manage company webhooks.
+    WriteWebhooks,
+    /// Administer company build operations.
+    WriteBuildAdministration,
 }
 
 impl FromStr for PermissionId {
@@ -170,6 +214,27 @@ impl FromStr for PermissionId {
             "write:ai_features" => Ok(Self::WriteAiFeatures),
             "read:docx_editor" => Ok(Self::ReadDocxEditor),
             "write:proai" => Ok(Self::WriteProAi),
+            "read:project_work:scoped" => Ok(Self::ReadProjectWorkScoped),
+            "read:project_work:all" => Ok(Self::ReadProjectWorkAll),
+            "write:project_work_status:scoped" => Ok(Self::WriteProjectWorkStatusScoped),
+            "write:project_work_status:all" => Ok(Self::WriteProjectWorkStatusAll),
+            "write:approval_draft" => Ok(Self::WriteApprovalDraft),
+            "write:approval_submit" => Ok(Self::WriteApprovalSubmit),
+            "write:approval_decision" => Ok(Self::WriteApprovalDecision),
+            "read:hr_profile:own" => Ok(Self::ReadHrProfileOwn),
+            "read:hr_profile:all" => Ok(Self::ReadHrProfileAll),
+            "write:attendance_request:own" => Ok(Self::WriteAttendanceRequestOwn),
+            "write:attendance_manage:team" => Ok(Self::WriteAttendanceManageTeam),
+            "write:attendance_manage:all" => Ok(Self::WriteAttendanceManageAll),
+            "read:payslip:own" => Ok(Self::ReadPayslipOwn),
+            "read:payslip:all" => Ok(Self::ReadPayslipAll),
+            "write:payroll" => Ok(Self::WritePayroll),
+            "read:audit:business" => Ok(Self::ReadAuditBusiness),
+            "read:audit:hr" => Ok(Self::ReadAuditHr),
+            "read:audit:payroll" => Ok(Self::ReadAuditPayroll),
+            "write:company_roles" => Ok(Self::WriteCompanyRoles),
+            "write:webhooks" => Ok(Self::WriteWebhooks),
+            "write:build_administration" => Ok(Self::WriteBuildAdministration),
             _ => Err(anyhow::anyhow!("invalid permission id {s}")),
         }
     }
@@ -191,7 +256,152 @@ impl Display for PermissionId {
             PermissionId::WriteAiFeatures => write!(f, "write:ai_features"),
             PermissionId::ReadDocxEditor => write!(f, "read:docx_editor"),
             PermissionId::WriteProAi => write!(f, "write:proai"),
+            PermissionId::ReadProjectWorkScoped => write!(f, "read:project_work:scoped"),
+            PermissionId::ReadProjectWorkAll => write!(f, "read:project_work:all"),
+            PermissionId::WriteProjectWorkStatusScoped => {
+                write!(f, "write:project_work_status:scoped")
+            }
+            PermissionId::WriteProjectWorkStatusAll => {
+                write!(f, "write:project_work_status:all")
+            }
+            PermissionId::WriteApprovalDraft => write!(f, "write:approval_draft"),
+            PermissionId::WriteApprovalSubmit => write!(f, "write:approval_submit"),
+            PermissionId::WriteApprovalDecision => write!(f, "write:approval_decision"),
+            PermissionId::ReadHrProfileOwn => write!(f, "read:hr_profile:own"),
+            PermissionId::ReadHrProfileAll => write!(f, "read:hr_profile:all"),
+            PermissionId::WriteAttendanceRequestOwn => {
+                write!(f, "write:attendance_request:own")
+            }
+            PermissionId::WriteAttendanceManageTeam => {
+                write!(f, "write:attendance_manage:team")
+            }
+            PermissionId::WriteAttendanceManageAll => {
+                write!(f, "write:attendance_manage:all")
+            }
+            PermissionId::ReadPayslipOwn => write!(f, "read:payslip:own"),
+            PermissionId::ReadPayslipAll => write!(f, "read:payslip:all"),
+            PermissionId::WritePayroll => write!(f, "write:payroll"),
+            PermissionId::ReadAuditBusiness => write!(f, "read:audit:business"),
+            PermissionId::ReadAuditHr => write!(f, "read:audit:hr"),
+            PermissionId::ReadAuditPayroll => write!(f, "read:audit:payroll"),
+            PermissionId::WriteCompanyRoles => write!(f, "write:company_roles"),
+            PermissionId::WriteWebhooks => write!(f, "write:webhooks"),
+            PermissionId::WriteBuildAdministration => {
+                write!(f, "write:build_administration")
+            }
         }
+    }
+}
+
+/// A deterministic set of closed permission identifiers.
+pub type PermissionSet = BTreeSet<PermissionId>;
+
+const BUSINESS_ROLES: [BusinessRole; 8] = [
+    BusinessRole::Member,
+    BusinessRole::Manager,
+    BusinessRole::Approver,
+    BusinessRole::HrAdmin,
+    BusinessRole::PayrollAdmin,
+    BusinessRole::OrgAdmin,
+    BusinessRole::Auditor,
+    BusinessRole::Agent,
+];
+
+/// Expands business role bundles into their canonical default permission keys.
+pub fn bundle_permissions(roles: BusinessRoleSet) -> PermissionSet {
+    let mut permissions = PermissionSet::new();
+    for role in BUSINESS_ROLES {
+        if roles.contains(role) {
+            permissions.extend(role_permissions(role));
+        }
+    }
+    permissions
+}
+
+fn role_permissions(role: BusinessRole) -> &'static [PermissionId] {
+    use PermissionId::*;
+
+    match role {
+        BusinessRole::Member => &[
+            ReadProjectWorkScoped,
+            WriteProjectWorkStatusScoped,
+            WriteApprovalDraft,
+            WriteApprovalSubmit,
+            ReadHrProfileOwn,
+            WriteAttendanceRequestOwn,
+            ReadPayslipOwn,
+        ],
+        BusinessRole::Manager => &[
+            ReadProjectWorkScoped,
+            WriteProjectWorkStatusScoped,
+            WriteApprovalDraft,
+            WriteApprovalSubmit,
+            WriteApprovalDecision,
+            ReadHrProfileOwn,
+            WriteAttendanceRequestOwn,
+            WriteAttendanceManageTeam,
+            ReadPayslipOwn,
+        ],
+        BusinessRole::Approver => &[
+            ReadProjectWorkScoped,
+            WriteProjectWorkStatusScoped,
+            WriteApprovalDraft,
+            WriteApprovalSubmit,
+            WriteApprovalDecision,
+            ReadHrProfileOwn,
+            ReadPayslipOwn,
+        ],
+        BusinessRole::HrAdmin => &[
+            ReadProjectWorkScoped,
+            WriteProjectWorkStatusScoped,
+            WriteApprovalDraft,
+            WriteApprovalSubmit,
+            WriteApprovalDecision,
+            ReadHrProfileOwn,
+            ReadHrProfileAll,
+            WriteAttendanceRequestOwn,
+            WriteAttendanceManageTeam,
+            WriteAttendanceManageAll,
+            ReadPayslipOwn,
+            ReadAuditHr,
+        ],
+        BusinessRole::PayrollAdmin => &[
+            ReadProjectWorkScoped,
+            WriteProjectWorkStatusScoped,
+            WriteApprovalDraft,
+            WriteApprovalSubmit,
+            WriteApprovalDecision,
+            ReadHrProfileOwn,
+            ReadPayslipOwn,
+            ReadPayslipAll,
+            WritePayroll,
+            ReadAuditPayroll,
+        ],
+        BusinessRole::OrgAdmin => &[
+            ReadProjectWorkScoped,
+            ReadProjectWorkAll,
+            WriteProjectWorkStatusScoped,
+            WriteProjectWorkStatusAll,
+            WriteApprovalDraft,
+            WriteApprovalSubmit,
+            WriteApprovalDecision,
+            ReadHrProfileOwn,
+            ReadPayslipOwn,
+            ReadAuditBusiness,
+            ReadAuditHr,
+            ReadAuditPayroll,
+            WriteCompanyRoles,
+            WriteWebhooks,
+            WriteBuildAdministration,
+        ],
+        BusinessRole::Auditor => &[
+            ReadProjectWorkScoped,
+            ReadProjectWorkAll,
+            ReadAuditBusiness,
+            ReadAuditHr,
+            ReadAuditPayroll,
+        ],
+        BusinessRole::Agent => &[WriteApprovalDraft],
     }
 }
 

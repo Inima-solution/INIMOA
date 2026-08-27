@@ -229,3 +229,102 @@ async fn test_get_user_roles_after_add_and_remove(pool: Pool<Postgres>) -> anyho
 
     Ok(())
 }
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("users"))
+)]
+async fn company_business_role_migration_enforces_state_invariants(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let team_id: sqlx::types::Uuid = sqlx::query_scalar(
+        "INSERT INTO team (id, name, owner_id) VALUES (gen_random_uuid(), 'Role test', $1) RETURNING id",
+    )
+    .bind("macro|user2@user.com")
+    .fetch_one(&pool)
+    .await?;
+
+    let member_error = sqlx::query(
+        "INSERT INTO team_business_role (team_id, principal, business_role, granted_by) VALUES ($1, $2, 'member', $3)",
+    )
+    .bind(team_id)
+    .bind("macro|member@test.com")
+    .bind("macro|user2@user.com")
+    .execute(&pool)
+    .await
+    .expect_err("Member must be derived instead of stored");
+    assert_eq!(
+        member_error
+            .as_database_error()
+            .and_then(|error| error.constraint()),
+        Some("team_business_role_member_is_derived"),
+    );
+
+    let actor_error = sqlx::query(
+        "INSERT INTO team_business_role (team_id, principal, business_role, granted_by) VALUES ($1, $2, 'manager', NULL)",
+    )
+    .bind(team_id)
+    .bind("macro|manager@test.com")
+    .execute(&pool)
+    .await
+    .expect_err("role grants require an actor");
+    let actor_database_error = actor_error
+        .as_database_error()
+        .expect("NOT NULL failures must be database errors");
+    assert_eq!(actor_database_error.code().as_deref(), Some("23502"));
+    assert!(actor_database_error.message().contains("granted_by"));
+
+    sqlx::query(
+        "INSERT INTO team_business_role (team_id, principal, business_role, granted_by) VALUES ($1, $2, 'manager', $3)",
+    )
+    .bind(team_id)
+    .bind("macro|manager@test.com")
+    .bind("macro|user2@user.com")
+    .execute(&pool)
+    .await?;
+
+    let duplicate_error = sqlx::query(
+        "INSERT INTO team_business_role (team_id, principal, business_role, granted_by) VALUES ($1, $2, 'manager', $3)",
+    )
+    .bind(team_id)
+    .bind("macro|manager@test.com")
+    .bind("macro|user2@user.com")
+    .execute(&pool)
+    .await
+    .expect_err("duplicate grants must be rejected");
+    assert_eq!(
+        duplicate_error
+            .as_database_error()
+            .and_then(|error| error.constraint()),
+        Some("team_business_role_pkey"),
+    );
+
+    let indexes: Vec<String> = sqlx::query_scalar(
+        "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() AND tablename = 'team_business_role'",
+    )
+    .fetch_all(&pool)
+    .await?;
+    assert!(
+        indexes
+            .iter()
+            .any(|name| name == "team_business_role_team_role_idx")
+    );
+    assert!(
+        indexes
+            .iter()
+            .any(|name| name == "team_business_role_principal_idx")
+    );
+
+    sqlx::query("DELETE FROM team WHERE id = $1")
+        .bind(team_id)
+        .execute(&pool)
+        .await?;
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM team_business_role WHERE team_id = $1")
+            .bind(team_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(remaining, 0);
+
+    Ok(())
+}

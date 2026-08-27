@@ -12,6 +12,7 @@ ports = []
 [dependencies]
 anyhow = { workspace = true }
 macro_user_id = { path = "../macro_user_id" }
+models_team = { path = "../models_team" }
 non_empty = { path = "../non_empty" }
 sqlx = { workspace = true, optional = true }
 thiserror = { workspace = true }
