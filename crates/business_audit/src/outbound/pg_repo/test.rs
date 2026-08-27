@@ -8,8 +8,8 @@ use uuid::Uuid;
 
 use super::*;
 use crate::{
-    Actor, AuditAction, AuditEvent, AuditOutcome, AuditReason, AuditTarget, BusinessAuditRepo,
-    RequestCorrelationId, RetentionClass, RoleChangeMetadata,
+    Actor, AuditAction, AuditEvent, AuditOutcome, AuditReason, AuditTarget, RequestCorrelationId,
+    RetentionClass, RoleChangeMetadata,
 };
 
 fn user(value: &str) -> MacroUserIdStr<'static> {
@@ -41,9 +41,13 @@ fn event(request_id: &str, delegated: Option<&str>) -> AuditEvent {
 
 #[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
 async fn insert_round_trips_typed_fields_and_attribution(pool: PgPool) {
-    let repo = PgBusinessAuditRepo::new(pool.clone());
+    let mut tx = pool.begin().await.unwrap();
     let delegated = event("request-round-trip", Some("macro|delegated@example.com"));
-    repo.insert(&delegated).await.unwrap();
+    insert_with_tx(&mut tx, &delegated).await.unwrap();
+
+    let direct = event("request-direct", None);
+    insert_with_tx(&mut tx, &direct).await.unwrap();
+    tx.commit().await.unwrap();
 
     let row: (
         String,
@@ -59,6 +63,7 @@ async fn insert_round_trips_typed_fields_and_attribution(pool: PgPool) {
         SELECT actor, delegated_actor, action, target_type, target_id,
                request_id, metadata, retention_class
         FROM business_audit_events
+        WHERE request_id = 'request-round-trip'
         "#,
     )
     .fetch_one(&pool)
@@ -80,8 +85,6 @@ async fn insert_round_trips_typed_fields_and_attribution(pool: PgPool) {
     );
     assert_eq!(row.7, "standard");
 
-    let direct = event("request-direct", None);
-    repo.insert(&direct).await.unwrap();
     let direct_delegated: Option<String> =
         sqlx::query_scalar("SELECT delegated_actor FROM business_audit_events WHERE id = $1")
             .bind(direct.id)
@@ -92,11 +95,29 @@ async fn insert_round_trips_typed_fields_and_attribution(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
+async fn caller_rollback_leaves_no_row(pool: PgPool) {
+    let mut tx = pool.begin().await.unwrap();
+    let event = event("request-rollback", None);
+    insert_with_tx(&mut tx, &event).await.unwrap();
+    tx.rollback().await.unwrap();
+
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM business_audit_events")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
 async fn duplicate_id_is_an_error_and_keeps_one_row(pool: PgPool) {
-    let repo = PgBusinessAuditRepo::new(pool.clone());
     let event = event("request-duplicate", None);
-    repo.insert(&event).await.unwrap();
-    assert!(repo.insert(&event).await.is_err());
+    let mut first = pool.begin().await.unwrap();
+    insert_with_tx(&mut first, &event).await.unwrap();
+    first.commit().await.unwrap();
+
+    let mut second = pool.begin().await.unwrap();
+    assert!(insert_with_tx(&mut second, &event).await.is_err());
+    second.rollback().await.unwrap();
 
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM business_audit_events")
         .fetch_one(&pool)
@@ -107,9 +128,10 @@ async fn duplicate_id_is_an_error_and_keeps_one_row(pool: PgPool) {
 
 #[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
 async fn database_rejects_update_and_delete(pool: PgPool) {
-    let repo = PgBusinessAuditRepo::new(pool.clone());
     let event = event("request-immutable", None);
-    repo.insert(&event).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    insert_with_tx(&mut tx, &event).await.unwrap();
+    tx.commit().await.unwrap();
 
     assert!(
         sqlx::query("UPDATE business_audit_events SET outcome = 'failed' WHERE id = $1")
@@ -135,13 +157,14 @@ async fn database_rejects_update_and_delete(pool: PgPool) {
 
 #[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
 async fn request_id_correlates_without_deduplicating(pool: PgPool) {
-    let repo = PgBusinessAuditRepo::new(pool.clone());
     let first = event("shared-request", None);
     let second = event("shared-request", None);
     assert_ne!(first.id, second.id);
 
-    repo.insert(&first).await.unwrap();
-    repo.insert(&second).await.unwrap();
+    let mut tx = pool.begin().await.unwrap();
+    insert_with_tx(&mut tx, &first).await.unwrap();
+    insert_with_tx(&mut tx, &second).await.unwrap();
+    tx.commit().await.unwrap();
 
     let count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM business_audit_events WHERE request_id = $1")
