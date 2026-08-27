@@ -4,6 +4,7 @@
 //! `document_storage_service` and exported as SDL.
 #![deny(missing_docs)]
 #![deny(clippy::missing_docs_in_private_items)]
+#![cfg_attr(test, recursion_limit = "256")]
 
 /// Cross-domain fields composed onto Soup entities.
 mod edges;

@@ -1874,3 +1874,418 @@ async fn email_thread_rejects_an_invalid_thread_id_before_loading_soup() {
     assert_eq!(harness.raw_soup_calls.load(Ordering::SeqCst), 0);
     assert_eq!(harness.inbox_calls.load(Ordering::SeqCst), 0);
 }
+
+// ============================================================================
+// WS-02 regression test doubles: an allow-all entity access service and
+// no-op properties permission/notification services. The allow-all double
+// mints authenticated view/edit receipts so the production property
+// writer/reader can run end to end; it never checks the database.
+// ============================================================================
+
+use macro_user_id::cowlike::CowLike;
+use properties::domain::model::{EditReceipt, TaskAssignedNotification, ViewReceipt};
+use properties::domain::ports::{NotificationService, PermissionService};
+use properties::{PropertiesPgRepo, PropertiesServiceImpl};
+
+/// Test-only [`EntityAccessService`] that mints a valid authenticated receipt
+/// for any user/entity and returns harmless values for its other methods.
+#[derive(Clone, Copy, Debug, Default)]
+struct AllowAllEntityAccessService;
+
+impl EntityAccessService for AllowAllEntityAccessService {
+    async fn generate_entity_access_receipt<T: RequiredPermission>(
+        &self,
+        user_id: &MacroUserId<Lowercase<'_>>,
+        _user_org_id: Option<i64>,
+        entity_id: &str,
+        entity_type: EntityType,
+    ) -> Result<EntityAccessReceipt<T>, AccessError> {
+        let user_id = user_id.clone().into_owned();
+        Ok(EntityAccessReceipt::<T>::dangerously_assert_authenticated_user(
+            MacroUserIdStr(user_id),
+            entity_id,
+            entity_type,
+        ))
+    }
+
+    async fn generate_bot_entity_access_receipt<T: RequiredPermission>(
+        &self,
+        _bot_id: BotId,
+        _scope: BotAccessScope,
+        _entity_id: &str,
+        _entity_type: EntityType,
+    ) -> Result<EntityAccessReceipt<T>, AccessError> {
+        Err(AccessError::internal("unused in regression test"))
+    }
+
+    async fn get_access_level(
+        &self,
+        _user_id: Option<&MacroUserId<Lowercase<'_>>>,
+        _entity_id: &str,
+        _entity_type: EntityType,
+    ) -> Result<Option<AccessLevel>, AccessError> {
+        Ok(Some(AccessLevel::Owner))
+    }
+
+    async fn check_access(
+        &self,
+        _user_id: Option<&MacroUserId<Lowercase<'_>>>,
+        _entity_id: &str,
+        _entity_type: EntityType,
+        required_level: AccessLevel,
+    ) -> Result<AccessLevel, AccessError> {
+        Ok(required_level)
+    }
+
+    async fn check_public_access(
+        &self,
+        _entity_id: &str,
+        _entity_type: EntityType,
+        required_level: AccessLevel,
+    ) -> Result<AccessLevel, AccessError> {
+        Ok(required_level)
+    }
+
+    async fn get_entity_permission(
+        &self,
+        _user_id: Option<&MacroUserId<Lowercase<'_>>>,
+        _entity_id: &str,
+        _entity_type: EntityType,
+        _user_org_id: Option<i64>,
+    ) -> Result<EntityPermission, AccessError> {
+        Ok(EntityPermission::AccessLevel {
+            access_level: AccessLevel::Owner,
+        })
+    }
+
+    async fn get_crm_entity_permission_with_team(
+        &self,
+        _user_id: Option<&MacroUserId<Lowercase<'_>>>,
+        _entity_id: &str,
+        _entity_type: EntityType,
+    ) -> Result<(EntityPermission, Uuid, TeamRole), AccessError> {
+        Err(AccessError::internal("unused in regression test"))
+    }
+
+    async fn get_users_by_entity(
+        &self,
+        _entity_id: &str,
+        _entity_type: EntityType,
+    ) -> Result<Vec<MacroUserIdStr<'static>>, AccessError> {
+        Ok(Vec::new())
+    }
+
+    async fn get_call_channel(
+        &self,
+        _call_id: &Uuid,
+    ) -> Result<Option<CallChannelInfo>, AccessError> {
+        Ok(None)
+    }
+
+    async fn get_call_channel_by_channel_id(
+        &self,
+        _channel_id: &Uuid,
+    ) -> Result<Option<CallChannelInfo>, AccessError> {
+        Ok(None)
+    }
+
+    async fn get_user_team(
+        &self,
+        _user_id: &MacroUserId<Lowercase<'_>>,
+    ) -> Result<Option<UserTeamInfo>, AccessError> {
+        Ok(None)
+    }
+}
+
+/// Test-only no-op [`PermissionService`]; the regression test mints receipts
+/// through the allow-all entity access double instead, so these are inert.
+#[derive(Clone, Copy, Debug, Default)]
+struct NoopRegressionPermissionService;
+
+impl PermissionService for NoopRegressionPermissionService {
+    type Err = rootcause::Report;
+
+    async fn mint_view_receipt<'a>(
+        &self,
+        _user_id: Option<&'a MacroUserIdStr<'a>>,
+        _entity_id: &str,
+        _entity_type: EntityType,
+    ) -> Result<ViewReceipt, Self::Err> {
+        Err(rootcause::report!("unused in regression test"))
+    }
+
+    async fn mint_edit_receipt<'a>(
+        &self,
+        _user_id: &MacroUserIdStr<'a>,
+        _entity_id: &str,
+        _entity_type: EntityType,
+    ) -> Result<EditReceipt, Self::Err> {
+        Err(rootcause::report!("unused in regression test"))
+    }
+
+    async fn grant_permissions_to_task<'a>(
+        &self,
+        _user_ids: &[MacroUserIdStr<'a>],
+        _task_id: &str,
+    ) -> Result<(), Self::Err> {
+        Ok(())
+    }
+}
+
+/// Test-only no-op [`NotificationService`]; the regression test never sends
+/// notifications.
+#[derive(Clone, Copy, Debug, Default)]
+struct NoopRegressionNotificationService;
+
+impl NotificationService for NoopRegressionNotificationService {
+    type Err = rootcause::Report;
+
+    async fn send_task_assigned<'a>(
+        &self,
+        _notification: TaskAssignedNotification<'a>,
+    ) -> Result<(), Self::Err> {
+        Ok(())
+    }
+}
+
+type RegressionPropertiesService = PropertiesServiceImpl<
+    PropertiesPgRepo,
+    NoopRegressionPermissionService,
+    NoopRegressionNotificationService,
+>;
+type RegressionPropertyWriter = graphql_properties::PropertiesEntityPropertyWriter<
+    RegressionPropertiesService,
+    AllowAllEntityAccessService,
+>;
+type RegressionPropertyReader = graphql_properties::PropertiesEntityPropertyReader<
+    RegressionPropertiesService,
+    AllowAllEntityAccessService,
+>;
+
+#[derive(Clone)]
+struct RegressionTestState {
+    authorization: MacroAuthorizationState<FakeAuthorizationService>,
+    email: EmailRouterState<CountingEmailService>,
+    entity_access: Arc<AllowAllEntityAccessService>,
+}
+
+impl FromRef<RegressionTestState> for MacroAuthorizationState<FakeAuthorizationService> {
+    fn from_ref(state: &RegressionTestState) -> Self {
+        state.authorization.clone()
+    }
+}
+
+impl FromRef<RegressionTestState> for EmailRouterState<CountingEmailService> {
+    fn from_ref(state: &RegressionTestState) -> Self {
+        state.email.clone()
+    }
+}
+
+impl FromRef<RegressionTestState> for Arc<AllowAllEntityAccessService> {
+    fn from_ref(state: &RegressionTestState) -> Self {
+        Arc::clone(&state.entity_access)
+    }
+}
+
+type RegressionSchema = SoupSchema<
+    CountingSoupService,
+    NoOpSoupRealtimeSubscriptionService,
+    NoopWebSocketNotificationSubscriptionService,
+    CountingEmailService,
+    AllowAllEntityAccessService,
+    FakeAuthorizationService,
+    RegressionTestState,
+    RegressionPropertyWriter,
+    UnavailableEntityMutationService,
+    NoOpChannelActivityMutationService,
+    NoOpNotificationMutationService,
+    NoOpSoupNotificationEdgeReader,
+    RegressionPropertyReader,
+    NoOpSoupEmailContentEdgeReader,
+    graphql_favorite::NoOpEntityFavoriteEdgeReader,
+    graphql_permission::NoOpEntityPermissionEdgeReader,
+    NoOpActivityReader,
+>;
+
+fn regression_task_document(id: Uuid) -> SoupItem<()> {
+    SoupItem::Document(SoupDocument {
+        id,
+        document_version_id: 1,
+        owner_id: MacroUserIdStr::parse_from_str("macro|user1@test.com")
+            .unwrap()
+            .into_owned(),
+        name: "INIMAOS property regression task".to_owned(),
+        file_type: None,
+        sha: None,
+        project_id: None,
+        branched_from_id: None,
+        branched_from_version_id: None,
+        document_family_id: None,
+        created_at: Default::default(),
+        updated_at: Default::default(),
+        viewed_at: None,
+        sub_type: Some(models_soup::document::SoupDocumentSubType::Task {
+            is_completed: false,
+        }),
+        deleted_at: None,
+        extra: (),
+    })
+}
+
+#[sqlx::test(
+    migrator = "macro_db_migrator::MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../properties/fixtures", scripts("properties"))
+)]
+async fn task_property_mutation_survives_fresh_soup_query(
+    pool: sqlx::PgPool,
+) -> rootcause::Result<()> {
+    const USER_ID: &str = "macro|user1@test.com";
+    const PROPERTY_DEFINITION_ID: &str = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    const PROPERTY_VALUE: &str = "INIMAOS fresh read regression";
+    let task_id = Uuid::from_u128(0x1A0_0000_0000_0000_0000_0000_0000_0001);
+
+    let user_exists: bool = sqlx::query_scalar(r#"SELECT EXISTS(SELECT 1 FROM "User" WHERE id = $1)"#)
+        .bind(USER_ID)
+        .fetch_one(&pool)
+        .await?;
+    assert!(user_exists, "the properties fixture must seed the regression viewer");
+
+    sqlx::query(
+        r#"
+        INSERT INTO "Document" (id, name, owner)
+        VALUES ($1, 'INIMAOS property regression task', $2)
+        "#,
+    )
+    .bind(task_id.to_string())
+    .bind(USER_ID)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO document_sub_type (document_id, sub_type)
+        VALUES ($1, 'task')
+        "#,
+    )
+    .bind(task_id.to_string())
+    .execute(&pool)
+    .await?;
+
+    let entity_access = Arc::new(AllowAllEntityAccessService);
+    let properties_service = Arc::new(PropertiesServiceImpl::new(
+        PropertiesPgRepo::new(pool.clone()),
+        Some(NoopRegressionPermissionService),
+        Some(NoopRegressionNotificationService),
+    ));
+    let writer = graphql_properties::PropertiesEntityPropertyWriter::new(
+        Arc::clone(&properties_service),
+        Arc::clone(&entity_access),
+        MacroUserIdStr::parse_from_str(USER_ID).unwrap().into_owned(),
+    );
+    let reader = graphql_properties::PropertiesEntityPropertyReader::new(
+        Arc::clone(&properties_service),
+        Arc::clone(&entity_access),
+    );
+    let email_service = CountingEmailService::default();
+    let state = RegressionTestState {
+        authorization: MacroAuthorizationState::new(Arc::new(
+            FakeAuthorizationService::default(),
+        )),
+        email: EmailRouterState::new(email_service.clone()),
+        entity_access,
+    };
+    let soup_service = CountingSoupService::default();
+    let schema: RegressionSchema = build_schema_with_service(soup_service.clone());
+    let mutation = format!(
+        r#"
+        mutation {{
+          setEntityProperty(input: {{
+            entityType: DOCUMENT
+            entityId: "{task_id}"
+            propertyDefinitionId: "{PROPERTY_DEFINITION_ID}"
+            value: {{ string: "{PROPERTY_VALUE}" }}
+          }}) {{ id }}
+        }}
+        "#,
+    );
+    let response = schema
+        .execute(
+            async_graphql::Request::new(mutation)
+                .data(GraphqlRequestParts::new(internal_parts(USER_ID)))
+                .data(state.clone())
+                .data(writer),
+        )
+        .await;
+    assert!(
+        response.errors.is_empty(),
+        "property mutation failed: {:?}",
+        response.errors
+    );
+
+    let (stored_entity_type, stored_value): (String, Option<String>) = sqlx::query_as(
+        r#"
+        SELECT entity_type::text, values ->> 'value'
+        FROM entity_properties
+        WHERE entity_id = $1 AND property_definition_id = $2::uuid
+        "#,
+    )
+    .bind(task_id.to_string())
+    .bind(PROPERTY_DEFINITION_ID)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(stored_entity_type, "TASK");
+    assert_eq!(stored_value.as_deref(), Some(PROPERTY_VALUE));
+
+    soup_service.set_raw_response(vec![regression_task_document(task_id)]);
+    let viewer = MacroUserIdStr::parse_from_str(USER_ID).unwrap().into_owned();
+    let fresh_response = schema
+        .execute(
+            async_graphql::Request::new(
+                r#"
+                {
+                  user {
+                    soup(input: {initial: {}}) {
+                      items {
+                        ... on GraphqlSoupDocument {
+                          id
+                          properties {
+                            propertyDefinitionId
+                            value {
+                              ... on GraphqlStringPropertyValue { value }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+                "#,
+            )
+            .data(GraphqlRequestParts::new(internal_parts(USER_ID)))
+            .data(state)
+            .data(graphql_soup::soup_item_loader(
+                soup_service,
+                Arc::new(email_service),
+            ))
+            .data(graphql_properties::entity_properties_loader(viewer, reader)),
+        )
+        .await;
+    assert!(
+        fresh_response.errors.is_empty(),
+        "fresh Soup property query failed: {:?}",
+        fresh_response.errors
+    );
+    let fresh_data = fresh_response.data.into_json()?;
+    let document = &fresh_data["user"]["soup"]["items"][0];
+    assert_eq!(document["id"], task_id.to_string());
+    let property = document["properties"]
+        .as_array()
+        .and_then(|properties| {
+            properties
+                .iter()
+                .find(|property| property["propertyDefinitionId"] == PROPERTY_DEFINITION_ID)
+        })
+        .expect("fresh Soup response must include the property written by the prior request");
+    assert_eq!(property["value"]["value"], PROPERTY_VALUE);
+
+    Ok(())
+}

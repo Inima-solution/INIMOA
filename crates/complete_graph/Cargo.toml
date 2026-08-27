@@ -46,11 +46,16 @@ workspace-hack = { version = "0.1", path = "../workspace-hack" }
 activity = { path = "../activity", default-features = false }
 apollo-compiler = { workspace = true }
 chrono = { workspace = true }
+macro_db_migrator = { path = "../macro_db_migrator" }
 model_user = { path = "../model_user" }
 models_pagination = { path = "../models_pagination" }
 models_properties = { path = "../models_properties" }
 models_soup = { path = "../models_soup" }
+properties = { path = "../properties", default-features = false, features = [
+  "outbound",
+] }
 rootcause = { workspace = true }
 serde = { workspace = true }
+sqlx = { workspace = true, features = ["migrate"] }
 tokio = { workspace = true }
 uuid = { workspace = true }
