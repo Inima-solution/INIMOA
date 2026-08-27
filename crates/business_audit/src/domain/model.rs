@@ -1,0 +1,316 @@
+//! Immutable business-audit event model.
+
+#[cfg(test)]
+mod test;
+
+use chrono::{DateTime, Utc};
+use macro_user_id::user_id::MacroUserIdStr;
+use models_team::BusinessRole;
+use serde::Serialize;
+use uuid::Uuid;
+
+/// A principal that mechanically performed an audited action.
+pub use channel_sender::ChannelSender as Actor;
+
+const PRINCIPAL_MAX_BYTES: usize = 256;
+const REQUEST_ID_MAX_BYTES: usize = 256;
+const REASON_MAX_BYTES: usize = 1000;
+
+/// Validation failure at the business-audit trust boundary.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum AuditValidationError {
+    /// A required string contained no non-whitespace characters.
+    #[error("{field} must not be empty")]
+    Empty {
+        /// Invalid field.
+        field: &'static str,
+    },
+    /// A string exceeded its durable storage limit.
+    #[error("{field} exceeds {max_bytes} bytes")]
+    TooLong {
+        /// Invalid field.
+        field: &'static str,
+        /// Maximum encoded byte length.
+        max_bytes: usize,
+    },
+    /// A role action did not target its grantee principal.
+    #[error("role audit target must equal the grantee principal")]
+    RoleTargetMismatch,
+}
+
+fn validate_text(
+    field: &'static str,
+    value: String,
+    max_bytes: usize,
+) -> Result<String, AuditValidationError> {
+    if value.trim().is_empty() {
+        return Err(AuditValidationError::Empty { field });
+    }
+    if value.len() > max_bytes {
+        return Err(AuditValidationError::TooLong { field, max_bytes });
+    }
+    Ok(value)
+}
+
+/// Required request correlation identifier. It correlates events and never deduplicates them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestCorrelationId(String);
+
+impl RequestCorrelationId {
+    /// Validates a request correlation identifier.
+    pub fn try_new(value: impl Into<String>) -> Result<Self, AuditValidationError> {
+        validate_text("request_id", value.into(), REQUEST_ID_MAX_BYTES).map(Self)
+    }
+}
+
+impl AsRef<str> for RequestCorrelationId {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Optional human rationale for an audited action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditReason(String);
+
+impl AuditReason {
+    /// Validates a non-empty rationale.
+    pub fn try_new(value: impl Into<String>) -> Result<Self, AuditValidationError> {
+        validate_text("reason", value.into(), REASON_MAX_BYTES).map(Self)
+    }
+}
+
+impl AsRef<str> for AuditReason {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Outcome of an audited attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditOutcome {
+    /// The operation completed.
+    Success,
+    /// Authorization or policy denied the operation.
+    Denied,
+    /// The operation was authorized but failed.
+    Failed,
+}
+
+impl AuditOutcome {
+    #[cfg(any(feature = "outbound", test))]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Denied => "denied",
+            Self::Failed => "failed",
+        }
+    }
+}
+
+/// Sensitivity and retention classification of an audit event.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RetentionClass {
+    /// Internal operational event.
+    Standard,
+    /// Confidential people or approval event.
+    Confidential,
+    /// Restricted payroll, secret, or high-risk event.
+    Restricted,
+}
+
+impl RetentionClass {
+    #[cfg(any(feature = "outbound", test))]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Standard => "standard",
+            Self::Confidential => "confidential",
+            Self::Restricted => "restricted",
+        }
+    }
+}
+
+/// Closed target-kind vocabulary for the current audit foundation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AuditTargetType {
+    /// A Macro team or company workspace.
+    Team,
+    /// A user, bot, or agent principal.
+    Principal,
+}
+
+impl AuditTargetType {
+    #[cfg(any(feature = "outbound", test))]
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::Team => "team",
+            Self::Principal => "principal",
+        }
+    }
+}
+
+/// Typed target of an audited action.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuditTarget {
+    /// A team identified by its canonical UUID.
+    Team(Uuid),
+    /// A user, bot, or agent principal.
+    Principal(Actor<'static>),
+}
+
+impl AuditTarget {
+    #[cfg(any(feature = "outbound", test))]
+    pub(crate) const fn target_type(&self) -> AuditTargetType {
+        match self {
+            Self::Team(_) => AuditTargetType::Team,
+            Self::Principal(_) => AuditTargetType::Principal,
+        }
+    }
+
+    #[cfg(any(feature = "outbound", test))]
+    pub(crate) fn id_string(&self) -> String {
+        match self {
+            Self::Team(id) => id.to_string(),
+            Self::Principal(principal) => principal.as_ref().to_owned(),
+        }
+    }
+}
+
+/// Fixed safe metadata for a company-role change.
+#[readonly::make]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct RoleChangeMetadata {
+    /// Business-role bundle granted or revoked.
+    pub business_role: BusinessRole,
+    /// Principal affected by the role change.
+    pub grantee_principal: Actor<'static>,
+}
+
+impl RoleChangeMetadata {
+    /// Builds metadata after enforcing the principal storage bound.
+    pub fn new(
+        business_role: BusinessRole,
+        grantee_principal: Actor<'static>,
+    ) -> Result<Self, AuditValidationError> {
+        validate_principal("grantee_principal", &grantee_principal)?;
+        Ok(Self {
+            business_role,
+            grantee_principal,
+        })
+    }
+}
+
+/// Closed audited-action vocabulary for company role changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AuditAction {
+    /// A company business role was granted.
+    RoleGranted(RoleChangeMetadata),
+    /// A company business role was revoked.
+    RoleRevoked(RoleChangeMetadata),
+}
+
+impl AuditAction {
+    #[cfg(any(feature = "outbound", test))]
+    pub(crate) const fn tag(&self) -> &'static str {
+        match self {
+            Self::RoleGranted(_) => "role_granted",
+            Self::RoleRevoked(_) => "role_revoked",
+        }
+    }
+
+    #[cfg(any(feature = "outbound", test))]
+    pub(crate) fn metadata(&self) -> serde_json::Value {
+        let metadata = match self {
+            Self::RoleGranted(metadata) | Self::RoleRevoked(metadata) => metadata,
+        };
+        serde_json::to_value(metadata).expect("fixed audit metadata serializes")
+    }
+
+    fn role_metadata(&self) -> &RoleChangeMetadata {
+        match self {
+            Self::RoleGranted(metadata) | Self::RoleRevoked(metadata) => metadata,
+        }
+    }
+}
+
+fn validate_principal(
+    field: &'static str,
+    principal: &Actor<'_>,
+) -> Result<(), AuditValidationError> {
+    validate_text(field, principal.as_ref().to_owned(), PRINCIPAL_MAX_BYTES).map(drop)
+}
+
+/// One immutable business-audit fact.
+#[readonly::make]
+#[derive(Debug, Clone, PartialEq)]
+pub struct AuditEvent {
+    /// Application-generated UUIDv7 identifier.
+    pub id: Uuid,
+    /// Company/team scope. The stored ledger intentionally has no team foreign key.
+    pub team_id: Uuid,
+    /// Principal that mechanically performed the action.
+    pub actor: Actor<'static>,
+    /// Initiating human when a bot or agent acted on their behalf.
+    pub delegated_actor: Option<MacroUserIdStr<'static>>,
+    /// Audited action and its fixed safe metadata.
+    pub action: AuditAction,
+    /// Canonical target.
+    pub target: AuditTarget,
+    /// Attempt outcome.
+    pub outcome: AuditOutcome,
+    /// Time of the action, supplied by the application.
+    pub occurred_at: DateTime<Utc>,
+    /// Required request correlation identifier.
+    pub request_id: RequestCorrelationId,
+    /// Optional human rationale, stored outside metadata.
+    pub reason: Option<AuditReason>,
+    /// Retention and sensitivity class.
+    pub retention_class: RetentionClass,
+}
+
+impl AuditEvent {
+    /// Builds an immutable event and generates its UUIDv7 identifier.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        team_id: Uuid,
+        actor: Actor<'static>,
+        delegated_actor: Option<MacroUserIdStr<'static>>,
+        action: AuditAction,
+        target: AuditTarget,
+        outcome: AuditOutcome,
+        occurred_at: DateTime<Utc>,
+        request_id: RequestCorrelationId,
+        reason: Option<AuditReason>,
+        retention_class: RetentionClass,
+    ) -> Result<Self, AuditValidationError> {
+        validate_principal("actor", &actor)?;
+        if let Some(delegated_actor) = &delegated_actor {
+            validate_text(
+                "delegated_actor",
+                delegated_actor.as_ref().to_owned(),
+                PRINCIPAL_MAX_BYTES,
+            )?;
+        }
+
+        let AuditTarget::Principal(target_principal) = &target else {
+            return Err(AuditValidationError::RoleTargetMismatch);
+        };
+        if target_principal != &action.role_metadata().grantee_principal {
+            return Err(AuditValidationError::RoleTargetMismatch);
+        }
+
+        Ok(Self {
+            id: macro_uuid::generate_uuid_v7(),
+            team_id,
+            actor,
+            delegated_actor,
+            action,
+            target,
+            outcome,
+            occurred_at,
+            request_id,
+            reason,
+            retention_class,
+        })
+    }
+}

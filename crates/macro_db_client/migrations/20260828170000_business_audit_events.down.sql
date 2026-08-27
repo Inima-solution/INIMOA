@@ -1,0 +1,3 @@
+DROP TRIGGER business_audit_events_immutable ON business_audit_events;
+DROP FUNCTION reject_business_audit_event_mutation();
+DROP TABLE business_audit_events;

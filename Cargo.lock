@@ -2797,6 +2797,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
+name = "business_audit"
+version = "0.1.0"
+dependencies = [
+ "channel_sender",
+ "chrono",
+ "macro_db_migrator",
+ "macro_user_id",
+ "macro_uuid",
+ "models_team",
+ "readonly",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+ "workspace-hack",
+]
+
+[[package]]
 name = "bytemuck"
 version = "1.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"

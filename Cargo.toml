@@ -14,6 +14,7 @@ members = [
   "crates/bot_token",
   "crates/bots",
   "crates/broadcast",
+  "crates/business_audit",
   "crates/calendar_events",
   "crates/channel_bots",
   "crates/client/cache-core",

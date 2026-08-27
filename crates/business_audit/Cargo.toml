@@ -1,0 +1,27 @@
+[package]
+edition = "2024"
+name = "business_audit"
+publish = false
+version = "0.1.0"
+
+[features]
+default = ["outbound"]
+outbound = ["dep:sqlx"]
+
+[dependencies]
+channel_sender = { path = "../channel_sender" }
+chrono = { workspace = true }
+macro_user_id = { path = "../macro_user_id" }
+macro_uuid = { path = "../macro_uuid" }
+models_team = { path = "../models_team" }
+readonly = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true, features = ["json"], optional = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+workspace-hack = { version = "0.1", path = "../workspace-hack" }
+
+[dev-dependencies]
+macro_db_migrator = { path = "../macro_db_migrator" }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
