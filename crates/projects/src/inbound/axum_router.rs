@@ -9,6 +9,7 @@ pub mod edit_project;
 pub mod get_batch_preview;
 pub mod get_project;
 pub mod get_projects;
+pub mod project_operations;
 pub mod project_permission;
 pub mod revert_delete_project;
 pub mod upload_folder;
@@ -16,12 +17,12 @@ pub mod upload_folder;
 use std::sync::Arc;
 
 use axum::{
-    Json, Router,
     body::Body,
     extract::{FromRef, Path, State},
     http::{Request, StatusCode},
     middleware::{self, Next},
     response::IntoResponse,
+    Json, Router,
 };
 use entity_access::domain::ports::EntityAccessService;
 use macro_authorization::{MacroAuthorizationService, MacroAuthorizationState};
@@ -35,6 +36,7 @@ use self::{
     get_batch_preview::get_batch_preview_handler,
     get_project::{get_project_content_handler, get_project_handler},
     get_projects::{get_pending_projects_handler, get_projects_handler},
+    project_operations::{get_project_operations_handler, replace_project_operations_handler},
     project_permission::{get_project_access_level_handler, get_project_permissions_handler},
     revert_delete_project::revert_delete_project_handler,
     upload_folder::{upload_extract_folder_handler, upload_folder_handler},
@@ -89,6 +91,7 @@ impl IntoResponse for ProjectError {
             | Self::NameTooLong { .. }
             | Self::CannotModifyDeleted
             | Self::RecursiveNesting => StatusCode::BAD_REQUEST,
+            Self::Conflict => StatusCode::CONFLICT,
             Self::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
@@ -96,7 +99,11 @@ impl IntoResponse for ProjectError {
             tracing::error!(error=?self, "project request failed");
         }
 
-        let message = self.to_string();
+        let message = if status.is_server_error() {
+            "internal server error".to_owned()
+        } else {
+            self.to_string()
+        };
         (
             status,
             Json(GenericErrorResponse {
@@ -126,6 +133,11 @@ where
         .route(
             "/{id}/content",
             axum::routing::get(get_project_content_handler::<T, Svc, Auth>),
+        )
+        .route(
+            "/{id}/operations",
+            axum::routing::get(get_project_operations_handler::<T, Svc, Auth>)
+                .put(replace_project_operations_handler::<T, Svc, Auth>),
         )
         .route(
             "/{id}/permissions",

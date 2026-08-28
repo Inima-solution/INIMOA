@@ -39,6 +39,12 @@ pub enum AuditValidationError {
     /// A privileged audit action did not target its own team.
     #[error("privileged audit action target must equal the audit team")]
     PrivilegedAuditTeamTargetMismatch,
+    /// A project-operations action did not target a canonical project.
+    #[error("project operations audit target must be a project")]
+    ProjectOperationsTargetMismatch,
+    /// Project-operations metadata was outside the closed audit vocabulary.
+    #[error("project operations audit metadata is invalid")]
+    ProjectOperationsMetadataInvalid,
 }
 
 fn validate_text(
@@ -141,6 +147,8 @@ pub enum AuditTargetType {
     Team,
     /// A user, bot, or agent principal.
     Principal,
+    /// A canonical project identifier.
+    Project,
 }
 
 impl AuditTargetType {
@@ -149,6 +157,7 @@ impl AuditTargetType {
         match self {
             Self::Team => "team",
             Self::Principal => "principal",
+            Self::Project => "project",
         }
     }
 }
@@ -160,6 +169,8 @@ pub enum AuditTarget {
     Team(Uuid),
     /// A user, bot, or agent principal.
     Principal(Actor<'static>),
+    /// A canonical project identifier.
+    Project(String),
 }
 
 impl AuditTarget {
@@ -168,6 +179,7 @@ impl AuditTarget {
         match self {
             Self::Team(_) => AuditTargetType::Team,
             Self::Principal(_) => AuditTargetType::Principal,
+            Self::Project(_) => AuditTargetType::Project,
         }
     }
 
@@ -176,6 +188,7 @@ impl AuditTarget {
         match self {
             Self::Team(id) => id.to_string(),
             Self::Principal(principal) => principal.as_ref().to_owned(),
+            Self::Project(project_id) => project_id.clone(),
         }
     }
 }
@@ -236,6 +249,77 @@ pub struct RoleChangeMetadata {
     pub grantee_principal: Actor<'static>,
 }
 
+/// Fixed safe metadata for an operational project update.
+///
+/// It intentionally contains only lifecycle labels and field names; dates,
+/// policy content, lead identities, and request payload are never retained.
+#[readonly::make]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProjectOperationsUpdatedMetadata {
+    /// Prior lifecycle state.
+    from_status: ProjectOperationsAuditStatus,
+    /// Resulting lifecycle state.
+    to_status: ProjectOperationsAuditStatus,
+    /// Deterministically ordered changed field names.
+    changed_fields: Vec<ProjectOperationsChangedField>,
+}
+
+impl ProjectOperationsUpdatedMetadata {
+    /// Builds bounded, allowlisted update metadata in deterministic field order.
+    pub fn new(
+        from_status: ProjectOperationsAuditStatus,
+        to_status: ProjectOperationsAuditStatus,
+        changed_fields: impl IntoIterator<Item = ProjectOperationsChangedField>,
+    ) -> Result<Self, AuditValidationError> {
+        let mut changed_fields: Vec<_> = changed_fields.into_iter().collect();
+        changed_fields.sort();
+        if changed_fields.is_empty() || changed_fields.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(AuditValidationError::ProjectOperationsMetadataInvalid);
+        }
+        Ok(Self {
+            from_status,
+            to_status,
+            changed_fields,
+        })
+    }
+}
+
+/// Closed lifecycle labels permitted in project-operation audit metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectOperationsAuditStatus {
+    /// Work has not started.
+    Planned,
+    /// Work is underway.
+    Active,
+    /// Work is paused.
+    Paused,
+    /// Work is complete.
+    Completed,
+    /// Work is archived.
+    Archived,
+}
+
+/// Closed mutable-field vocabulary permitted in project-operation audit metadata.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProjectOperationsChangedField {
+    /// Lifecycle state changed.
+    Status,
+    /// Priority changed.
+    Priority,
+    /// Lead changed.
+    LeadUserId,
+    /// Start date changed.
+    StartDate,
+    /// Target date changed.
+    TargetDate,
+    /// Policy object changed.
+    Policy,
+    /// Completion stamp changed under the lifecycle rules.
+    CompletedAt,
+}
+
 impl RoleChangeMetadata {
     /// Builds metadata after enforcing the principal storage bound.
     pub fn new(
@@ -261,6 +345,8 @@ pub enum AuditAction {
     DetailRead(AuditDetailReadMetadata),
     /// A bounded audit CSV export was successfully emitted.
     Exported(AuditExportedMetadata),
+    /// Project operational metadata was atomically updated.
+    ProjectOperationsUpdated(ProjectOperationsUpdatedMetadata),
 }
 
 impl AuditAction {
@@ -271,6 +357,7 @@ impl AuditAction {
             Self::RoleRevoked(_) => "role_revoked",
             Self::DetailRead(_) => "audit_detail_read",
             Self::Exported(_) => "audit_exported",
+            Self::ProjectOperationsUpdated(_) => "project_operations_updated",
         }
     }
 
@@ -282,6 +369,7 @@ impl AuditAction {
             }
             Self::DetailRead(metadata) => serde_json::to_value(metadata),
             Self::Exported(metadata) => serde_json::to_value(metadata),
+            Self::ProjectOperationsUpdated(metadata) => serde_json::to_value(metadata),
         }
         .expect("fixed audit metadata serializes")
     }
@@ -306,6 +394,12 @@ impl AuditAction {
             }
             (Self::DetailRead(_) | Self::Exported(_), _) => {
                 Err(AuditValidationError::PrivilegedAuditTeamTargetMismatch)
+            }
+            (Self::ProjectOperationsUpdated(_), AuditTarget::Project(project_id)) => {
+                validate_text("project_id", project_id.clone(), PRINCIPAL_MAX_BYTES).map(drop)
+            }
+            (Self::ProjectOperationsUpdated(_), _) => {
+                Err(AuditValidationError::ProjectOperationsTargetMismatch)
             }
         }
     }

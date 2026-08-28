@@ -16,12 +16,14 @@ axum = [
   "dep:axum-extra",
   "dep:macro_authorization",
   "dep:model-error-response",
+  "dep:tower-http",
   "dep:utoipa",
   "entity_access/axum",
 ]
 default = ["axum", "inbound", "outbound", "ports", "service"]
 inbound = ["axum", "ports"]
 outbound = [
+  "dep:business_audit",
   "dep:async-recursion",
   "dep:aws-sdk-s3",
   "dep:base64",
@@ -42,6 +44,7 @@ service = ["dep:entity_access_management", "ports"]
 
 [dependencies]
 activity = { path = "../activity", default-features = false }
+business_audit = { path = "../business_audit", default-features = false, features = ["outbound"], optional = true }
 # Core
 anyhow = { workspace = true }
 chrono = { workspace = true }
@@ -88,6 +91,7 @@ macro_authorization = { path = "../macro_authorization", optional = true, defaul
   "axum",
 ] }
 model-error-response = { path = "../model-error-response", optional = true }
+tower-http = { workspace = true, optional = true }
 utoipa = { workspace = true, optional = true }
 
 # Outbound dependencies

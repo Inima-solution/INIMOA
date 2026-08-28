@@ -197,3 +197,120 @@ fn privileged_action_metadata_is_fixed_and_target_bound() {
         AuditValidationError::PrivilegedAuditTeamTargetMismatch
     );
 }
+
+#[test]
+fn project_operations_audit_metadata_is_closed_canonical_and_target_bound() {
+    let metadata = ProjectOperationsUpdatedMetadata::new(
+        ProjectOperationsAuditStatus::Active,
+        ProjectOperationsAuditStatus::Completed,
+        [
+            ProjectOperationsChangedField::TargetDate,
+            ProjectOperationsChangedField::Status,
+            ProjectOperationsChangedField::CompletedAt,
+        ],
+    )
+    .unwrap();
+    let action = AuditAction::ProjectOperationsUpdated(metadata);
+    assert_eq!(action.tag(), "project_operations_updated");
+    assert_eq!(
+        action.metadata(),
+        json!({
+            "from_status": "active",
+            "to_status": "completed",
+            "changed_fields": ["status", "target_date", "completed_at"]
+        })
+    );
+    assert!(action.metadata().get("lead_user_id").is_none());
+    assert!(matches!(
+        ProjectOperationsUpdatedMetadata::new(
+            ProjectOperationsAuditStatus::Active,
+            ProjectOperationsAuditStatus::Active,
+            [],
+        ),
+        Err(AuditValidationError::ProjectOperationsMetadataInvalid)
+    ));
+    assert!(matches!(
+        ProjectOperationsUpdatedMetadata::new(
+            ProjectOperationsAuditStatus::Active,
+            ProjectOperationsAuditStatus::Active,
+            [
+                ProjectOperationsChangedField::Priority,
+                ProjectOperationsChangedField::Priority
+            ],
+        ),
+        Err(AuditValidationError::ProjectOperationsMetadataInvalid)
+    ));
+
+    let valid = AuditEvent::new(
+        Uuid::from_u128(1),
+        actor("macro|admin@example.com"),
+        None,
+        action,
+        AuditTarget::Project("project-1".to_owned()),
+        AuditOutcome::Success,
+        Utc::now(),
+        RequestCorrelationId::try_new("operations-update").unwrap(),
+        None,
+        RetentionClass::Standard,
+    );
+    assert!(valid.is_ok());
+    let mismatch = AuditEvent::new(
+        Uuid::from_u128(1),
+        actor("macro|admin@example.com"),
+        None,
+        AuditAction::ProjectOperationsUpdated(
+            ProjectOperationsUpdatedMetadata::new(
+                ProjectOperationsAuditStatus::Active,
+                ProjectOperationsAuditStatus::Paused,
+                [ProjectOperationsChangedField::Status],
+            )
+            .unwrap(),
+        ),
+        AuditTarget::Team(Uuid::from_u128(1)),
+        AuditOutcome::Success,
+        Utc::now(),
+        RequestCorrelationId::try_new("operations-update").unwrap(),
+        None,
+        RetentionClass::Standard,
+    );
+    assert_eq!(
+        mismatch.unwrap_err(),
+        AuditValidationError::ProjectOperationsTargetMismatch
+    );
+}
+
+#[test]
+fn project_operations_project_target_is_nonempty_and_bounded() {
+    let action = || {
+        AuditAction::ProjectOperationsUpdated(
+            ProjectOperationsUpdatedMetadata::new(
+                ProjectOperationsAuditStatus::Planned,
+                ProjectOperationsAuditStatus::Active,
+                [ProjectOperationsChangedField::Status],
+            )
+            .unwrap(),
+        )
+    };
+    for project_id in ["".to_owned(), "x".repeat(PRINCIPAL_MAX_BYTES + 1)] {
+        assert!(matches!(
+            AuditEvent::new(
+                Uuid::from_u128(1),
+                actor("macro|admin@example.com"),
+                None,
+                action(),
+                AuditTarget::Project(project_id),
+                AuditOutcome::Success,
+                Utc::now(),
+                RequestCorrelationId::try_new("operations-update").unwrap(),
+                None,
+                RetentionClass::Standard,
+            ),
+            Err(AuditValidationError::Empty {
+                field: "project_id"
+            }) | Err(AuditValidationError::TooLong {
+                field: "project_id",
+                ..
+            })
+        ));
+    }
+}

@@ -23,7 +23,8 @@ use sqlx::PgPool;
 
 use crate::domain::models::{
     CreateProjectArgs, EditProjectArgs, MarkedUploadedTree, ProjectOperations, PurgedProjectTree,
-    RevertDeleteResult, SoftDeleteResult, UploadFolderRepoArgs,
+    RevertDeleteResult, SoftDeleteResult, UpdateProjectOperationsCommand,
+    UpdateProjectOperationsOutcome, UploadFolderRepoArgs,
 };
 use crate::domain::ports::ProjectRepo;
 
@@ -109,6 +110,23 @@ impl ProjectRepo for PgProjectRepo {
         project_id: &str,
     ) -> Result<Option<ProjectOperations>, Self::Err> {
         operations::get_project_operations(&self.pool, project_id).await
+    }
+
+    #[tracing::instrument(err, skip(self))]
+    async fn get_project_operations_scoped(
+        &self,
+        project_id: &str,
+        team_id: uuid::Uuid,
+    ) -> Result<Option<ProjectOperations>, Self::Err> {
+        operations::get_project_operations_scoped(&self.pool, project_id, team_id).await
+    }
+
+    #[tracing::instrument(err, skip(self, command))]
+    async fn update_project_operations(
+        &self,
+        command: UpdateProjectOperationsCommand,
+    ) -> Result<UpdateProjectOperationsOutcome, Self::Err> {
+        operations::update_project_operations(&self.pool, command).await
     }
 
     #[tracing::instrument(err, skip(self))]

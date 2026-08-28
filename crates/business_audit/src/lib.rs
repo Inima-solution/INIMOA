@@ -9,7 +9,8 @@ pub mod outbound;
 
 pub use domain::model::{
     Actor, AuditAction, AuditDetailReadMetadata, AuditEvent, AuditExportedMetadata, AuditOutcome,
-    AuditReason, AuditTarget, AuditTargetType, AuditValidationError, RequestCorrelationId,
+    AuditReason, AuditTarget, AuditTargetType, AuditValidationError, ProjectOperationsAuditStatus,
+    ProjectOperationsChangedField, ProjectOperationsUpdatedMetadata, RequestCorrelationId,
     RetentionClass, RoleChangeMetadata,
 };
 pub use domain::query::{

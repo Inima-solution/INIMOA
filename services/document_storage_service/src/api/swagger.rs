@@ -89,21 +89,21 @@ use model::{
     annotations::AnnotationIncrementalUpdate,
     chat::Chat,
     document::{
-        BasicDocument, BomPart, DocumentMetadata, DocumentPermissionsToken, FileType, SaveBomPart,
         response::{
             GetDocumentListResult, GetDocumentResponse, GetDocumentResponseData,
             LocationResponseData,
         },
+        BasicDocument, BomPart, DocumentMetadata, DocumentPermissionsToken, FileType, SaveBomPart,
     },
     item::{CloudStorageItemType, Item, ItemWithUserAccessLevel},
-    pin::{PinnedItem, request::ReorderPinRequest},
+    pin::{request::ReorderPinRequest, PinnedItem},
     project::{
-        Project,
         request::{CreateProjectRequest, GetBatchProjectPreviewRequest, PatchProjectRequestV2},
         response::{
             CreateProjectResponse, GetBatchProjectPreviewResponse, GetProjectContentResponse,
             GetProjectResponse, GetProjectResponseData, GetProjectsResponse,
         },
+        Project,
     },
     response::{
         GenericErrorResponse, GenericResponse, GenericSuccessResponse, PresignedUrl,
@@ -125,6 +125,12 @@ use models_soup::foreign_entity::SoupForeignEntity;
 use models_soup::project::SoupProject;
 use projects_hex::inbound::axum_router::delete_project::{
     ProjectDeleteResponse, ProjectDeleteResponseData,
+};
+use projects_hex::{
+    domain::models::{ProjectOperationalStatus, ProjectOperations, ProjectPriority},
+    inbound::axum_router::project_operations::{
+        GetProjectOperationsResponse, ReplaceProjectOperationsRequest,
+    },
 };
 use reminders::domain::models::{Reminder, ReminderSchedule, RemindersList};
 use reminders::inbound::axum_router::{CreateReminderRequest, UpdateReminderRequest};
@@ -301,6 +307,8 @@ use utoipa::OpenApi;
         projects_hex::inbound::axum_router::get_batch_preview::get_batch_preview_handler,
         projects_hex::inbound::axum_router::get_project::get_project_handler,
         projects_hex::inbound::axum_router::revert_delete_project::revert_delete_project_handler,
+        projects_hex::inbound::axum_router::project_operations::get_project_operations_handler,
+        projects_hex::inbound::axum_router::project_operations::replace_project_operations_handler,
 
         entity::get_entity_permission::handler,
 
@@ -627,6 +635,11 @@ use utoipa::OpenApi;
             GetProjectResponseData,
             ProjectDeleteResponseData,
             ProjectDeleteResponse,
+            ProjectOperations,
+            ProjectOperationalStatus,
+            ProjectPriority,
+            GetProjectOperationsResponse,
+            ReplaceProjectOperationsRequest,
 
             // Preview
             GetDocumentPermissionsResponseDataV2,

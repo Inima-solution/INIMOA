@@ -5,9 +5,9 @@ use std::{
 };
 
 use axum::{
-    Router,
     body::Body,
     http::{Request, StatusCode},
+    Router,
 };
 use entity_access::domain::{
     models::{
@@ -26,24 +26,27 @@ use model::{
     folder::{FileSystemNodeWithIds, UploadFolderRequest, UploadFolderResponseData},
     item::ItemWithUserAccessLevel,
     project::{
-        BasicProject, PendingProject, Project, ProjectPreview,
         request::{CreateProjectRequest, PatchProjectRequestV2},
         response::GetProjectResponseData,
+        BasicProject, PendingProject, Project, ProjectPreview,
     },
 };
 use model_user::UserContext;
 use models_bulk_upload::{UploadExtractFolderRequest, UploadExtractFolderResponseData};
 use models_permissions::share_permission::{
-    SharePermissionV2, access_level::AccessLevel as ShareAccessLevel,
+    access_level::AccessLevel as ShareAccessLevel, SharePermissionV2,
 };
 use rootcause::Report;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::{ProjectRouterState, projects_router};
+use super::{projects_router, ProjectRouterState};
 use crate::domain::{
-    models::{ProjectError, PurgedProjectTree, RevertDeleteResult, SoftDeleteResult},
+    models::{
+        ProjectError, ProjectOperationalStatus, ProjectOperations, ProjectPriority,
+        PurgedProjectTree, RevertDeleteResult, SoftDeleteResult, UpdateProjectOperationsRequest,
+    },
     ports::ProjectService,
 };
 
@@ -58,6 +61,11 @@ struct FakeProjectService {
     mutations: Arc<Mutex<Vec<&'static str>>>,
     permanently_deleted_projects: Arc<Mutex<Vec<BasicProject>>>,
     upload_internal_flags: Arc<Mutex<Vec<bool>>>,
+    operations: Arc<Mutex<ProjectOperations>>,
+    operations_update_requests:
+        Arc<Mutex<Vec<(MacroUserIdStr<'static>, UpdateProjectOperationsRequest)>>>,
+    operations_read_failure: Arc<Mutex<Option<&'static str>>>,
+    operations_update_failure: Arc<Mutex<Option<&'static str>>>,
 }
 
 impl FakeProjectService {
@@ -73,6 +81,10 @@ impl FakeProjectService {
             mutations: Arc::new(Mutex::new(Vec::new())),
             permanently_deleted_projects: Arc::new(Mutex::new(Vec::new())),
             upload_internal_flags: Arc::new(Mutex::new(Vec::new())),
+            operations: Arc::new(Mutex::new(test_operations())),
+            operations_update_requests: Arc::new(Mutex::new(Vec::new())),
+            operations_read_failure: Arc::new(Mutex::new(None)),
+            operations_update_failure: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -82,6 +94,10 @@ impl FakeProjectService {
             mutations: Arc::new(Mutex::new(Vec::new())),
             permanently_deleted_projects: Arc::new(Mutex::new(Vec::new())),
             upload_internal_flags: Arc::new(Mutex::new(Vec::new())),
+            operations: Arc::new(Mutex::new(test_operations())),
+            operations_update_requests: Arc::new(Mutex::new(Vec::new())),
+            operations_read_failure: Arc::new(Mutex::new(None)),
+            operations_update_failure: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -109,6 +125,56 @@ impl ProjectService for FakeProjectService {
             project_metadata: project(),
             user_access_level: ShareAccessLevel::Owner,
         })
+    }
+
+    async fn get_project_operations(
+        &self,
+        _receipt: EntityAccessReceipt<entity_access::domain::models::ViewAccessLevel>,
+        _company_receipt: EntityAccessReceipt<entity_access::domain::models::ReadProjectWorkScoped>,
+    ) -> Result<ProjectOperations, ProjectError> {
+        if let Some(failure) = *self
+            .operations_read_failure
+            .lock()
+            .expect("operations read failure lock poisoned")
+        {
+            return Err(project_operations_failure(failure));
+        }
+        Ok(self
+            .operations
+            .lock()
+            .expect("operations lock poisoned")
+            .clone())
+    }
+
+    async fn update_project_operations(
+        &self,
+        actor: MacroUserIdStr<'static>,
+        _project_receipt: EntityAccessReceipt<entity_access::domain::models::OwnerAccessLevel>,
+        _company_receipt: EntityAccessReceipt<
+            entity_access::domain::models::WriteProjectWorkStatusScoped,
+        >,
+        request: UpdateProjectOperationsRequest,
+    ) -> Result<ProjectOperations, ProjectError> {
+        self.operations_update_requests
+            .lock()
+            .expect("operations update lock poisoned")
+            .push((actor, request.clone()));
+        if let Some(failure) = *self
+            .operations_update_failure
+            .lock()
+            .expect("operations update failure lock poisoned")
+        {
+            return Err(project_operations_failure(failure));
+        }
+        let mut operations = self.operations.lock().expect("operations lock poisoned");
+        operations.status = request.replacement.status;
+        operations.priority = request.replacement.priority;
+        operations.lead_user_id = request.replacement.lead_user_id;
+        operations.start_date = request.replacement.start_date;
+        operations.target_date = request.replacement.target_date;
+        operations.policy = request.replacement.policy;
+        operations.updated_at = request.now;
+        Ok(operations.clone())
     }
 
     async fn get_project_content(
@@ -271,6 +337,7 @@ impl ProjectService for FakeProjectService {
 #[derive(Clone)]
 struct FakeEntityAccessService {
     access_level: Option<AccessLevel>,
+    team_info: Option<UserTeamInfo>,
 }
 
 impl EntityAccessService for FakeEntityAccessService {
@@ -367,7 +434,7 @@ impl EntityAccessService for FakeEntityAccessService {
         &self,
         _user_id: &MacroUserId<Lowercase<'_>>,
     ) -> Result<Option<UserTeamInfo>, AccessError> {
-        panic!("unexpected team lookup")
+        Ok(self.team_info)
     }
 }
 
@@ -395,13 +462,27 @@ impl MacroAuthorizationService for FakeAuthorizationService {
 }
 
 fn router(service: FakeProjectService, access_level: Option<AccessLevel>) -> Router {
+    router_with_team(service, access_level, None)
+}
+
+fn router_with_team(
+    service: FakeProjectService,
+    access_level: Option<AccessLevel>,
+    team_info: Option<UserTeamInfo>,
+) -> Router {
     projects_router::<FakeProjectService, FakeEntityAccessService, FakeAuthorizationService, ()>(
         ProjectRouterState {
             service: Arc::new(service),
-            access_service: Arc::new(FakeEntityAccessService { access_level }),
+            access_service: Arc::new(FakeEntityAccessService {
+                access_level,
+                team_info,
+            }),
             authorization_state: MacroAuthorizationState::new(Arc::new(FakeAuthorizationService)),
         },
     )
+    .layer(axum::Extension(tower_http::request_id::RequestId::new(
+        axum::http::HeaderValue::from_static("operations-router-request"),
+    )))
 }
 
 fn user_id(value: &str) -> MacroUserIdStr<'static> {
@@ -426,6 +507,42 @@ fn project() -> Project {
         created_at: None,
         updated_at: None,
         deleted_at: None,
+    }
+}
+
+fn test_operations() -> ProjectOperations {
+    let now = chrono::DateTime::parse_from_rfc3339("2026-08-28T00:00:00Z")
+        .expect("fixed timestamp")
+        .with_timezone(&chrono::Utc);
+    ProjectOperations {
+        project_id: PROJECT_ID.to_owned(),
+        status: ProjectOperationalStatus::Planned,
+        priority: ProjectPriority::Normal,
+        lead_user_id: None,
+        start_date: None,
+        target_date: None,
+        completed_at: None,
+        created_at: now,
+        updated_at: now,
+        policy: None,
+    }
+}
+
+fn project_operations_failure(kind: &str) -> ProjectError {
+    match kind {
+        "not_found" => ProjectError::NotFound(PROJECT_ID.to_owned()),
+        "conflict" => ProjectError::Conflict,
+        "internal" => ProjectError::Internal(anyhow::anyhow!("operations test failure")),
+        _ => panic!("unknown operations test failure"),
+    }
+}
+
+fn team_info(role: &str) -> UserTeamInfo {
+    UserTeamInfo {
+        team_id: Uuid::from_u128(42),
+        role: TeamRole::Member,
+        business_roles: serde_json::from_str(&format!("[\"{role}\"]"))
+            .expect("business role fixture should deserialize"),
     }
 }
 
@@ -555,6 +672,265 @@ async fn access_extractor_denial_prevents_handler() {
     .expect("router should respond");
 
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn operations_get_returns_typed_success_after_view_and_company_read() {
+    let response = router_with_team(
+        FakeProjectService::with_project("macro|owner@example.com", false),
+        Some(AccessLevel::View),
+        Some(team_info("member")),
+    )
+    .oneshot(authenticated_request(&format!("/{PROJECT_ID}/operations")))
+    .await
+    .expect("router should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(response).await,
+        json!({
+            "error": false,
+            "data": {
+                "projectId": PROJECT_ID,
+                "status": "planned",
+                "priority": "normal",
+                "leadUserId": null,
+                "startDate": null,
+                "targetDate": null,
+                "completedAt": null,
+                "createdAt": "2026-08-28T00:00:00Z",
+                "updatedAt": "2026-08-28T00:00:00Z",
+                "policy": null
+            }
+        })
+    );
+}
+
+#[tokio::test]
+async fn operations_put_forwards_canonical_inputs_and_middleware_request_id() {
+    let service = FakeProjectService::with_project(USER_ID, false);
+    let calls = service.operations_update_requests.clone();
+    let response = router_with_team(service, None, Some(team_info("member")))
+        .oneshot(authenticated_json_request(
+            "PUT",
+            &format!("/{PROJECT_ID}/operations"),
+            json!({
+                "status": "active",
+                "priority": "high",
+                "leadUserId": null,
+                "startDate": "2026-08-28",
+                "targetDate": "2026-09-01",
+                "policy": { "cadence": "weekly" },
+                "expectedUpdatedAt": "2026-08-28T00:00:00Z"
+            }),
+        ))
+        .await
+        .expect("router should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let calls = calls.lock().expect("operations update lock poisoned");
+    assert_eq!(calls.len(), 1);
+    let (actor, request) = &calls[0];
+    assert_eq!(actor.as_ref(), USER_ID);
+    assert_eq!(request.project_id, PROJECT_ID);
+    assert_eq!(request.request_id, "operations-router-request");
+    assert_eq!(request.replacement.status, ProjectOperationalStatus::Active);
+    assert_eq!(request.replacement.priority, ProjectPriority::High);
+    assert_eq!(
+        request.replacement.policy,
+        Some(json!({ "cadence": "weekly" }))
+    );
+}
+
+#[tokio::test]
+async fn operations_put_maps_invalid_auth_missing_conflict_and_internal_without_leaking_details() {
+    let invalid_service = FakeProjectService::with_project(USER_ID, false);
+    let invalid_calls = invalid_service.operations_update_requests.clone();
+    let invalid = router_with_team(invalid_service, None, Some(team_info("member")))
+        .oneshot(authenticated_json_request(
+            "PUT",
+            &format!("/{PROJECT_ID}/operations"),
+            json!({ "status": "active", "priority": "high", "unexpected": true }),
+        ))
+        .await
+        .expect("router should respond");
+    assert_eq!(invalid.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        json_body(invalid).await,
+        json!({ "error": true, "message": "bad request: invalid project operations request" })
+    );
+    assert!(invalid_calls
+        .lock()
+        .expect("operations update lock poisoned")
+        .is_empty());
+
+    let denied_service = FakeProjectService::with_project(USER_ID, false);
+    let denied_calls = denied_service.operations_update_requests.clone();
+    let denied = router_with_team(denied_service, None, Some(team_info("auditor")))
+        .oneshot(authenticated_json_request(
+            "PUT",
+            &format!("/{PROJECT_ID}/operations"),
+            json!({
+                "status": "active", "priority": "high", "expectedUpdatedAt": "2026-08-28T00:00:00Z"
+            }),
+        ))
+        .await
+        .expect("router should respond");
+    assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+    assert!(denied_calls
+        .lock()
+        .expect("operations update lock poisoned")
+        .is_empty());
+
+    let project_denied_service = FakeProjectService::with_project("macro|owner@example.com", false);
+    let project_denied_calls = project_denied_service.operations_update_requests.clone();
+    let project_denied = router_with_team(project_denied_service, None, Some(team_info("member")))
+        .oneshot(authenticated_json_request(
+            "PUT",
+            &format!("/{PROJECT_ID}/operations"),
+            json!({
+                "status": "active", "priority": "high", "expectedUpdatedAt": "2026-08-28T00:00:00Z"
+            }),
+        ))
+        .await
+        .expect("router should respond");
+    assert_eq!(project_denied.status(), StatusCode::UNAUTHORIZED);
+    assert!(project_denied_calls
+        .lock()
+        .expect("operations update lock poisoned")
+        .is_empty());
+
+    let missing = router_with_team(
+        FakeProjectService::missing(),
+        None,
+        Some(team_info("member")),
+    )
+    .oneshot(authenticated_request(&format!("/{PROJECT_ID}/operations")))
+    .await
+    .expect("router should respond");
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        json_body(missing).await,
+        json!({ "error": true, "message": "project not found: missing" })
+    );
+
+    let conflict_service = FakeProjectService::with_project(USER_ID, false);
+    *conflict_service
+        .operations_update_failure
+        .lock()
+        .expect("operations update failure lock poisoned") = Some("conflict");
+    let conflict = router_with_team(conflict_service, None, Some(team_info("member")))
+        .oneshot(authenticated_json_request(
+            "PUT",
+            &format!("/{PROJECT_ID}/operations"),
+            json!({
+                "status": "active", "priority": "high", "expectedUpdatedAt": "2026-08-28T00:00:00Z"
+            }),
+        ))
+        .await
+        .expect("router should respond");
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    assert_eq!(
+        json_body(conflict).await,
+        json!({ "error": true, "message": "project operations conflict" })
+    );
+
+    let internal_service = FakeProjectService::with_project(USER_ID, false);
+    *internal_service
+        .operations_read_failure
+        .lock()
+        .expect("operations read failure lock poisoned") = Some("internal");
+    let internal = router_with_team(internal_service, None, Some(team_info("member")))
+        .oneshot(authenticated_request(&format!("/{PROJECT_ID}/operations")))
+        .await
+        .expect("router should respond");
+    assert_eq!(internal.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        json_body(internal).await,
+        json!({ "error": true, "message": "internal server error" })
+    );
+}
+
+#[tokio::test]
+async fn operations_user_only_rejects_internal_before_project_or_team_access() {
+    let response = router_with_team(
+        FakeProjectService::with_project(USER_ID, false),
+        None,
+        Some(team_info("member")),
+    )
+    .oneshot(internal_json_request(
+        "GET",
+        &format!("/{PROJECT_ID}/operations"),
+        json!({}),
+    ))
+    .await
+    .expect("router should respond");
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[test]
+fn operations_handler_declaration_keeps_authorization_and_receipts_ordered() {
+    let source = include_str!("project_operations.rs");
+    let get = source
+        .split("pub async fn get_project_operations_handler")
+        .nth(1)
+        .expect("get handler declaration");
+    let put = source
+        .split("pub async fn replace_project_operations_handler")
+        .nth(1)
+        .expect("put handler declaration");
+
+    assert!(get.find("UserOnly") < get.find("ViewAccessLevel"));
+    assert!(get.find("ViewAccessLevel") < get.find("ReadProjectWorkScoped"));
+    assert!(put.find("UserOnly") < put.find("OwnerAccessLevel"));
+    assert!(put.find("OwnerAccessLevel") < put.find("WriteProjectWorkStatusScoped"));
+    assert!(put.find("WriteProjectWorkStatusScoped") < put.find("Extension<RequestId>"));
+    assert!(put.find("Extension<RequestId>") < put.find("Json<ReplaceProjectOperationsRequest>"));
+}
+
+#[test]
+fn operations_api_json_is_camel_case_and_excludes_server_owned_input_fields() {
+    let body = json!({
+        "status": "active",
+        "priority": "high",
+        "leadUserId": null,
+        "startDate": "2026-08-28",
+        "targetDate": "2026-09-01",
+        "policy": { "cadence": "weekly" },
+        "expectedUpdatedAt": "2026-08-28T00:00:00Z"
+    });
+    let request: super::project_operations::ReplaceProjectOperationsRequest =
+        serde_json::from_value(body).expect("public replacement request should deserialize");
+    assert_eq!(request.status, ProjectOperationalStatus::Active);
+    assert_eq!(request.priority, ProjectPriority::High);
+    assert!(request.lead_user_id.is_none());
+    assert!(
+        serde_json::from_value::<super::project_operations::ReplaceProjectOperationsRequest>(
+            json!({
+                "status": "active",
+                "priority": "high",
+                "expectedUpdatedAt": "2026-08-28T00:00:00Z",
+                "projectId": "must-not-be-client-owned"
+            })
+        )
+        .is_err()
+    );
+
+    assert_eq!(
+        serde_json::to_value(test_operations()).expect("operations should serialize"),
+        json!({
+            "projectId": PROJECT_ID,
+            "status": "planned",
+            "priority": "normal",
+            "leadUserId": null,
+            "startDate": null,
+            "targetDate": null,
+            "completedAt": null,
+            "createdAt": "2026-08-28T00:00:00Z",
+            "updatedAt": "2026-08-28T00:00:00Z",
+            "policy": null
+        })
+    );
 }
 
 #[tokio::test]
@@ -884,7 +1260,10 @@ async fn mark_uploaded_preserves_exact_lambda_request_and_response_json() {
 
     let state = ProjectRouterState {
         service: Arc::new(FakeProjectService::with_project(USER_ID, false)),
-        access_service: Arc::new(FakeEntityAccessService { access_level: None }),
+        access_service: Arc::new(FakeEntityAccessService {
+            access_level: None,
+            team_info: None,
+        }),
         authorization_state: MacroAuthorizationState::new(Arc::new(FakeAuthorizationService)),
     };
     let router = Router::new()

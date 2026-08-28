@@ -4,7 +4,7 @@ use std::collections::HashSet;
 
 use entity_access::domain::models::{
     EditAccessLevel, EntityAccessAuth, EntityAccessReceipt, EntityPermission, EntityType,
-    OwnerAccessLevel, ViewAccessLevel,
+    OwnerAccessLevel, ReadProjectWorkScoped, ViewAccessLevel, WriteProjectWorkStatusScoped,
 };
 use entity_access_management::domain::ports::EntityAccessManagementService;
 use futures::stream::{FuturesUnordered, StreamExt};
@@ -31,8 +31,9 @@ use super::events::{
     ProjectUploadedMetadata,
 };
 use super::models::{
-    CreateProjectArgs, EditProjectArgs, ProjectError, PurgedProjectTree, RevertDeleteResult,
-    SoftDeleteResult, UploadFolderRepoArgs,
+    CreateProjectArgs, EditProjectArgs, ProjectError, ProjectOperations, PurgedProjectTree,
+    RevertDeleteResult, SoftDeleteResult, UpdateProjectOperationsCommand,
+    UpdateProjectOperationsOutcome, UpdateProjectOperationsRequest, UploadFolderRepoArgs,
 };
 use super::ports::{
     BulkUploadRequestPort, ProjectRepo, ProjectSearchIndexer, ProjectService, ProjectUploadUrlPort,
@@ -255,6 +256,69 @@ where
             project_metadata,
             user_access_level: receipt_access_level(&receipt)?,
         })
+    }
+
+    async fn get_project_operations(
+        &self,
+        receipt: EntityAccessReceipt<ViewAccessLevel>,
+        company_receipt: EntityAccessReceipt<ReadProjectWorkScoped>,
+    ) -> Result<ProjectOperations, ProjectError> {
+        let actor = receipt
+            .get_authenticated_user()
+            .map_err(|_| ProjectError::Unauthorized)?;
+        let team_id = verified_company_team(&company_receipt, actor)?;
+        if receipt.entity().entity_type != EntityType::Project {
+            return Err(ProjectError::Unauthorized);
+        }
+        let project_id = &receipt.entity().entity_id;
+        self.repo
+            .get_project_operations_scoped(project_id, team_id)
+            .await
+            .map_err(|error| internal_error(error, "unable to get project operations"))?
+            .ok_or_else(|| ProjectError::NotFound(project_id.clone()))
+    }
+
+    async fn update_project_operations(
+        &self,
+        actor: MacroUserIdStr<'static>,
+        project_receipt: EntityAccessReceipt<OwnerAccessLevel>,
+        company_receipt: EntityAccessReceipt<WriteProjectWorkStatusScoped>,
+        request: UpdateProjectOperationsRequest,
+    ) -> Result<ProjectOperations, ProjectError> {
+        if project_receipt.entity().entity_type != EntityType::Project
+            || project_receipt.entity().entity_id != request.project_id
+            || project_receipt
+                .get_authenticated_user()
+                .map_err(|_| ProjectError::Unauthorized)?
+                != &actor
+        {
+            return Err(ProjectError::Unauthorized);
+        }
+        let team_id = verified_company_team(&company_receipt, &actor)?;
+        let command = UpdateProjectOperationsCommand {
+            team_id,
+            actor_user_id: actor,
+            request,
+        };
+        match self
+            .repo
+            .update_project_operations(command)
+            .await
+            .map_err(|error| internal_error(error, "unable to update project operations"))?
+        {
+            UpdateProjectOperationsOutcome::Updated(operations)
+            | UpdateProjectOperationsOutcome::Unchanged(operations) => Ok(operations),
+            UpdateProjectOperationsOutcome::NotFound => Err(ProjectError::NotFound(
+                project_receipt.entity().entity_id.clone(),
+            )),
+            UpdateProjectOperationsOutcome::LeadNotInOwnerTeam => Err(ProjectError::BadRequest(
+                "lead_user_id must be an active member of the project owner team".to_owned(),
+            )),
+            UpdateProjectOperationsOutcome::Conflict => Err(ProjectError::Conflict),
+            UpdateProjectOperationsOutcome::Invalid(error) => {
+                Err(ProjectError::BadRequest(error.to_string()))
+            }
+        }
     }
 
     async fn get_project_content(
@@ -774,6 +838,25 @@ where
             .map_err(|error| internal_error(error, "unable to get basic project"))?
             .ok_or_else(|| ProjectError::NotFound(project_id.to_string()))
     }
+}
+
+/// Ensures a company receipt represents the same authenticated human and a canonical team UUID.
+fn verified_company_team<T>(
+    receipt: &EntityAccessReceipt<T>,
+    actor: &MacroUserIdStr<'static>,
+) -> Result<Uuid, ProjectError>
+where
+    T: entity_access::domain::models::RequiredPermission,
+{
+    if receipt.entity().entity_type != EntityType::Team
+        || receipt
+            .get_authenticated_user()
+            .map_err(|_| ProjectError::Unauthorized)?
+            != actor
+    {
+        return Err(ProjectError::Unauthorized);
+    }
+    Uuid::parse_str(&receipt.entity().entity_id).map_err(|_| ProjectError::Unauthorized)
 }
 
 fn validate_project_name(name: &str) -> Result<(), ProjectError> {

@@ -11079,6 +11079,328 @@
         }
       }
     },
+    "/v2/projects/{id}/operations": {
+      "get": {
+        "tags": ["project"],
+        "summary": "Read operational metadata for one project.",
+        "operationId": "get_project_operations",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "ID of the project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error", "data"],
+                  "properties": {
+                    "data": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "description": "Operational metadata attached one-to-one to a canonical project.\n\nThis model deliberately excludes project content and generic project fields.",
+                          "required": [
+                            "projectId",
+                            "status",
+                            "priority",
+                            "createdAt",
+                            "updatedAt"
+                          ],
+                          "properties": {
+                            "completedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time",
+                              "description": "When work was completed, if recorded."
+                            },
+                            "createdAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "description": "When the operational record was created."
+                            },
+                            "leadUserId": {
+                              "oneOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/components/schemas/MacroUserIdStr",
+                                  "description": "Optional operational lead."
+                                }
+                              ]
+                            },
+                            "policy": {
+                              "type": ["object", "null"],
+                              "description": "Optional bounded object-shaped operational policy."
+                            },
+                            "priority": {
+                              "$ref": "#/components/schemas/ProjectPriority",
+                              "description": "Relative operational urgency."
+                            },
+                            "projectId": {
+                              "type": "string",
+                              "description": "Canonical project identifier."
+                            },
+                            "startDate": {
+                              "type": ["string", "null"],
+                              "format": "date",
+                              "description": "Optional planned start date."
+                            },
+                            "status": {
+                              "$ref": "#/components/schemas/ProjectOperationalStatus",
+                              "description": "Operational lifecycle state."
+                            },
+                            "targetDate": {
+                              "type": ["string", "null"],
+                              "format": "date",
+                              "description": "Optional planned target date."
+                            },
+                            "updatedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "description": "When the operational record was last updated."
+                            }
+                          }
+                        }
+                      ],
+                      "description": "Data to be returned"
+                    },
+                    "error": {
+                      "type": "boolean",
+                      "description": "Indicates if an error occurred"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": ["project"],
+        "summary": "Replace all client-owned operational metadata for one project.",
+        "operationId": "replace_project_operations",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "ID of the project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplaceProjectOperationsRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error", "data"],
+                  "properties": {
+                    "data": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "description": "Operational metadata attached one-to-one to a canonical project.\n\nThis model deliberately excludes project content and generic project fields.",
+                          "required": [
+                            "projectId",
+                            "status",
+                            "priority",
+                            "createdAt",
+                            "updatedAt"
+                          ],
+                          "properties": {
+                            "completedAt": {
+                              "type": ["string", "null"],
+                              "format": "date-time",
+                              "description": "When work was completed, if recorded."
+                            },
+                            "createdAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "description": "When the operational record was created."
+                            },
+                            "leadUserId": {
+                              "oneOf": [
+                                {
+                                  "type": "null"
+                                },
+                                {
+                                  "$ref": "#/components/schemas/MacroUserIdStr",
+                                  "description": "Optional operational lead."
+                                }
+                              ]
+                            },
+                            "policy": {
+                              "type": ["object", "null"],
+                              "description": "Optional bounded object-shaped operational policy."
+                            },
+                            "priority": {
+                              "$ref": "#/components/schemas/ProjectPriority",
+                              "description": "Relative operational urgency."
+                            },
+                            "projectId": {
+                              "type": "string",
+                              "description": "Canonical project identifier."
+                            },
+                            "startDate": {
+                              "type": ["string", "null"],
+                              "format": "date",
+                              "description": "Optional planned start date."
+                            },
+                            "status": {
+                              "$ref": "#/components/schemas/ProjectOperationalStatus",
+                              "description": "Operational lifecycle state."
+                            },
+                            "targetDate": {
+                              "type": ["string", "null"],
+                              "format": "date",
+                              "description": "Optional planned target date."
+                            },
+                            "updatedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "description": "When the operational record was last updated."
+                            }
+                          }
+                        }
+                      ],
+                      "description": "Data to be returned"
+                    },
+                    "error": {
+                      "type": "boolean",
+                      "description": "Indicates if an error occurred"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/webhook/webhooks": {
       "get": {
         "tags": ["webhook"],
@@ -21528,6 +21850,81 @@
           }
         }
       },
+      "ProjectOperationalStatus": {
+        "type": "string",
+        "description": "The operational lifecycle state stored for a project.",
+        "enum": ["planned", "active", "paused", "completed", "archived"]
+      },
+      "ProjectOperations": {
+        "type": "object",
+        "description": "Operational metadata attached one-to-one to a canonical project.\n\nThis model deliberately excludes project content and generic project fields.",
+        "required": [
+          "projectId",
+          "status",
+          "priority",
+          "createdAt",
+          "updatedAt"
+        ],
+        "properties": {
+          "completedAt": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "When work was completed, if recorded."
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the operational record was created."
+          },
+          "leadUserId": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MacroUserIdStr",
+                "description": "Optional operational lead."
+              }
+            ]
+          },
+          "policy": {
+            "type": ["object", "null"],
+            "description": "Optional bounded object-shaped operational policy."
+          },
+          "priority": {
+            "$ref": "#/components/schemas/ProjectPriority",
+            "description": "Relative operational urgency."
+          },
+          "projectId": {
+            "type": "string",
+            "description": "Canonical project identifier."
+          },
+          "startDate": {
+            "type": ["string", "null"],
+            "format": "date",
+            "description": "Optional planned start date."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProjectOperationalStatus",
+            "description": "Operational lifecycle state."
+          },
+          "targetDate": {
+            "type": ["string", "null"],
+            "format": "date",
+            "description": "Optional planned target date."
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "When the operational record was last updated."
+          }
+        }
+      },
+      "ProjectPriority": {
+        "type": "string",
+        "description": "The relative operational urgency stored for a project.",
+        "enum": ["low", "normal", "high", "urgent"]
+      },
       "ProjectPreview": {
         "oneOf": [
           {
@@ -22119,6 +22516,52 @@
             "description": "The type of the pin"
           }
         }
+      },
+      "ReplaceProjectOperationsRequest": {
+        "type": "object",
+        "description": "Full replacement of client-owned operational project fields.\n\nThe project identity, acting user, team, request correlation, completion time,\nand record timestamps are server-owned and therefore excluded.",
+        "required": ["status", "priority", "expectedUpdatedAt"],
+        "properties": {
+          "expectedUpdatedAt": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Operational record version observed before this full replacement."
+          },
+          "leadUserId": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/MacroUserIdStr",
+                "description": "Optional active-team lead. `null` or omission clears the lead."
+              }
+            ]
+          },
+          "policy": {
+            "type": ["object", "null"],
+            "description": "Optional bounded object-shaped operational policy."
+          },
+          "priority": {
+            "$ref": "#/components/schemas/ProjectPriority",
+            "description": "Requested relative urgency."
+          },
+          "startDate": {
+            "type": ["string", "null"],
+            "format": "date",
+            "description": "Optional planned start date."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ProjectOperationalStatus",
+            "description": "Requested lifecycle state."
+          },
+          "targetDate": {
+            "type": ["string", "null"],
+            "format": "date",
+            "description": "Optional planned target date."
+          }
+        },
+        "additionalProperties": false
       },
       "RingStatus": {
         "type": "string",

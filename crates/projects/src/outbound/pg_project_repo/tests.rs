@@ -12,7 +12,11 @@ use models_permissions::share_permission::{
 use sqlx::{Pool, Postgres, Row};
 
 use super::PgProjectRepo;
-use crate::domain::models::{CreateProjectArgs, EditProjectArgs, UploadFolderRepoArgs};
+use crate::domain::models::{
+    CreateProjectArgs, EditProjectArgs, ProjectOperationalStatus, ProjectPriority,
+    ReplaceProjectOperationsArgs, UpdateProjectOperationsCommand, UpdateProjectOperationsOutcome,
+    UpdateProjectOperationsRequest, UploadFolderRepoArgs,
+};
 use crate::domain::ports::ProjectRepo;
 
 const ROOT_ID: &str = "10000000-0000-0000-0000-000000000001";
@@ -107,7 +111,473 @@ async fn basic_lookup_includes_deleted_but_full_lookup_excludes_it(
     assert!(repo.get_project_by_id(ROOT_ID).await?.is_some());
     assert!(repo.get_basic_project("missing").await?.is_none());
     assert!(repo.get_project_operations(DELETED_ID).await?.is_none());
+    assert!(
+        repo.get_project_operations_scoped(DELETED_ID, uuid::Uuid::from_u128(200))
+            .await?
+            .is_none()
+    );
     assert!(repo.get_project_operations("missing").await?.is_none());
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn operations_update_is_team_scoped_audited_and_noop_is_not_audited(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    let team_id = uuid::Uuid::from_u128(201);
+    sqlx::query(r#"INSERT INTO "team" (id, name, owner_id) VALUES ($1, 'operations', 'macro|owner@test.com')"#)
+        .bind(team_id).execute(&pool).await?;
+    sqlx::query("INSERT INTO team_user (user_id, team_id, team_role) VALUES ($1, $2, 'owner')")
+        .bind("macro|owner@test.com")
+        .bind(team_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE project_operations SET lead_user_id = $1 WHERE project_id = $2")
+        .bind("macro|viewer@test.com")
+        .bind(ROOT_ID)
+        .execute(&pool)
+        .await?;
+    assert!(
+        repo.get_project_operations_scoped(ROOT_ID, team_id)
+            .await?
+            .unwrap()
+            .lead_user_id
+            .is_none()
+    );
+    assert!(
+        repo.get_project_operations_scoped(ROOT_ID, team_id)
+            .await?
+            .is_some()
+    );
+    assert!(
+        repo.get_project_operations_scoped(ROOT_ID, uuid::Uuid::from_u128(202))
+            .await?
+            .is_none()
+    );
+    let current = repo.get_project_operations(ROOT_ID).await?.unwrap();
+    assert!(matches!(
+        repo.update_project_operations(UpdateProjectOperationsCommand {
+            team_id: uuid::Uuid::from_u128(202),
+            actor_user_id: MacroUserIdStr::parse_from_str("macro|owner@test.com")?.into_owned(),
+            request: UpdateProjectOperationsRequest {
+                project_id: ROOT_ID.to_owned(),
+                request_id: "operations-cross-team".to_owned(),
+                now: chrono::Utc::now(),
+                replacement: ReplaceProjectOperationsArgs {
+                    status: ProjectOperationalStatus::Active,
+                    priority: current.priority,
+                    lead_user_id: None,
+                    start_date: current.start_date,
+                    target_date: current.target_date,
+                    policy: current.policy.clone(),
+                    expected_updated_at: current.updated_at,
+                },
+            },
+        })
+        .await?,
+        UpdateProjectOperationsOutcome::NotFound
+    ));
+    assert_eq!(
+        repo.get_project_operations(ROOT_ID)
+            .await?
+            .unwrap()
+            .updated_at,
+        current.updated_at
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM business_audit_events")
+            .fetch_one(&pool)
+            .await?,
+        0
+    );
+    let now = chrono::Utc::now();
+    let command = UpdateProjectOperationsCommand {
+        team_id,
+        actor_user_id: MacroUserIdStr::parse_from_str("macro|owner@test.com")?.into_owned(),
+        request: UpdateProjectOperationsRequest {
+            project_id: ROOT_ID.to_owned(),
+            request_id: "operations-test".to_owned(),
+            now,
+            replacement: ReplaceProjectOperationsArgs {
+                status: ProjectOperationalStatus::Active,
+                priority: ProjectPriority::High,
+                lead_user_id: None,
+                start_date: None,
+                target_date: None,
+                policy: None,
+                expected_updated_at: current.updated_at,
+            },
+        },
+    };
+    let updated = repo.update_project_operations(command).await?;
+    assert!(
+        matches!(updated, UpdateProjectOperationsOutcome::Updated(ref row) if row.status == ProjectOperationalStatus::Active && row.priority == ProjectPriority::High)
+    );
+    let audit = sqlx::query("SELECT team_id, actor, delegated_actor, action, target_type, target_id, outcome, request_id, reason, retention_class, metadata FROM business_audit_events WHERE action = 'project_operations_updated'").fetch_one(&pool).await?;
+    assert_eq!(audit.get::<uuid::Uuid, _>("team_id"), team_id);
+    assert_eq!(audit.get::<String, _>("actor"), "macro|owner@test.com");
+    assert_eq!(
+        audit.get::<String, _>("action"),
+        "project_operations_updated"
+    );
+    assert_eq!(audit.get::<String, _>("target_type"), "project");
+    assert_eq!(audit.get::<String, _>("target_id"), ROOT_ID);
+    assert_eq!(audit.get::<String, _>("outcome"), "success");
+    assert_eq!(audit.get::<String, _>("request_id"), "operations-test");
+    assert_eq!(audit.get::<String, _>("retention_class"), "standard");
+    assert!(audit.get::<Option<String>, _>("delegated_actor").is_none());
+    assert!(audit.get::<Option<String>, _>("reason").is_none());
+    let metadata: serde_json::Value = audit.get("metadata");
+    assert_eq!(metadata["from_status"], "planned");
+    assert_eq!(metadata["to_status"], "active");
+    assert_eq!(
+        metadata["changed_fields"],
+        serde_json::json!(["status", "priority", "lead_user_id"])
+    );
+    assert!(metadata.get("lead_user_id").is_none());
+    let after = repo.get_project_operations(ROOT_ID).await?.unwrap();
+    let noop = UpdateProjectOperationsCommand {
+        team_id,
+        actor_user_id: MacroUserIdStr::parse_from_str("macro|owner@test.com")?.into_owned(),
+        request: UpdateProjectOperationsRequest {
+            project_id: ROOT_ID.to_owned(),
+            request_id: "operations-noop".to_owned(),
+            now: chrono::Utc::now(),
+            replacement: ReplaceProjectOperationsArgs {
+                status: after.status,
+                priority: after.priority,
+                lead_user_id: after.lead_user_id.clone(),
+                start_date: after.start_date,
+                target_date: after.target_date,
+                policy: after.policy.clone(),
+                expected_updated_at: chrono::Utc::now(),
+            },
+        },
+    };
+    assert!(matches!(
+        repo.update_project_operations(noop).await?,
+        UpdateProjectOperationsOutcome::Unchanged(_)
+    ));
+    let audits_after: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM business_audit_events WHERE action = 'project_operations_updated'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(audits_after, 1);
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn operations_rejects_invalid_stale_and_departed_lead_without_audit_or_partial_write(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    let team_id = uuid::Uuid::from_u128(211);
+    sqlx::query(r#"INSERT INTO "team" (id, name, owner_id) VALUES ($1, 'operations-guard', 'macro|owner@test.com')"#).bind(team_id).execute(&pool).await?;
+    sqlx::query("INSERT INTO team_user (user_id, team_id, team_role) VALUES ($1, $2, 'owner')")
+        .bind("macro|owner@test.com")
+        .bind(team_id)
+        .execute(&pool)
+        .await?;
+    let before = repo.get_project_operations(ROOT_ID).await?.unwrap();
+    let command = |status, lead, expected| UpdateProjectOperationsCommand {
+        team_id,
+        actor_user_id: MacroUserIdStr::parse_from_str("macro|owner@test.com")
+            .unwrap()
+            .into_owned(),
+        request: UpdateProjectOperationsRequest {
+            project_id: ROOT_ID.to_owned(),
+            request_id: "operations-guard".to_owned(),
+            now: chrono::Utc::now(),
+            replacement: ReplaceProjectOperationsArgs {
+                status,
+                priority: before.priority,
+                lead_user_id: lead,
+                start_date: None,
+                target_date: None,
+                policy: None,
+                expected_updated_at: expected,
+            },
+        },
+    };
+    assert!(matches!(
+        repo.update_project_operations(command(
+            ProjectOperationalStatus::Paused,
+            None,
+            before.updated_at
+        ))
+        .await?,
+        UpdateProjectOperationsOutcome::Invalid(_)
+    ));
+    assert!(matches!(
+        repo.update_project_operations(command(
+            ProjectOperationalStatus::Active,
+            None,
+            chrono::Utc::now()
+        ))
+        .await?,
+        UpdateProjectOperationsOutcome::Conflict
+    ));
+    let departed = MacroUserIdStr::parse_from_str("macro|viewer@test.com")?.into_owned();
+    assert!(matches!(
+        repo.update_project_operations(command(
+            ProjectOperationalStatus::Active,
+            Some(departed),
+            before.updated_at
+        ))
+        .await?,
+        UpdateProjectOperationsOutcome::LeadNotInOwnerTeam
+    ));
+    for replacement in [
+        ReplaceProjectOperationsArgs {
+            status: ProjectOperationalStatus::Planned,
+            priority: before.priority,
+            lead_user_id: None,
+            start_date: Some(chrono::NaiveDate::from_ymd_opt(2026, 2, 2).unwrap()),
+            target_date: Some(chrono::NaiveDate::from_ymd_opt(2026, 2, 1).unwrap()),
+            policy: None,
+            expected_updated_at: before.updated_at,
+        },
+        ReplaceProjectOperationsArgs {
+            status: ProjectOperationalStatus::Planned,
+            priority: before.priority,
+            lead_user_id: None,
+            start_date: None,
+            target_date: None,
+            policy: Some(serde_json::json!([])),
+            expected_updated_at: before.updated_at,
+        },
+        ReplaceProjectOperationsArgs {
+            status: ProjectOperationalStatus::Planned,
+            priority: before.priority,
+            lead_user_id: None,
+            start_date: None,
+            target_date: None,
+            policy: Some(serde_json::json!({"value": "x".repeat(4096)})),
+            expected_updated_at: before.updated_at,
+        },
+    ] {
+        assert!(matches!(
+            repo.update_project_operations(UpdateProjectOperationsCommand {
+                team_id,
+                actor_user_id: MacroUserIdStr::parse_from_str("macro|owner@test.com")?.into_owned(),
+                request: UpdateProjectOperationsRequest {
+                    project_id: ROOT_ID.to_owned(),
+                    request_id: "operations-invalid".to_owned(),
+                    now: chrono::Utc::now(),
+                    replacement,
+                },
+            })
+            .await?,
+            UpdateProjectOperationsOutcome::Invalid(_)
+        ));
+    }
+    assert_eq!(
+        repo.get_project_operations(ROOT_ID)
+            .await?
+            .unwrap()
+            .updated_at,
+        before.updated_at
+    );
+    let audit_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM business_audit_events WHERE action = 'project_operations_updated'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(audit_count, 0);
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn operations_without_an_active_owner_team_are_not_scoped_or_mutable(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    let project_id = "10000000-0000-0000-0000-000000000007";
+    let before = repo.get_project_operations(project_id).await?.unwrap();
+    let team_id = uuid::Uuid::from_u128(212);
+    assert!(
+        repo.get_project_operations_scoped(project_id, team_id)
+            .await?
+            .is_none()
+    );
+    assert!(matches!(
+        repo.update_project_operations(UpdateProjectOperationsCommand {
+            team_id,
+            actor_user_id: MacroUserIdStr::parse_from_str("macro|viewer@test.com")?.into_owned(),
+            request: UpdateProjectOperationsRequest {
+                project_id: project_id.to_owned(),
+                request_id: "operations-personal".to_owned(),
+                now: chrono::Utc::now(),
+                replacement: ReplaceProjectOperationsArgs {
+                    status: ProjectOperationalStatus::Active,
+                    priority: before.priority,
+                    lead_user_id: None,
+                    start_date: before.start_date,
+                    target_date: before.target_date,
+                    policy: before.policy.clone(),
+                    expected_updated_at: before.updated_at,
+                },
+            },
+        })
+        .await?,
+        UpdateProjectOperationsOutcome::NotFound
+    ));
+    assert_eq!(
+        repo.get_project_operations(project_id)
+            .await?
+            .unwrap()
+            .updated_at,
+        before.updated_at
+    );
+    assert_eq!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM business_audit_events")
+            .fetch_one(&pool)
+            .await?,
+        0
+    );
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn operations_audit_failure_rolls_back_updated_row(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    let team_id = uuid::Uuid::from_u128(221);
+    sqlx::query(r#"INSERT INTO "team" (id, name, owner_id) VALUES ($1, 'operations-rollback', 'macro|owner@test.com')"#).bind(team_id).execute(&pool).await?;
+    sqlx::query("INSERT INTO team_user (user_id, team_id, team_role) VALUES ($1, $2, 'owner')")
+        .bind("macro|owner@test.com")
+        .bind(team_id)
+        .execute(&pool)
+        .await?;
+    let before = repo.get_project_operations(ROOT_ID).await?.unwrap();
+    let result = repo
+        .update_project_operations(UpdateProjectOperationsCommand {
+            team_id,
+            actor_user_id: MacroUserIdStr::parse_from_str("macro|owner@test.com")?.into_owned(),
+            request: UpdateProjectOperationsRequest {
+                project_id: ROOT_ID.to_owned(),
+                request_id: "x".repeat(257),
+                now: chrono::Utc::now(),
+                replacement: ReplaceProjectOperationsArgs {
+                    status: ProjectOperationalStatus::Active,
+                    priority: before.priority,
+                    lead_user_id: None,
+                    start_date: None,
+                    target_date: None,
+                    policy: None,
+                    expected_updated_at: before.updated_at,
+                },
+            },
+        })
+        .await;
+    assert!(result.is_err());
+    let after = repo.get_project_operations(ROOT_ID).await?.unwrap();
+    assert_eq!(after.status, before.status);
+    assert_eq!(after.updated_at, before.updated_at);
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn operations_concurrent_replacements_have_one_winner_and_idempotent_retry(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    let team_id = uuid::Uuid::from_u128(231);
+    sqlx::query(r#"INSERT INTO "team" (id, name, owner_id) VALUES ($1, 'operations-concurrent', 'macro|owner@test.com')"#).bind(team_id).execute(&pool).await?;
+    sqlx::query("INSERT INTO team_user (user_id, team_id, team_role) VALUES ($1, $2, 'owner')")
+        .bind("macro|owner@test.com")
+        .bind(team_id)
+        .execute(&pool)
+        .await?;
+    let before = repo.get_project_operations(ROOT_ID).await?.unwrap();
+    let make = |priority| UpdateProjectOperationsCommand {
+        team_id,
+        actor_user_id: MacroUserIdStr::parse_from_str("macro|owner@test.com")
+            .unwrap()
+            .into_owned(),
+        request: UpdateProjectOperationsRequest {
+            project_id: ROOT_ID.to_owned(),
+            request_id: format!("concurrent-{priority}"),
+            now: chrono::Utc::now(),
+            replacement: ReplaceProjectOperationsArgs {
+                status: ProjectOperationalStatus::Active,
+                priority,
+                lead_user_id: None,
+                start_date: None,
+                target_date: None,
+                policy: None,
+                expected_updated_at: before.updated_at,
+            },
+        },
+    };
+    let left_repo = repo.clone();
+    let right_repo = repo.clone();
+    let (left, right) = tokio::join!(
+        left_repo.update_project_operations(make(ProjectPriority::High)),
+        right_repo.update_project_operations(make(ProjectPriority::Urgent))
+    );
+    let outcomes = [left?, right?];
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|o| matches!(o, UpdateProjectOperationsOutcome::Updated(_)))
+            .count(),
+        1
+    );
+    assert_eq!(
+        outcomes
+            .iter()
+            .filter(|o| matches!(o, UpdateProjectOperationsOutcome::Conflict))
+            .count(),
+        1
+    );
+    let current = repo.get_project_operations(ROOT_ID).await?.unwrap();
+    let retry = UpdateProjectOperationsCommand {
+        team_id,
+        actor_user_id: MacroUserIdStr::parse_from_str("macro|owner@test.com")?.into_owned(),
+        request: UpdateProjectOperationsRequest {
+            project_id: ROOT_ID.to_owned(),
+            request_id: "identical-stale".to_owned(),
+            now: chrono::Utc::now(),
+            replacement: ReplaceProjectOperationsArgs {
+                status: current.status,
+                priority: current.priority,
+                lead_user_id: None,
+                start_date: current.start_date,
+                target_date: current.target_date,
+                policy: current.policy.clone(),
+                expected_updated_at: before.updated_at,
+            },
+        },
+    };
+    assert!(matches!(
+        repo.update_project_operations(retry).await?,
+        UpdateProjectOperationsOutcome::Unchanged(_)
+    ));
+    let audits: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM business_audit_events WHERE action = 'project_operations_updated'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(audits, 1);
     Ok(())
 }
 

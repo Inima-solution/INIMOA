@@ -1,8 +1,9 @@
 use std::sync::{Arc, Mutex};
 
 use entity_access::domain::models::{
-    EditAccessLevel, Entity, EntityAccessAuth, EntityAccessReceipt, EntityPermission, EntityType,
-    OwnerAccessLevel, ViewAccessLevel,
+    BotId, BotReceiptScope, EditAccessLevel, Entity, EntityAccessAuth, EntityAccessReceipt,
+    EntityPermission, EntityType, OwnerAccessLevel, ReadProjectWorkScoped, ViewAccessLevel,
+    WriteProjectWorkStatusScoped,
 };
 use entity_access_management::domain::models::EntityAccessManagementError;
 use entity_access_management::domain::ports::EntityAccessManagementService;
@@ -474,6 +475,216 @@ where
         EntityPermission::AccessLevel { access_level },
     )
     .unwrap()
+}
+
+fn company_receipt<T>(team_id: Uuid, actor: MacroUserIdStr<'static>) -> EntityAccessReceipt<T>
+where
+    T: entity_access::domain::models::RequiredPermission,
+{
+    EntityAccessReceipt::<T>::dangerously_assert_authenticated_user(
+        actor,
+        &team_id.to_string(),
+        EntityType::Team,
+    )
+}
+
+fn operations_request(project_id: Uuid) -> crate::domain::models::UpdateProjectOperationsRequest {
+    crate::domain::models::UpdateProjectOperationsRequest {
+        project_id: project_id.to_string(),
+        request_id: "operations-service".to_owned(),
+        now: chrono::Utc::now(),
+        replacement: crate::domain::models::ReplaceProjectOperationsArgs {
+            status: crate::domain::models::ProjectOperationalStatus::Planned,
+            priority: crate::domain::models::ProjectPriority::Normal,
+            lead_user_id: None,
+            start_date: None,
+            target_date: None,
+            policy: None,
+            expected_updated_at: chrono::Utc::now(),
+        },
+    }
+}
+
+fn asserted_receipt_for_entity<T>(
+    actor: MacroUserIdStr<'static>,
+    entity_id: &str,
+    entity_type: EntityType,
+) -> EntityAccessReceipt<T>
+where
+    T: entity_access::domain::models::RequiredPermission,
+{
+    EntityAccessReceipt::dangerously_assert_authenticated_user(actor, entity_id, entity_type)
+}
+
+fn operations_row(project_id: Uuid) -> crate::domain::models::ProjectOperations {
+    crate::domain::models::ProjectOperations {
+        project_id: project_id.to_string(),
+        status: crate::domain::models::ProjectOperationalStatus::Planned,
+        priority: crate::domain::models::ProjectPriority::Normal,
+        lead_user_id: None,
+        start_date: None,
+        target_date: None,
+        completed_at: None,
+        created_at: chrono::Utc::now(),
+        updated_at: chrono::Utc::now(),
+        policy: None,
+    }
+}
+
+#[tokio::test]
+async fn operations_get_requires_project_human_and_scoped_company_receipts() {
+    let project_id = Uuid::from_u128(301);
+    let team_id = Uuid::from_u128(302);
+    let actor = user_id("macro|owner@example.com");
+    let mut repo = MockProjectRepo::new();
+    repo.expect_get_project_operations_scoped()
+        .return_once(move |id, team| {
+            assert_eq!(id, project_id.to_string());
+            assert_eq!(team, team_id);
+            Box::pin(async { Ok(None) })
+        });
+    let service = service(repo, RecordingBulkUpload::default());
+    assert!(matches!(
+        service
+            .get_project_operations(
+                mutation_receipt_with_auth::<ViewAccessLevel>(
+                    project_id,
+                    AccessLevel::View,
+                    EntityAccessAuth::Authenticated(actor.clone())
+                ),
+                company_receipt::<ReadProjectWorkScoped>(team_id, actor),
+            )
+            .await,
+        Err(ProjectError::NotFound(_))
+    ));
+}
+
+#[tokio::test]
+async fn operations_update_rejects_company_actor_mismatch_before_repository() {
+    let project_id = Uuid::from_u128(303);
+    let actor = user_id("macro|owner@example.com");
+    let service = service(MockProjectRepo::new(), RecordingBulkUpload::default());
+    assert!(matches!(
+        service
+            .update_project_operations(
+                actor,
+                mutation_receipt::<OwnerAccessLevel>(project_id, AccessLevel::Owner),
+                company_receipt::<WriteProjectWorkStatusScoped>(
+                    Uuid::from_u128(304),
+                    user_id("macro|other@example.com")
+                ),
+                operations_request(project_id),
+            )
+            .await,
+        Err(ProjectError::Unauthorized)
+    ));
+}
+
+#[tokio::test]
+async fn operations_update_rejects_invalid_receipts_before_repository() {
+    let project_id = Uuid::from_u128(305);
+    let actor = user_id("macro|owner@example.com");
+    let team_id = Uuid::from_u128(306);
+    let cases = [
+        (
+            asserted_receipt_for_entity::<OwnerAccessLevel>(
+                actor.clone(),
+                &project_id.to_string(),
+                EntityType::Document,
+            ),
+            company_receipt::<WriteProjectWorkStatusScoped>(team_id, actor.clone()),
+        ),
+        (
+            mutation_receipt::<OwnerAccessLevel>(Uuid::from_u128(307), AccessLevel::Owner),
+            company_receipt::<WriteProjectWorkStatusScoped>(team_id, actor.clone()),
+        ),
+        (
+            mutation_receipt::<OwnerAccessLevel>(project_id, AccessLevel::Owner),
+            asserted_receipt_for_entity::<WriteProjectWorkStatusScoped>(
+                actor.clone(),
+                &team_id.to_string(),
+                EntityType::Project,
+            ),
+        ),
+        (
+            EntityAccessReceipt::<OwnerAccessLevel>::dangerously_assert_internal_user(
+                &project_id.to_string(),
+                EntityType::Project,
+            ),
+            company_receipt::<WriteProjectWorkStatusScoped>(team_id, actor.clone()),
+        ),
+        (
+            EntityAccessReceipt::<OwnerAccessLevel>::dangerously_assert_bot(
+                BotId::new_from_uuid(Uuid::from_u128(308)).into_storage_id(),
+                BotReceiptScope::User {
+                    acting_user: actor.clone(),
+                },
+                &project_id.to_string(),
+                EntityType::Project,
+            ),
+            company_receipt::<WriteProjectWorkStatusScoped>(team_id, actor.clone()),
+        ),
+    ];
+
+    for (project_receipt, company_receipt) in cases {
+        let service = service(MockProjectRepo::new(), RecordingBulkUpload::default());
+        assert!(matches!(
+            service
+                .update_project_operations(
+                    actor.clone(),
+                    project_receipt,
+                    company_receipt,
+                    operations_request(project_id),
+                )
+                .await,
+            Err(ProjectError::Unauthorized)
+        ));
+    }
+}
+
+#[tokio::test]
+async fn operations_update_maps_repository_outcomes() {
+    let project_id = Uuid::from_u128(309);
+    let actor = user_id("macro|owner@example.com");
+    let team_id = Uuid::from_u128(310);
+    let row = operations_row(project_id);
+    let outcomes = vec![
+        UpdateProjectOperationsOutcome::NotFound,
+        UpdateProjectOperationsOutcome::LeadNotInOwnerTeam,
+        UpdateProjectOperationsOutcome::Conflict,
+        UpdateProjectOperationsOutcome::Invalid(
+            crate::domain::models::ProjectOperationsValidationError::DateOrder,
+        ),
+        UpdateProjectOperationsOutcome::Updated(row.clone()),
+        UpdateProjectOperationsOutcome::Unchanged(row.clone()),
+    ];
+
+    for (index, outcome) in outcomes.into_iter().enumerate() {
+        let mut repo = MockProjectRepo::new();
+        repo.expect_update_project_operations()
+            .return_once(move |_| Box::pin(async move { Ok(outcome) }));
+        let result = service(repo, RecordingBulkUpload::default())
+            .update_project_operations(
+                actor.clone(),
+                mutation_receipt::<OwnerAccessLevel>(project_id, AccessLevel::Owner),
+                company_receipt::<WriteProjectWorkStatusScoped>(team_id, actor.clone()),
+                operations_request(project_id),
+            )
+            .await;
+        match index {
+            0 => assert!(
+                matches!(result, Err(ProjectError::NotFound(id)) if id == project_id.to_string())
+            ),
+            1 => assert!(
+                matches!(result, Err(ProjectError::BadRequest(message)) if message == "lead_user_id must be an active member of the project owner team")
+            ),
+            2 => assert!(matches!(result, Err(ProjectError::Conflict))),
+            3 => assert!(
+                matches!(result, Err(ProjectError::BadRequest(message)) if message == "start_date must be on or before target_date")
+            ),
+            _ => assert_eq!(result.unwrap(), row),
+        }
+    }
 }
 
 fn assert_project_event(event: &PublishedEvent, key: Uuid, event_type: &str) {

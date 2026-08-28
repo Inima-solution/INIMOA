@@ -7,12 +7,15 @@ use macro_user_id::user_id::MacroUserIdStr;
 use model::folder::FileSystemNode;
 use model::project::Project;
 use models_permissions::share_permission::{SharePermissionV2, UpdateSharePermissionRequestV2};
+use uuid::Uuid;
 
 #[cfg(test)]
 mod test;
 
 /// The operational lifecycle state stored for a project.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectOperationalStatus {
     /// Work has not started.
@@ -28,7 +31,9 @@ pub enum ProjectOperationalStatus {
 }
 
 /// The relative operational urgency stored for a project.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectPriority {
     /// Low urgency.
@@ -119,7 +124,8 @@ impl FromStr for ProjectPriority {
 /// Operational metadata attached one-to-one to a canonical project.
 ///
 /// This model deliberately excludes project content and generic project fields.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
 pub struct ProjectOperations {
     /// Canonical project identifier.
     pub project_id: String,
@@ -140,7 +146,211 @@ pub struct ProjectOperations {
     /// When the operational record was last updated.
     pub updated_at: DateTime<Utc>,
     /// Optional bounded object-shaped operational policy.
+    #[schema(value_type = Option<Object>)]
     pub policy: Option<serde_json::Value>,
+}
+
+/// A full replacement of mutable project operational fields.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ReplaceProjectOperationsArgs {
+    /// Requested lifecycle state.
+    pub status: ProjectOperationalStatus,
+    /// Requested priority.
+    pub priority: ProjectPriority,
+    /// Requested active-team lead, or `None` to clear it.
+    pub lead_user_id: Option<MacroUserIdStr<'static>>,
+    /// Requested planned start date.
+    pub start_date: Option<NaiveDate>,
+    /// Requested planned target date.
+    pub target_date: Option<NaiveDate>,
+    /// Requested object-shaped operational policy.
+    pub policy: Option<serde_json::Value>,
+    /// Version observed by the caller for optimistic replacement.
+    pub expected_updated_at: DateTime<Utc>,
+}
+
+/// Validation error for a project-operations replacement.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ProjectOperationsValidationError {
+    /// The requested lifecycle transition is not part of the closed state machine.
+    #[error("invalid project operations transition from {from} to {to}")]
+    InvalidTransition {
+        /// Existing state.
+        from: ProjectOperationalStatus,
+        /// Requested state.
+        to: ProjectOperationalStatus,
+    },
+    /// A target date preceded its start date.
+    #[error("start_date must be on or before target_date")]
+    DateOrder,
+    /// Policy must be a JSON object when present.
+    #[error("policy must be a JSON object")]
+    PolicyNotObject,
+    /// Compact serialized policy exceeded its durable bound.
+    #[error("policy exceeds 4096 bytes")]
+    PolicyTooLarge,
+}
+
+impl ReplaceProjectOperationsArgs {
+    /// Checks field-local constraints before persistence.
+    pub fn validate(&self) -> Result<(), ProjectOperationsValidationError> {
+        if self
+            .start_date
+            .zip(self.target_date)
+            .is_some_and(|(start, target)| start > target)
+        {
+            return Err(ProjectOperationsValidationError::DateOrder);
+        }
+        if let Some(policy) = &self.policy {
+            if !policy.is_object() {
+                return Err(ProjectOperationsValidationError::PolicyNotObject);
+            }
+            if serde_json::to_string(policy)
+                .expect("serde_json::Value always serializes")
+                .len()
+                > 4096
+            {
+                return Err(ProjectOperationsValidationError::PolicyTooLarge);
+            }
+        }
+        Ok(())
+    }
+
+    /// Applies the replacement under the lifecycle and completion-stamp rules.
+    pub fn resolve(
+        &self,
+        current: &ProjectOperations,
+        now: DateTime<Utc>,
+    ) -> Result<ResolvedProjectOperationsUpdate, ProjectOperationsValidationError> {
+        self.validate()?;
+        if !is_valid_operations_transition(current.status, self.status) {
+            return Err(ProjectOperationsValidationError::InvalidTransition {
+                from: current.status,
+                to: self.status,
+            });
+        }
+
+        let completed_at = match (current.status, self.status) {
+            (ProjectOperationalStatus::Completed, ProjectOperationalStatus::Completed)
+            | (ProjectOperationalStatus::Completed, ProjectOperationalStatus::Archived) => {
+                current.completed_at
+            }
+            (_, ProjectOperationalStatus::Completed) => Some(now),
+            (_, ProjectOperationalStatus::Active | ProjectOperationalStatus::Planned) => None,
+            _ => current.completed_at,
+        };
+        let mut changed_fields = Vec::new();
+        if current.status != self.status {
+            changed_fields.push("status");
+        }
+        if current.priority != self.priority {
+            changed_fields.push("priority");
+        }
+        if current.lead_user_id != self.lead_user_id {
+            changed_fields.push("lead_user_id");
+        }
+        if current.start_date != self.start_date {
+            changed_fields.push("start_date");
+        }
+        if current.target_date != self.target_date {
+            changed_fields.push("target_date");
+        }
+        if current.policy != self.policy {
+            changed_fields.push("policy");
+        }
+        if current.completed_at != completed_at {
+            changed_fields.push("completed_at");
+        }
+
+        Ok(ResolvedProjectOperationsUpdate {
+            status: self.status,
+            priority: self.priority,
+            lead_user_id: self.lead_user_id.clone(),
+            start_date: self.start_date,
+            target_date: self.target_date,
+            policy: self.policy.clone(),
+            completed_at,
+            changed_fields,
+        })
+    }
+}
+
+/// A replacement resolved against the locked current record.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ResolvedProjectOperationsUpdate {
+    /// Persisted lifecycle state.
+    pub status: ProjectOperationalStatus,
+    /// Persisted priority.
+    pub priority: ProjectPriority,
+    /// Persisted lead.
+    pub lead_user_id: Option<MacroUserIdStr<'static>>,
+    /// Persisted start date.
+    pub start_date: Option<NaiveDate>,
+    /// Persisted target date.
+    pub target_date: Option<NaiveDate>,
+    /// Persisted object policy.
+    pub policy: Option<serde_json::Value>,
+    /// Server-owned completion stamp.
+    pub completed_at: Option<DateTime<Utc>>,
+    /// Deterministically ordered mutable fields that changed.
+    pub changed_fields: Vec<&'static str>,
+}
+
+/// Caller-supplied portion of one operational replacement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateProjectOperationsRequest {
+    /// Canonical project identifier from the validated project receipt.
+    pub project_id: String,
+    /// Required request correlation identifier.
+    pub request_id: String,
+    /// One application-supplied time for completion, update, and audit facts.
+    pub now: DateTime<Utc>,
+    /// Full desired mutable state.
+    pub replacement: ReplaceProjectOperationsArgs,
+}
+
+/// Verified context and desired state for one atomic operations replacement.
+#[derive(Debug, Clone, PartialEq)]
+pub struct UpdateProjectOperationsCommand {
+    /// Canonical owner-team identifier derived from a validated company receipt.
+    pub team_id: Uuid,
+    /// Authenticated human actor verified against both receipts.
+    pub actor_user_id: MacroUserIdStr<'static>,
+    /// Caller-supplied fields, retained separately so it cannot assert authority.
+    pub request: UpdateProjectOperationsRequest,
+}
+
+/// Repository result for one operational replacement.
+#[derive(Debug, Clone, PartialEq)]
+pub enum UpdateProjectOperationsOutcome {
+    /// The row was changed and one audit fact was written in the same transaction.
+    Updated(ProjectOperations),
+    /// Desired state already exactly matched the locked current row.
+    Unchanged(ProjectOperations),
+    /// The project was missing, deleted, personal, or outside the supplied team.
+    NotFound,
+    /// Requested lead is not an active member of the project owner team.
+    LeadNotInOwnerTeam,
+    /// The supplied version was stale and desired state differed.
+    Conflict,
+    /// The full replacement violated a domain rule.
+    Invalid(ProjectOperationsValidationError),
+}
+
+/// Returns whether a lifecycle edge is part of the closed operations state machine.
+pub const fn is_valid_operations_transition(
+    from: ProjectOperationalStatus,
+    to: ProjectOperationalStatus,
+) -> bool {
+    use ProjectOperationalStatus::{Active, Archived, Completed, Paused, Planned};
+    matches!(
+        (from, to),
+        (Planned, Planned | Active | Archived)
+            | (Active, Active | Paused | Completed | Archived)
+            | (Paused, Paused | Active | Completed | Archived)
+            | (Completed, Completed | Active | Archived)
+            | (Archived, Archived | Planned)
+    )
 }
 
 /// Arguments for atomically creating a project and its access metadata.
@@ -270,6 +480,9 @@ pub enum ProjectError {
     /// The requested parent would recursively nest the project.
     #[error("project is recursively nested")]
     RecursiveNesting,
+    /// The request was based on a stale operational record version.
+    #[error("project operations conflict")]
+    Conflict,
     /// An internal operation failed.
     #[error("{0}")]
     Internal(#[from] anyhow::Error),

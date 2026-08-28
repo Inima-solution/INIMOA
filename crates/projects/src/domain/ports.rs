@@ -6,7 +6,8 @@
 use std::future::Future;
 
 use entity_access::domain::models::{
-    EditAccessLevel, EntityAccessReceipt, OwnerAccessLevel, ViewAccessLevel,
+    EditAccessLevel, EntityAccessReceipt, OwnerAccessLevel, ReadProjectWorkScoped, ViewAccessLevel,
+    WriteProjectWorkStatusScoped,
 };
 use macro_user_id::user_id::MacroUserIdStr;
 use model::document::ContentType;
@@ -30,6 +31,7 @@ use uuid::Uuid;
 use super::models::{
     CreateProjectArgs, EditProjectArgs, MarkedUploadedTree, MutatedProject, ProjectError,
     ProjectOperations, PurgedProjectTree, RevertDeleteResult, SoftDeleteResult,
+    UpdateProjectOperationsCommand, UpdateProjectOperationsOutcome, UpdateProjectOperationsRequest,
     UploadFolderRepoArgs,
 };
 
@@ -59,6 +61,19 @@ pub trait ProjectRepo: Send + Sync + 'static {
         &self,
         project_id: &str,
     ) -> impl Future<Output = Result<Option<ProjectOperations>, Self::Err>> + Send;
+
+    /// Get operational metadata only when the project's active owner team matches `team_id`.
+    fn get_project_operations_scoped(
+        &self,
+        project_id: &str,
+        team_id: Uuid,
+    ) -> impl Future<Output = Result<Option<ProjectOperations>, Self::Err>> + Send;
+
+    /// Atomically replace one project's operational state and write its audit fact.
+    fn update_project_operations(
+        &self,
+        command: UpdateProjectOperationsCommand,
+    ) -> impl Future<Output = Result<UpdateProjectOperationsOutcome, Self::Err>> + Send;
 
     /// List non-deleted, uploaded projects in the user's view history.
     fn get_projects_for_user(
@@ -349,6 +364,22 @@ pub trait ProjectService: Send + Sync + 'static {
         &self,
         receipt: EntityAccessReceipt<ViewAccessLevel>,
     ) -> impl Future<Output = Result<GetProjectResponseData, ProjectError>> + Send;
+
+    /// Get operational metadata after project and company access were independently verified.
+    fn get_project_operations(
+        &self,
+        receipt: EntityAccessReceipt<ViewAccessLevel>,
+        company_receipt: EntityAccessReceipt<ReadProjectWorkScoped>,
+    ) -> impl Future<Output = Result<ProjectOperations, ProjectError>> + Send;
+
+    /// Atomically replace operational metadata after typed project/company receipt checks.
+    fn update_project_operations(
+        &self,
+        actor: MacroUserIdStr<'static>,
+        project_receipt: EntityAccessReceipt<OwnerAccessLevel>,
+        company_receipt: EntityAccessReceipt<WriteProjectWorkStatusScoped>,
+        request: UpdateProjectOperationsRequest,
+    ) -> impl Future<Output = Result<ProjectOperations, ProjectError>> + Send;
 
     /// Get depth-one project content with caller-specific access attribution.
     fn get_project_content(

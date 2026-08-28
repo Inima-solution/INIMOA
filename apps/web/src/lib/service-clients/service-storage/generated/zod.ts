@@ -27139,6 +27139,133 @@ export const editProjectV2Response = zod.object({
 });
 
 /**
+ * @summary Read operational metadata for one project.
+ */
+export const getProjectOperationsParams = zod.object({
+  id: zod.string().describe('ID of the project'),
+});
+
+export const getProjectOperationsResponse = zod.object({
+  data: zod
+    .object({
+      completedAt: zod.iso
+        .datetime({})
+        .nullish()
+        .describe('When work was completed, if recorded.'),
+      createdAt: zod.iso
+        .datetime({})
+        .describe('When the operational record was created.'),
+      leadUserId: zod.union([zod.null(), zod.string()]).optional(),
+      policy: zod
+        .object({})
+        .nullish()
+        .describe('Optional bounded object-shaped operational policy.'),
+      priority: zod
+        .enum(['low', 'normal', 'high', 'urgent'])
+        .describe('The relative operational urgency stored for a project.'),
+      projectId: zod.string().describe('Canonical project identifier.'),
+      startDate: zod.iso
+        .date()
+        .nullish()
+        .describe('Optional planned start date.'),
+      status: zod
+        .enum(['planned', 'active', 'paused', 'completed', 'archived'])
+        .describe('The operational lifecycle state stored for a project.'),
+      targetDate: zod.iso
+        .date()
+        .nullish()
+        .describe('Optional planned target date.'),
+      updatedAt: zod.iso
+        .datetime({})
+        .describe('When the operational record was last updated.'),
+    })
+    .describe(
+      'Operational metadata attached one-to-one to a canonical project.\n\nThis model deliberately excludes project content and generic project fields.'
+    )
+    .describe('Data to be returned'),
+  error: zod.boolean().describe('Indicates if an error occurred'),
+});
+
+/**
+ * @summary Replace all client-owned operational metadata for one project.
+ */
+export const replaceProjectOperationsParams = zod.object({
+  id: zod.string().describe('ID of the project'),
+});
+
+export const replaceProjectOperationsBody = zod
+  .object({
+    expectedUpdatedAt: zod.iso
+      .datetime({})
+      .describe(
+        'Operational record version observed before this full replacement.'
+      ),
+    leadUserId: zod.union([zod.null(), zod.string()]).optional(),
+    policy: zod
+      .object({})
+      .nullish()
+      .describe('Optional bounded object-shaped operational policy.'),
+    priority: zod
+      .enum(['low', 'normal', 'high', 'urgent'])
+      .describe('The relative operational urgency stored for a project.'),
+    startDate: zod.iso
+      .date()
+      .nullish()
+      .describe('Optional planned start date.'),
+    status: zod
+      .enum(['planned', 'active', 'paused', 'completed', 'archived'])
+      .describe('The operational lifecycle state stored for a project.'),
+    targetDate: zod.iso
+      .date()
+      .nullish()
+      .describe('Optional planned target date.'),
+  })
+  .describe(
+    'Full replacement of client-owned operational project fields.\n\nThe project identity, acting user, team, request correlation, completion time,\nand record timestamps are server-owned and therefore excluded.'
+  );
+
+export const replaceProjectOperationsResponse = zod.object({
+  data: zod
+    .object({
+      completedAt: zod.iso
+        .datetime({})
+        .nullish()
+        .describe('When work was completed, if recorded.'),
+      createdAt: zod.iso
+        .datetime({})
+        .describe('When the operational record was created.'),
+      leadUserId: zod.union([zod.null(), zod.string()]).optional(),
+      policy: zod
+        .object({})
+        .nullish()
+        .describe('Optional bounded object-shaped operational policy.'),
+      priority: zod
+        .enum(['low', 'normal', 'high', 'urgent'])
+        .describe('The relative operational urgency stored for a project.'),
+      projectId: zod.string().describe('Canonical project identifier.'),
+      startDate: zod.iso
+        .date()
+        .nullish()
+        .describe('Optional planned start date.'),
+      status: zod
+        .enum(['planned', 'active', 'paused', 'completed', 'archived'])
+        .describe('The operational lifecycle state stored for a project.'),
+      targetDate: zod.iso
+        .date()
+        .nullish()
+        .describe('Optional planned target date.'),
+      updatedAt: zod.iso
+        .datetime({})
+        .describe('When the operational record was last updated.'),
+    })
+    .describe(
+      'Operational metadata attached one-to-one to a canonical project.\n\nThis model deliberately excludes project content and generic project fields.'
+    )
+    .describe('Data to be returned'),
+  error: zod.boolean().describe('Indicates if an error occurred'),
+});
+
+/**
  * @summary List the caller's webhooks.
  */
 export const listWebhooksResponse = zod
