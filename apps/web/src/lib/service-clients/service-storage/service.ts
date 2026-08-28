@@ -25,6 +25,10 @@ const _ChatResponseSchema = z.object({});
 
 const ProcessingResultTypeSchema = z.enum(['PREPROCESS', 'SPLIT_TEXTS']);
 
+const ProjectOperationsPolicySchema = z
+  .record(z.string(), z.unknown())
+  .nullish();
+
 /** Available document processing result variants. */
 export type ProcessingResultType = z.infer<typeof ProcessingResultTypeSchema>;
 
@@ -137,6 +141,27 @@ const ProjectsSvc = new Svc('Projects Service')
     description: 'Get a project',
     args: schemas.getProjectHandlerParams.shape,
     result: schemas.getProjectHandlerResponse.shape.data.shape,
+    throws: withFetchErrors(),
+  })
+  .fn('getOperations', {
+    description: schemas.getProjectOperationsParams.description!,
+    args: schemas.getProjectOperationsParams.shape,
+    result: schemas.getProjectOperationsResponse.shape.data.extend({
+      policy: ProjectOperationsPolicySchema,
+    }).shape,
+    throws: withFetchErrors(),
+  })
+  .fn('replaceOperations', {
+    description: schemas.replaceProjectOperationsBody.description!,
+    args: {
+      ...schemas.replaceProjectOperationsParams.shape,
+      ...schemas.replaceProjectOperationsBody.shape,
+      policy: ProjectOperationsPolicySchema,
+    },
+    result: schemas.replaceProjectOperationsResponse.shape.data.extend({
+      policy: ProjectOperationsPolicySchema,
+    }).shape,
+    modifies: true,
     throws: withFetchErrors(),
   })
   .fn('delete', {

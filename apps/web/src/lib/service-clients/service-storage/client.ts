@@ -117,6 +117,7 @@ import type { GetOrCreateDmRequest } from './generated/schemas/getOrCreateDmRequ
 import type { GetOrCreatePrivateRequest } from './generated/schemas/getOrCreatePrivateRequest';
 import type { GetPendingProjectsHandler200 } from './generated/schemas/getPendingProjectsHandler200';
 import type { GetProjectContentResponse } from './generated/schemas/getProjectContentResponse';
+import type { GetProjectOperations200 } from './generated/schemas/getProjectOperations200';
 import type { GetProjectResponse } from './generated/schemas/getProjectResponse';
 import type { GetSystemSkillsHandler200 } from './generated/schemas/getSystemSkillsHandler200';
 import type { GithubPullRequestsResponse } from './generated/schemas/githubPullRequestsResponse';
@@ -146,6 +147,8 @@ import type { RemindersList } from './generated/schemas/remindersList';
 import type { RemoveParticipantsRequest } from './generated/schemas/removeParticipantsRequest';
 import type { ReorderFavoritesRequest } from './generated/schemas/reorderFavoritesRequest';
 import type { ReorderPinRequest } from './generated/schemas/reorderPinRequest';
+import type { ReplaceProjectOperations200 } from './generated/schemas/replaceProjectOperations200';
+import type { ReplaceProjectOperationsRequest } from './generated/schemas/replaceProjectOperationsRequest';
 import type { SaveDocumentResponseData } from './generated/schemas/saveDocumentResponseData';
 import type { SetCompanyNameRequest } from './generated/schemas/setCompanyNameRequest';
 import type { SetContactNameRequest } from './generated/schemas/setContactNameRequest';
@@ -2256,6 +2259,30 @@ export const storageServiceClient = {
       return (await dssFetch<GetProjectResponse>(`/projects/${id}`)).map(
         (result) => result.data
       );
+    },
+
+    async getOperations({ id }) {
+      return (
+        await dssFetch<GetProjectOperations200>(
+          `/v2/projects/${id}/operations`,
+          { method: 'GET' }
+        )
+      ).map((result) => result.data);
+    },
+
+    async replaceOperations({
+      id,
+      ...body
+    }: { id: string } & ReplaceProjectOperationsRequest) {
+      return (
+        await dssFetch<ReplaceProjectOperations200>(
+          `/v2/projects/${id}/operations`,
+          {
+            method: 'PUT',
+            body: JSON.stringify(body),
+          }
+        )
+      ).map((result) => result.data);
     },
 
     async getPending() {
