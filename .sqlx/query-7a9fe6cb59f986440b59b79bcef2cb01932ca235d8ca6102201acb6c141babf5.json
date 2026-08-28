@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT COUNT(*)=$1::bigint AS \"completed!\" FROM UNNEST($2::text[]) candidate(id) JOIN \"Document\" d ON d.id=candidate.id AND d.\"deletedAt\" IS NULL AND d.\"projectId\" IS NOT DISTINCT FROM $3 JOIN document_sub_type dst ON dst.document_id=d.id AND dst.sub_type='task' JOIN entity_properties ep ON ep.entity_id=d.id AND ep.entity_type='TASK' AND ep.property_definition_id=$4 AND ep.values=jsonb_build_object('type','SelectOption','value',jsonb_build_array($5::text))",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "completed!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8",
+        "TextArray",
+        "Text",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "7a9fe6cb59f986440b59b79bcef2cb01932ca235d8ca6102201acb6c141babf5"
+}

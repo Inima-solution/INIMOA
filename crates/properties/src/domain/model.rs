@@ -283,6 +283,14 @@ pub enum TaskDependencyMutationOutcome {
     Updated(EntityPropertyMutationSnapshot),
     Unavailable,
     Cycle,
+    Blocked,
+}
+
+/// Result of an atomic canonical task Status mutation.
+#[derive(Debug, Clone)]
+pub enum TaskStatusMutationOutcome {
+    Updated(EntityPropertyMutationSnapshot),
+    Blocked,
 }
 
 /// The reconciled final option ids for one property after a bulk update. The

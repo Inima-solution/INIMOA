@@ -24,8 +24,8 @@ use super::model::{
     EditReceipt, EntityPropertiesKey, EntityPropertyInfo, EntityPropertyMutationSnapshot,
     EntityPropertyOptionSelection, EntityPropertyOptionUpdate, GetOrCreateTagDefinitionResult,
     PropertyDefinitionOwner, TagPromotionOutcome, TagRemapOutcome, TaskAssignedNotification,
-    TaskDependencyMutationOutcome, TaskDependencyReadiness, UpdatePropertyOptionOutcome,
-    ViewReceipt,
+    TaskDependencyMutationOutcome, TaskDependencyReadiness, TaskStatusMutationOutcome,
+    UpdatePropertyOptionOutcome, ViewReceipt,
 };
 
 /// Repository trait for property operations.
@@ -212,6 +212,13 @@ pub trait PropertiesRepo: Send + Sync + 'static {
         task_id: Uuid,
         dependency_ids: &[Uuid],
     ) -> impl Future<Output = Result<TaskDependencyMutationOutcome, Self::Err>> + Send;
+
+    /// Set the canonical task Status while serializing with Depends On writes.
+    fn transition_task_status(
+        &self,
+        task_id: Uuid,
+        status: Option<system_properties::StatusOption>,
+    ) -> impl Future<Output = Result<TaskStatusMutationOutcome, Self::Err>> + Send;
 
     /// Read direct task dependency readiness for a verified project/team scope.
     /// Returns `None` when the project is unavailable in that team scope.

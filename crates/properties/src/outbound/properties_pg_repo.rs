@@ -13,11 +13,13 @@ use super::{
     entity_properties_get_query, entity_property_queries, metadata_queries,
     property_definition_queries, property_option_queries, tag_promotion_queries,
     task_dependency_queries, task_dependency_read_queries, task_property_queries,
+    task_status_transition_queries,
 };
 use crate::domain::model::{
     EntityPropertiesKey, EntityPropertyInfo, EntityPropertyMutationSnapshot,
     GetOrCreateTagDefinitionResult, PropertyDefinitionOwner, TagPromotionOutcome, TagRemapOutcome,
-    TaskDependencyMutationOutcome, TaskDependencyReadiness, UpdatePropertyOptionOutcome,
+    TaskDependencyMutationOutcome, TaskDependencyReadiness, TaskStatusMutationOutcome,
+    UpdatePropertyOptionOutcome,
 };
 use crate::domain::ports::PropertiesRepo;
 use models_properties::DataType;
@@ -309,6 +311,15 @@ impl PropertiesRepo for PropertiesPgRepo {
     ) -> Result<TaskDependencyMutationOutcome, Self::Err> {
         task_dependency_queries::replace_task_dependencies(&self.pool, task_id, dependency_ids)
             .await
+    }
+
+    #[tracing::instrument(skip(self), err)]
+    async fn transition_task_status(
+        &self,
+        task_id: Uuid,
+        status: Option<system_properties::StatusOption>,
+    ) -> Result<TaskStatusMutationOutcome, Self::Err> {
+        task_status_transition_queries::transition_task_status(&self.pool, task_id, status).await
     }
 
     #[tracing::instrument(skip(self, task_ids), err)]

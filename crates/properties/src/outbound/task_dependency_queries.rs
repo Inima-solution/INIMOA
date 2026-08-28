@@ -7,6 +7,9 @@ use system_properties::SystemPropertyKey;
 use uuid::Uuid;
 
 use crate::domain::model::{EntityPropertyMutationSnapshot, TaskDependencyMutationOutcome};
+use crate::outbound::task_status_transition_queries::{
+    all_dependencies_completed, load_task_guard_state, requires_readiness,
+};
 
 pub async fn replace_task_dependencies(
     pool: &Pool<Postgres>,
@@ -22,6 +25,9 @@ pub async fn replace_task_dependencies(
     .fetch_one(&mut *tx)
     .await?;
 
+    let Some(state) = load_task_guard_state(&mut tx, task_id).await? else {
+        return Ok(TaskDependencyMutationOutcome::Unavailable);
+    };
     let mut locked_ids = dependency_ids
         .iter()
         .map(Uuid::to_string)
@@ -49,6 +55,16 @@ pub async fn replace_task_dependencies(
     .await?;
     if live_tasks.len() != locked_ids.len() {
         return Ok(TaskDependencyMutationOutcome::Unavailable);
+    }
+
+    // The same lock and completion policy as Status writes closes the race:
+    // an already guarded source cannot replace Depends On with an incomplete
+    // predecessor set. This is intentionally checked only at this commit.
+    if requires_readiness(state.status) {
+        if !all_dependencies_completed(&mut tx, state.project_id.as_deref(), dependency_ids).await?
+        {
+            return Ok(TaskDependencyMutationOutcome::Blocked);
+        }
     }
 
     if !dependency_ids.is_empty() {

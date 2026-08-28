@@ -96,6 +96,7 @@ impl ProjectTaskDependencyReadinessError {
             | PropertiesErr::DuplicateOptionValue
             | PropertiesErr::ConflictingTeamLabel(_)
             | PropertiesErr::TaskDependencyCycle
+            | PropertiesErr::TaskTransitionBlocked
             | PropertiesErr::Repo(_)
             | PropertiesErr::PermissionServiceNotConfigured
             | PropertiesErr::EntityPropertyNotFound => Self::Internal,

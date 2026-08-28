@@ -2,15 +2,12 @@
 
 use models_properties::EntityType;
 
-use crate::{
-    StatusOption,
-    domain::{
-        model::{
-            EmailAttachmentInput, EmailAttachmentProperty, PropertyRow, SystemPropertyError,
-            SystemPropertyKey,
-        },
-        port::SystemPropertiesRepository,
+use crate::domain::{
+    model::{
+        EmailAttachmentInput, EmailAttachmentProperty, PropertyRow, SystemPropertyError,
+        SystemPropertyKey,
     },
+    port::SystemPropertiesRepository,
 };
 
 /// Service trait for system property operations.
@@ -42,13 +39,6 @@ pub trait SystemPropertiesService: Clone + Send + Sync + 'static {
         &self,
         from_task_id: &str,
         to_task_id: &str,
-    ) -> impl Future<Output = Result<(), SystemPropertyError>> + Send;
-
-    /// Updates the task to have the provided status
-    fn update_task_status(
-        &self,
-        task_id: &str,
-        status: StatusOption,
     ) -> impl Future<Output = Result<(), SystemPropertyError>> + Send;
 }
 
@@ -110,15 +100,6 @@ where
         self.repository
             .copy_task_properties(from_task_id, to_task_id)
             .await
-    }
-
-    #[tracing::instrument(skip(self))]
-    async fn update_task_status(
-        &self,
-        task_id: &str,
-        status: StatusOption,
-    ) -> Result<(), SystemPropertyError> {
-        self.repository.update_task_status(task_id, status).await
     }
 }
 

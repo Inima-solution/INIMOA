@@ -106,6 +106,7 @@ where
                 Err(PropertiesErr::TaskDependenciesUnavailable)
             }
             TaskDependencyMutationOutcome::Cycle => Err(PropertiesErr::TaskDependencyCycle),
+            TaskDependencyMutationOutcome::Blocked => Err(PropertiesErr::TaskTransitionBlocked),
         }
     }
 }

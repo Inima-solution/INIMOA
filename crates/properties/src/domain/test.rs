@@ -1415,6 +1415,199 @@ async fn test_set_status_complete_through_general_property_mutation() {
     );
 }
 
+fn task_status_definition() -> PropertyDefinition {
+    PropertyDefinition {
+        id: SystemPropertyKey::STATUS_UUID,
+        owner: PropertyOwner::System,
+        display_name: "Status".to_string(),
+        data_type: DataType::SelectString,
+        is_multi_select: false,
+        specific_entity_type: None,
+        created_at: event_timestamp(),
+        updated_at: event_timestamp(),
+        is_system: true,
+        is_metadata: false,
+    }
+}
+
+#[tokio::test]
+async fn task_status_transition_publishes_one_authoritative_snapshot() {
+    let task_id = Uuid::new_v4();
+    let entity_property_id = Uuid::new_v4();
+    let previous_value = PropertyValue::SelectOption(vec![StatusOption::IN_PROGRESS_UUID]);
+    let value = PropertyValue::SelectOption(vec![StatusOption::COMPLETED_UUID]);
+    let snapshot = EntityPropertyMutationSnapshot {
+        property: entity_property_for_event(
+            entity_property_id,
+            &task_id.to_string(),
+            EntityType::Task,
+            SystemPropertyKey::STATUS_UUID,
+            event_timestamp(),
+        ),
+        value: Some(value.clone()),
+        previous_value: Some(previous_value.clone()),
+    };
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_document_sub_types().returning(move |_| {
+        Box::pin(async move { Ok(HashMap::from([(task_id, DocumentSubType::Task)])) })
+    });
+    repo.expect_get_property_definition()
+        .return_once(|_| Box::pin(async { Ok(Some(task_status_definition())) }));
+    repo.expect_count_valid_property_options()
+        .returning(|_, _| Box::pin(async { Ok(1) }));
+    repo.expect_transition_task_status()
+        .withf(move |id, status| *id == task_id && *status == Some(StatusOption::Completed))
+        .return_once(move |_, _| {
+            Box::pin(async move {
+                Ok(crate::domain::model::TaskStatusMutationOutcome::Updated(
+                    snapshot,
+                ))
+            })
+        });
+    repo.expect_upsert_entity_property().never();
+    let broker = RecordingEventBroker::default();
+    let service = PropertiesServiceImpl::new(
+        repo,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    )
+    .with_event_broker(broker.clone());
+    let result = service
+        .set_entity_property(
+            &edit_receipt(&task_id.to_string(), EntityType::Task),
+            SystemPropertyKey::STATUS_UUID,
+            Some(
+                models_properties::api::requests::SetPropertyValue::SelectOption {
+                    option_id: StatusOption::COMPLETED_UUID,
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.value, Some(value));
+    let published = only_published_property_event(&broker);
+    assert_eq!(published.topic, "macro.properties");
+    assert_eq!(published.key, task_id.to_string());
+    assert_eq!(published.envelope["event_type"], "entity_property.updated");
+    assert_eq!(
+        published.envelope["metadata"],
+        serde_json::json!({
+            "entity_property_id": entity_property_id,
+            "entity_id": task_id,
+            "entity_type": "TASK",
+            "property_definition_id": SystemPropertyKey::STATUS_UUID,
+            "actor_user_id": caller_user_id(),
+            "previous_value": previous_value,
+            "value": result.value,
+            "updated_at": event_timestamp(),
+        })
+    );
+}
+
+#[tokio::test]
+async fn task_status_transition_blocked_does_not_upsert_or_publish() {
+    let task_id = Uuid::new_v4();
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_document_sub_types().return_once(move |_| {
+        Box::pin(async move { Ok(HashMap::from([(task_id, DocumentSubType::Task)])) })
+    });
+    repo.expect_get_property_definition()
+        .return_once(|_| Box::pin(async { Ok(Some(task_status_definition())) }));
+    repo.expect_count_valid_property_options()
+        .return_once(|_, _| Box::pin(async { Ok(1) }));
+    repo.expect_transition_task_status()
+        .withf(move |id, status| *id == task_id && *status == Some(StatusOption::Completed))
+        .return_once(|_, _| {
+            Box::pin(async { Ok(crate::domain::model::TaskStatusMutationOutcome::Blocked) })
+        });
+    repo.expect_upsert_entity_property().never();
+    let broker = RecordingEventBroker::default();
+    let service = service_with_event_broker(repo, broker.clone());
+
+    let result = service
+        .set_entity_property(
+            &edit_receipt(&task_id.to_string(), EntityType::Task),
+            SystemPropertyKey::STATUS_UUID,
+            Some(
+                models_properties::api::requests::SetPropertyValue::SelectOption {
+                    option_id: StatusOption::COMPLETED_UUID,
+                },
+            ),
+        )
+        .await;
+
+    assert!(matches!(result, Err(PropertiesErr::TaskTransitionBlocked)));
+    assert!(broker.events().is_empty());
+}
+
+#[tokio::test]
+async fn task_status_transition_routes_every_canonical_status_and_clear_to_repository() {
+    for status in [
+        Some(StatusOption::InProgress),
+        Some(StatusOption::InReview),
+        Some(StatusOption::Completed),
+        Some(StatusOption::NotStarted),
+        Some(StatusOption::Canceled),
+        None,
+    ] {
+        let task_id = Uuid::new_v4();
+        let mut repo = MockPropertiesRepo::new();
+        repo.expect_get_document_sub_types().return_once(move |_| {
+            Box::pin(async move { Ok(HashMap::from([(task_id, DocumentSubType::Task)])) })
+        });
+        repo.expect_get_property_definition()
+            .return_once(|_| Box::pin(async { Ok(Some(task_status_definition())) }));
+        if status.is_some() {
+            repo.expect_count_valid_property_options()
+                .return_once(|_, _| Box::pin(async { Ok(1) }));
+        }
+        repo.expect_transition_task_status()
+            .withf(move |id, candidate| *id == task_id && *candidate == status)
+            .return_once(move |_, _| {
+                let value = status.map(|value| PropertyValue::SelectOption(vec![value.uuid()]));
+                let property = entity_property(
+                    &task_id.to_string(),
+                    EntityType::Task,
+                    SystemPropertyKey::STATUS_UUID,
+                );
+                Box::pin(async move {
+                    Ok(crate::domain::model::TaskStatusMutationOutcome::Updated(
+                        EntityPropertyMutationSnapshot {
+                            property,
+                            value,
+                            previous_value: None,
+                        },
+                    ))
+                })
+            });
+        repo.expect_upsert_entity_property().never();
+        let service = PropertiesServiceImpl::new(
+            repo,
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        );
+        let request =
+            status.map(
+                |value| models_properties::api::requests::SetPropertyValue::SelectOption {
+                    option_id: value.uuid(),
+                },
+            );
+
+        let result = service
+            .set_entity_property(
+                &edit_receipt(&task_id.to_string(), EntityType::Task),
+                SystemPropertyKey::STATUS_UUID,
+                request,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            result.value,
+            status.map(|value| PropertyValue::SelectOption(vec![value.uuid()]))
+        );
+    }
+}
+
 // ============================================================================
 // task relationship (Parent Task / Subtasks) unit tests
 // ============================================================================
@@ -3104,22 +3297,27 @@ async fn canonical_document_task_write_uses_task_storage_type() {
     });
     repo.expect_count_valid_property_options()
         .returning(|_, _| Box::pin(async { Ok(1) }));
-    repo.expect_upsert_entity_property()
-        .withf(move |entity_id, entity_type, property_id, _| {
-            entity_id == task_id.to_string()
-                && *entity_type == EntityType::Task
-                && *property_id == SystemPropertyKey::STATUS_UUID
+    repo.expect_transition_task_status()
+        .withf(move |entity_id, status| {
+            *entity_id == task_id && *status == Some(StatusOption::Completed)
         })
-        .returning(|entity_id, entity_type, property_definition_id, _| {
-            let property = entity_property(entity_id, entity_type, property_definition_id);
+        .returning(move |entity_id, status| {
+            let property = entity_property(
+                &entity_id.to_string(),
+                EntityType::Task,
+                SystemPropertyKey::STATUS_UUID,
+            );
             Box::pin(async move {
-                Ok(EntityPropertyMutationSnapshot {
-                    property,
-                    value: None,
-                    previous_value: None,
-                })
+                Ok(crate::domain::model::TaskStatusMutationOutcome::Updated(
+                    EntityPropertyMutationSnapshot {
+                        property,
+                        value: status.map(|value| PropertyValue::SelectOption(vec![value.uuid()])),
+                        previous_value: None,
+                    },
+                ))
             })
         });
+    repo.expect_upsert_entity_property().never();
 
     let service = PropertiesServiceImpl::new(
         repo,

@@ -53,7 +53,9 @@ use email::{
 };
 use entity_access::{
     domain::{
-        models::EditAccessLevel, ports::EntityAccessService as _, service::EntityAccessServiceImpl,
+        models::{EditAccessLevel, EntityAccessReceipt},
+        ports::EntityAccessService as _,
+        service::EntityAccessServiceImpl,
     },
     outbound::PgAccessRepository,
 };
@@ -244,9 +246,21 @@ impl TaskPropertiesPort for TaskPropertiesAdapter {
 
     async fn update_task_status(&self, task_id: &str, status: &str) -> anyhow::Result<()> {
         let status_option = StatusOption::try_from(status).map_err(|e| anyhow::anyhow!(e))?;
-
-        self.system_properties
-            .update_task_status(task_id, status_option)
+        use properties::PropertiesService as _;
+        let receipt = EntityAccessReceipt::<EditAccessLevel>::dangerously_assert_internal_user(
+            task_id,
+            model_entity::EntityType::Document,
+        );
+        self.properties
+            .set_entity_property(
+                &receipt,
+                system_properties::SystemPropertyKey::STATUS_UUID,
+                Some(
+                    models_properties::api::requests::SetPropertyValue::SelectOption {
+                        option_id: status_option.uuid(),
+                    },
+                ),
+            )
             .await?;
 
         Ok(())

@@ -94,7 +94,8 @@ pub fn properties_err_status(e: &PropertiesErr) -> StatusCode {
         | PropertiesErr::TaskDependenciesUnavailable => StatusCode::NOT_FOUND,
         PropertiesErr::DuplicateOptionValue
         | PropertiesErr::ConflictingTeamLabel(_)
-        | PropertiesErr::TaskDependencyCycle => StatusCode::CONFLICT,
+        | PropertiesErr::TaskDependencyCycle
+        | PropertiesErr::TaskTransitionBlocked => StatusCode::CONFLICT,
         PropertiesErr::PermissionDenied
         | PropertiesErr::SystemPropertyNotModifiable
         | PropertiesErr::RequiredProperty

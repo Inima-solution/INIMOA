@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use super::replace_task_dependencies;
 use crate::domain::model::TaskDependencyMutationOutcome;
+use crate::outbound::task_status_transition_queries::transition_task_status;
 use macro_db_migrator::MACRO_DB_MIGRATIONS;
 
 async fn task(pool: &Pool<Postgres>, id: Uuid, project: Option<&str>, is_task: bool) {
@@ -40,6 +41,21 @@ async fn depends(pool: &Pool<Postgres>, id: Uuid) -> Option<PropertyValue> {
     .unwrap()
 }
 
+async fn status(pool: &Pool<Postgres>, id: Uuid) -> Option<PropertyValue> {
+    sqlx::query_scalar::<_, Option<serde_json::Value>>(
+        "SELECT values FROM entity_properties WHERE entity_id = $1 AND entity_type = 'TASK' AND property_definition_id = $2",
+    )
+    .bind(id.to_string())
+    .bind(system_properties::SystemPropertyKey::STATUS_UUID)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+    .flatten()
+    .map(serde_json::from_value)
+    .transpose()
+    .unwrap()
+}
+
 async fn store_raw_depends(pool: &Pool<Postgres>, id: Uuid, value: serde_json::Value) {
     sqlx::query(
         r#"
@@ -57,6 +73,12 @@ async fn store_raw_depends(pool: &Pool<Postgres>, id: Uuid, value: serde_json::V
     .execute(pool)
     .await
     .unwrap();
+}
+
+async fn store_status(pool: &Pool<Postgres>, id: Uuid, status: system_properties::StatusOption) {
+    sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4) ON CONFLICT (entity_id, entity_type, property_definition_id) DO UPDATE SET values = EXCLUDED.values")
+        .bind(Uuid::new_v4()).bind(id.to_string()).bind(system_properties::SystemPropertyKey::STATUS_UUID)
+        .bind(serde_json::json!({"type":"SelectOption","value":[status.uuid()]})).execute(pool).await.unwrap();
 }
 
 #[sqlx::test(
@@ -252,6 +274,163 @@ async fn null_projects_match_and_concurrent_reverse_edges_leave_a_dag(
             .filter(|outcome| matches!(outcome, TaskDependencyMutationOutcome::Cycle))
             .count(),
         1
+    );
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("task_dependencies_seed"))
+)]
+async fn guarded_source_rejects_incomplete_replacement_and_retains_prior_value(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let source = Uuid::new_v4();
+    let complete = Uuid::new_v4();
+    let incomplete = Uuid::new_v4();
+    let canceled = Uuid::new_v4();
+    for id in [source, complete, incomplete, canceled] {
+        task(&pool, id, None, true).await;
+    }
+    store_status(&pool, complete, system_properties::StatusOption::Completed).await;
+    store_status(&pool, canceled, system_properties::StatusOption::Canceled).await;
+    for source_status in [
+        system_properties::StatusOption::InProgress,
+        system_properties::StatusOption::InReview,
+        system_properties::StatusOption::Completed,
+    ] {
+        store_status(&pool, source, source_status).await;
+        replace_task_dependencies(&pool, source, &[complete]).await?;
+        for candidate in [incomplete, canceled] {
+            assert!(matches!(
+                replace_task_dependencies(&pool, source, &[candidate]).await?,
+                TaskDependencyMutationOutcome::Blocked
+            ));
+            assert_eq!(
+                depends(&pool, source).await,
+                Some(PropertyValue::EntityRef(vec![
+                    models_properties::EntityReference::new(
+                        complete.to_string(),
+                        models_properties::EntityType::Task,
+                    )
+                ]))
+            );
+        }
+        assert!(matches!(
+            replace_task_dependencies(&pool, source, &[complete]).await?,
+            TaskDependencyMutationOutcome::Updated(_)
+        ));
+        assert!(matches!(
+            replace_task_dependencies(&pool, source, &[]).await?,
+            TaskDependencyMutationOutcome::Updated(snapshot) if snapshot.value.is_none()
+        ));
+    }
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("task_dependencies_seed"))
+)]
+async fn unguarded_source_allows_incomplete_replacement(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let incomplete = Uuid::new_v4();
+    task(&pool, incomplete, None, true).await;
+    for source_status in [
+        system_properties::StatusOption::NotStarted,
+        system_properties::StatusOption::Canceled,
+    ] {
+        let source = Uuid::new_v4();
+        task(&pool, source, None, true).await;
+        store_status(&pool, source, source_status).await;
+        assert!(matches!(
+            replace_task_dependencies(&pool, source, &[incomplete]).await?,
+            TaskDependencyMutationOutcome::Updated(_)
+        ));
+        assert_eq!(
+            depends(&pool, source).await,
+            Some(PropertyValue::EntityRef(vec![
+                models_properties::EntityReference::new(
+                    incomplete.to_string(),
+                    models_properties::EntityType::Task,
+                )
+            ]))
+        );
+    }
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("task_dependencies_seed"))
+)]
+async fn status_and_dependency_race_commits_only_one_side(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let source = Uuid::new_v4();
+    let incomplete = Uuid::new_v4();
+    for id in [source, incomplete] {
+        task(&pool, id, None, true).await;
+    }
+    store_status(&pool, source, system_properties::StatusOption::NotStarted).await;
+    let barrier = Arc::new(Barrier::new(2));
+    let status_task = {
+        let pool = pool.clone();
+        let barrier = barrier.clone();
+        tokio::spawn(async move {
+            barrier.wait().await;
+            transition_task_status(
+                &pool,
+                source,
+                Some(system_properties::StatusOption::InProgress),
+            )
+            .await
+        })
+    };
+    let deps = {
+        let pool = pool.clone();
+        let barrier = barrier.clone();
+        tokio::spawn(async move {
+            barrier.wait().await;
+            replace_task_dependencies(&pool, source, &[incomplete]).await
+        })
+    };
+    let status_outcome = status_task.await??;
+    let deps = deps.await??;
+    assert_eq!(
+        usize::from(matches!(
+            status_outcome,
+            crate::domain::model::TaskStatusMutationOutcome::Updated(_)
+        )) + usize::from(matches!(deps, TaskDependencyMutationOutcome::Updated(_))),
+        1
+    );
+    assert_eq!(
+        usize::from(matches!(
+            status_outcome,
+            crate::domain::model::TaskStatusMutationOutcome::Blocked
+        )) + usize::from(matches!(deps, TaskDependencyMutationOutcome::Blocked)),
+        1
+    );
+    let final_status = status(&pool, source).await;
+    let final_dependencies = depends(&pool, source).await;
+    assert!(
+        (final_status
+            == Some(PropertyValue::SelectOption(vec![
+                system_properties::StatusOption::IN_PROGRESS_UUID,
+            ]))
+            && final_dependencies.is_none())
+            || (final_status
+                == Some(PropertyValue::SelectOption(vec![
+                    system_properties::StatusOption::NOT_STARTED_UUID,
+                ]))
+                && final_dependencies
+                    == Some(PropertyValue::EntityRef(vec![
+                        models_properties::EntityReference::new(
+                            incomplete.to_string(),
+                            models_properties::EntityType::Task,
+                        ),
+                    ])))
     );
     Ok(())
 }

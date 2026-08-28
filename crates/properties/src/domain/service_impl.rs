@@ -29,7 +29,7 @@ use models_properties::service::property_definition_with_options::PropertyDefini
 use models_properties::service::property_option::{PropertyOption, PropertyOptionValue};
 use models_properties::service::property_value::PropertyValue;
 use models_properties::{EntityReference, EntityType};
-use system_properties::SystemPropertyKey;
+use system_properties::{StatusOption, SystemPropertyKey};
 use uuid::Uuid;
 
 use super::error::PropertiesErr;
@@ -43,7 +43,8 @@ use super::model::{
     EditReceipt, EntityOptionUpdateOutcome, EntityPropertyInfo, EntityPropertyOptionSelection,
     EntityPropertyOptionUpdate, PropertyAccessReceiptExt, PropertyDefinitionOwner,
     PropertyTargetKey, ResolvedPropertySubject, TagPromotionOutcome, TagRemapOutcome, TagScope,
-    TagSet, TaskDependencyReadiness, UpdatePropertyOptionOutcome, ViewReceipt,
+    TagSet, TaskDependencyReadiness, TaskStatusMutationOutcome, UpdatePropertyOptionOutcome,
+    ViewReceipt,
 };
 use super::ports::{NotificationService, PermissionService, PropertiesRepo};
 use super::service::{
@@ -692,6 +693,57 @@ where
             return Err(PropertiesErr::Validation(
                 "This property cannot be attached to this entity type".to_string(),
             ));
+        }
+
+        // TASK Status is the one ordinary-looking property write whose commit
+        // must be serialized with Depends On. Document Status deliberately
+        // remains on the generic path below.
+        if property_definition_id == SystemPropertyKey::STATUS_UUID
+            && entity_type == EntityType::Task
+        {
+            let task_id =
+                Uuid::parse_str(entity_id).map_err(|_| PropertiesErr::TaskTransitionBlocked)?;
+            let status = match value {
+                None => None,
+                Some(SetPropertyValue::SelectOption { option_id }) => {
+                    StatusOption::from_uuid(option_id)
+                        .ok_or_else(|| {
+                            PropertiesErr::Validation(
+                                "Property value validation failed: invalid status option"
+                                    .to_string(),
+                            )
+                        })
+                        .map(Some)?
+                }
+                Some(_) => {
+                    return Err(PropertiesErr::Validation(
+                        "Property value validation failed: invalid status option".to_string(),
+                    ));
+                }
+            };
+            let snapshot = match self
+                .repository
+                .transition_task_status(task_id, status)
+                .await
+                .map_err(anyhow::Error::from)?
+            {
+                TaskStatusMutationOutcome::Updated(snapshot) => snapshot,
+                TaskStatusMutationOutcome::Blocked => {
+                    return Err(PropertiesErr::TaskTransitionBlocked);
+                }
+            };
+            self.publish_property_event(Self::entity_property_updated_event(
+                &snapshot.property,
+                &snapshot.value,
+                &snapshot.previous_value,
+                access,
+            ));
+            return Ok(EntityPropertyWithDefinition {
+                property: snapshot.property,
+                definition: property_definition,
+                value: snapshot.value,
+                options: None,
+            });
         }
 
         // Relationship writes update both sides transactionally and return the

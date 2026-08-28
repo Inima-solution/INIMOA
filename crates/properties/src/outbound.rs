@@ -22,5 +22,6 @@ mod tag_promotion_test;
 pub mod task_dependency_queries;
 pub mod task_dependency_read_queries;
 pub mod task_property_queries;
+pub mod task_status_transition_queries;
 #[cfg(test)]
 pub mod test;

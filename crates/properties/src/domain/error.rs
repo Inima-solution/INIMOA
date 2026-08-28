@@ -42,6 +42,10 @@ pub enum PropertiesErr {
     #[error("Task dependencies cannot contain a cycle")]
     TaskDependencyCycle,
 
+    /// A task cannot enter a dependency-gated status yet.
+    #[error("Task transition is blocked by dependencies")]
+    TaskTransitionBlocked,
+
     /// Promoting a personal label would collide with an existing team label -
     /// maps to 409. Carries the team label so the caller can offer to merge
     /// into it instead.

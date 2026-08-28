@@ -62,6 +62,11 @@ fn task_dependency_errors_keep_the_frozen_statuses_and_bodies() {
             StatusCode::CONFLICT,
             "Task dependencies cannot contain a cycle",
         ),
+        (
+            PropertiesErr::TaskTransitionBlocked,
+            StatusCode::CONFLICT,
+            "Task transition is blocked by dependencies",
+        ),
     ];
     for (error, status, body) in cases {
         assert_eq!(super::properties_err_status(&error), status);
@@ -91,6 +96,11 @@ async fn task_dependency_set_handler_errors_render_frozen_bodies() {
             PropertiesErr::TaskDependencyCycle,
             StatusCode::CONFLICT,
             "Task dependencies cannot contain a cycle",
+        ),
+        (
+            PropertiesErr::TaskTransitionBlocked,
+            StatusCode::CONFLICT,
+            "Task transition is blocked by dependencies",
         ),
     ];
     for (error, status, body) in cases {

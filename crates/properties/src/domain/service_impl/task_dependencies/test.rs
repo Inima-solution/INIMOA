@@ -221,6 +221,10 @@ async fn repository_dependency_outcomes_map_to_frozen_errors() {
             TaskDependencyMutationOutcome::Cycle,
             PropertiesErr::TaskDependencyCycle,
         ),
+        (
+            TaskDependencyMutationOutcome::Blocked,
+            PropertiesErr::TaskTransitionBlocked,
+        ),
     ] {
         let mut repo = MockPropertiesRepo::new();
         repo.expect_replace_task_dependencies()
