@@ -8,6 +8,7 @@ import { useBlockId } from '@core/block';
 import { useCanEdit } from '@core/signal/permissions';
 import { useBlockDocumentName } from '@core/util/currentBlockDocumentName';
 import { Suspense } from 'solid-js';
+import { ProjectOverviewSection } from './ProjectOverviewSection';
 
 export function ProjectSidePanelSections() {
   const projectId = useBlockId();
@@ -16,6 +17,7 @@ export function ProjectSidePanelSections() {
 
   return (
     <>
+      <ProjectOverviewSection order={5} />
       <SidePanel.Section id="details" title="Details" defaultOpen order={10}>
         <Suspense fallback={<SidePanel.Loading />}>
           <EntityPropertiesSection
