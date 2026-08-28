@@ -1,6 +1,7 @@
 import { ThrownResultError } from '@core/util/result';
 import { queryClient } from '@queries/client';
 import type {
+  GetProjectOverview200DataOneOf,
   ProjectOperations,
   ReplaceProjectOperationsRequest,
 } from '@service-storage/generated/schemas';
@@ -57,6 +58,32 @@ const replacement: ReplaceProjectOperationsRequest = {
   startDate: null,
   status: 'paused',
   targetDate: null,
+};
+
+const projectOverviewA: GetProjectOverview200DataOneOf = {
+  immediateChildren: {
+    chats: 0,
+    childProjects: 0,
+    nonTaskDocuments: 0,
+    tasks: 0,
+  },
+  operations: projectA,
+  project: {
+    createdAt: '2026-08-28T00:00:00.000Z',
+    deletedAt: null,
+    id: projectA.projectId,
+    name: 'Project A',
+    parentId: null,
+    updatedAt: '2026-08-28T01:00:00.000Z',
+    userId: 'user-a',
+  },
+  userAccessLevel: 'owner',
+};
+
+const projectOverviewB: GetProjectOverview200DataOneOf = {
+  ...projectOverviewA,
+  operations: projectB,
+  project: { ...projectOverviewA.project, id: projectB.projectId },
 };
 
 beforeEach(() => {
@@ -148,7 +175,7 @@ describe('project operations queries', () => {
     );
   });
 
-  it('replaces only the successful project cache and leaves caches unchanged on failure', async () => {
+  it('replaces the successful project operations cache and invalidates only its overview', async () => {
     const canonical: ProjectOperations = {
       ...projectA,
       leadUserId: replacement.leadUserId,
@@ -161,8 +188,16 @@ describe('project operations queries', () => {
     };
     const aKey = entityKeys.projectOperations(projectA.projectId).queryKey;
     const bKey = entityKeys.projectOperations(projectB.projectId).queryKey;
+    const overviewAKey = entityKeys.projectOverview(
+      projectA.projectId
+    ).queryKey;
+    const overviewBKey = entityKeys.projectOverview(
+      projectB.projectId
+    ).queryKey;
     queryClient.setQueryData(aKey, projectA);
     queryClient.setQueryData(bKey, projectB);
+    queryClient.setQueryData(overviewAKey, projectOverviewA);
+    queryClient.setQueryData(overviewBKey, projectOverviewB);
     mocks.fetchWithToken.mockResolvedValueOnce(
       ok({ data: canonical, error: false })
     );
@@ -185,11 +220,32 @@ describe('project operations queries', () => {
 
     expect(queryClient.getQueryData(aKey)).toEqual(canonical);
     expect(queryClient.getQueryData(bKey)).toEqual(projectB);
+    expect(queryClient.getQueryData(overviewAKey)).toEqual(projectOverviewA);
+    expect(queryClient.getQueryData(overviewBKey)).toEqual(projectOverviewB);
+    expect(queryClient.getQueryState(overviewAKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(overviewBKey)?.isInvalidated).toBe(false);
     const operationsUrl = `http://dss.test/v2/projects/${projectA.projectId}/operations`;
     expect(mocks.fetchWithToken).toHaveBeenLastCalledWith(operationsUrl, {
       method: 'PUT',
       body: JSON.stringify(replacement),
     });
+  });
+
+  it('leaves operations and overview caches plus invalidation state unchanged on failure', async () => {
+    const aKey = entityKeys.projectOperations(projectA.projectId).queryKey;
+    const bKey = entityKeys.projectOperations(projectB.projectId).queryKey;
+    const overviewAKey = entityKeys.projectOverview(
+      projectA.projectId
+    ).queryKey;
+    const overviewBKey = entityKeys.projectOverview(
+      projectB.projectId
+    ).queryKey;
+    queryClient.setQueryData(aKey, projectA);
+    queryClient.setQueryData(bKey, projectB);
+    queryClient.setQueryData(overviewAKey, projectOverviewA);
+    queryClient.setQueryData(overviewBKey, projectOverviewB);
+    expect(queryClient.getQueryState(overviewAKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(overviewBKey)?.isInvalidated).toBe(false);
 
     mocks.fetchWithToken.mockResolvedValueOnce(
       err([{ code: 'CONFLICT', message: 'version conflict' }])
@@ -212,7 +268,11 @@ describe('project operations queries', () => {
       dispose();
     });
 
-    expect(queryClient.getQueryData(aKey)).toEqual(canonical);
+    expect(queryClient.getQueryData(aKey)).toEqual(projectA);
     expect(queryClient.getQueryData(bKey)).toEqual(projectB);
+    expect(queryClient.getQueryData(overviewAKey)).toEqual(projectOverviewA);
+    expect(queryClient.getQueryData(overviewBKey)).toEqual(projectOverviewB);
+    expect(queryClient.getQueryState(overviewAKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(overviewBKey)?.isInvalidated).toBe(false);
   });
 });

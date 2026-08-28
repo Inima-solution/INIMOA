@@ -73,6 +73,9 @@ export const entityKeys = createQueryKeys('entity', {
   projectOperations: (projectId: string) => ({
     queryKey: [projectId],
   }),
+  projectOverview: (projectId: string) => ({
+    queryKey: [projectId],
+  }),
   taskDuplicates: (documentId: string) => ({
     queryKey: [documentId, 'duplicates'],
   }),

@@ -51,6 +51,10 @@ export function useReplaceProjectOperationsMutation() {
         entityKeys.projectOperations(projectId).queryKey,
         operations
       );
+      queryClient.invalidateQueries({
+        queryKey: entityKeys.projectOverview(projectId).queryKey,
+        exact: true,
+      });
     },
   }));
 }

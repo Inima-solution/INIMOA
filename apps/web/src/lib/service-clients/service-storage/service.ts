@@ -25,9 +25,10 @@ const _ChatResponseSchema = z.object({});
 
 const ProcessingResultTypeSchema = z.enum(['PREPROCESS', 'SPLIT_TEXTS']);
 
-const ProjectOperationsPolicySchema = z
-  .record(z.string(), z.unknown())
-  .nullish();
+const ProjectOperationsSchema =
+  schemas.getProjectOperationsResponse.shape.data.extend({
+    policy: z.record(z.string(), z.unknown()).nullish(),
+  });
 
 /** Available document processing result variants. */
 export type ProcessingResultType = z.infer<typeof ProcessingResultTypeSchema>;
@@ -146,8 +147,14 @@ const ProjectsSvc = new Svc('Projects Service')
   .fn('getOperations', {
     description: schemas.getProjectOperationsParams.description!,
     args: schemas.getProjectOperationsParams.shape,
-    result: schemas.getProjectOperationsResponse.shape.data.extend({
-      policy: ProjectOperationsPolicySchema,
+    result: ProjectOperationsSchema.shape,
+    throws: withFetchErrors(),
+  })
+  .fn('getOverview', {
+    description: schemas.getProjectOverviewParams.description!,
+    args: schemas.getProjectOverviewParams.shape,
+    result: schemas.getProjectOverviewResponse.shape.data.extend({
+      operations: ProjectOperationsSchema,
     }).shape,
     throws: withFetchErrors(),
   })
@@ -156,11 +163,9 @@ const ProjectsSvc = new Svc('Projects Service')
     args: {
       ...schemas.replaceProjectOperationsParams.shape,
       ...schemas.replaceProjectOperationsBody.shape,
-      policy: ProjectOperationsPolicySchema,
+      policy: ProjectOperationsSchema.shape.policy,
     },
-    result: schemas.replaceProjectOperationsResponse.shape.data.extend({
-      policy: ProjectOperationsPolicySchema,
-    }).shape,
+    result: ProjectOperationsSchema.shape,
     modifies: true,
     throws: withFetchErrors(),
   })

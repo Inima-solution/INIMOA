@@ -118,6 +118,7 @@ import type { GetOrCreatePrivateRequest } from './generated/schemas/getOrCreateP
 import type { GetPendingProjectsHandler200 } from './generated/schemas/getPendingProjectsHandler200';
 import type { GetProjectContentResponse } from './generated/schemas/getProjectContentResponse';
 import type { GetProjectOperations200 } from './generated/schemas/getProjectOperations200';
+import type { GetProjectOverview200 } from './generated/schemas/getProjectOverview200';
 import type { GetProjectResponse } from './generated/schemas/getProjectResponse';
 import type { GetSystemSkillsHandler200 } from './generated/schemas/getSystemSkillsHandler200';
 import type { GithubPullRequestsResponse } from './generated/schemas/githubPullRequestsResponse';
@@ -2267,6 +2268,14 @@ export const storageServiceClient = {
           `/v2/projects/${id}/operations`,
           { method: 'GET' }
         )
+      ).map((result) => result.data);
+    },
+
+    async getOverview({ id }) {
+      return (
+        await dssFetch<GetProjectOverview200>(`/v2/projects/${id}/overview`, {
+          method: 'GET',
+        })
       ).map((result) => result.data);
     },
 

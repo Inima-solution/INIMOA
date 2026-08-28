@@ -1,0 +1,131 @@
+import { ThrownResultError } from '@core/util/result';
+import { queryClient } from '@queries/client';
+import type { GetProjectOverview200DataOneOf } from '@service-storage/generated/schemas';
+import { QueryClientProvider } from '@tanstack/solid-query';
+import { err, ok } from 'neverthrow';
+import { createRoot, createSignal } from 'solid-js';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => ({
+  fetchWithToken: vi.fn(),
+}));
+
+vi.mock('@core/util/fetchWithToken', () => ({
+  fetchWithToken: mocks.fetchWithToken,
+}));
+vi.mock('@core/constant/servers', () => ({
+  SERVER_HOSTS: { 'document-storage-service': 'http://dss.test' },
+  SYNC_PERMISSION_TOKEN_DSS_HOST: 'http://sync-permission.test',
+  SYNC_SERVICE_HOSTS: { worker: 'http://sync-worker.test' },
+}));
+
+import { storageServiceClient } from '@service-storage/client';
+import { entityKeys } from './keys';
+import {
+  fetchProjectOverview,
+  useProjectOverviewQuery,
+} from './project-overview';
+
+const overview: GetProjectOverview200DataOneOf = {
+  immediateChildren: {
+    chats: 2,
+    childProjects: 1,
+    nonTaskDocuments: 3,
+    tasks: 4,
+  },
+  operations: {
+    completedAt: null,
+    createdAt: '2026-08-28T00:00:00.000Z',
+    leadUserId: 'lead-a',
+    policy: { escalation: { owners: ['lead-a'], windowHours: 24 } },
+    priority: 'high',
+    projectId: 'project-a',
+    startDate: '2026-08-28',
+    status: 'active',
+    targetDate: '2026-09-28',
+    updatedAt: '2026-08-28T01:00:00.000Z',
+  },
+  project: {
+    createdAt: '2026-08-28T00:00:00.000Z',
+    deletedAt: null,
+    id: 'project-a',
+    name: 'Project A',
+    parentId: null,
+    updatedAt: '2026-08-28T01:00:00.000Z',
+    userId: 'user-a',
+  },
+  userAccessLevel: 'owner',
+};
+
+beforeEach(() => {
+  mocks.fetchWithToken.mockReset();
+  queryClient.clear();
+});
+
+describe('project overview storage client', () => {
+  it('maps result.data from exactly one GET request and preserves free-form policy', async () => {
+    mocks.fetchWithToken.mockResolvedValueOnce(
+      ok({ data: overview, error: false })
+    );
+
+    await expect(
+      storageServiceClient.projects.getOverview({ id: 'project-a' })
+    ).resolves.toEqual(ok(overview));
+
+    expect(mocks.fetchWithToken).toHaveBeenCalledTimes(1);
+    expect(mocks.fetchWithToken).toHaveBeenCalledWith(
+      'http://dss.test/v2/projects/project-a/overview',
+      { method: 'GET' }
+    );
+  });
+});
+
+describe('project overview queries', () => {
+  it('uses exact entity-scoped, distinct keys and disables nullish ids without a request', () => {
+    expect(entityKeys.projectOverview('project-a').queryKey).toEqual([
+      'entity',
+      'projectOverview',
+      'project-a',
+    ]);
+    expect(entityKeys.projectOverview('project-a').queryKey).not.toEqual(
+      entityKeys.projectOverview('project-b').queryKey
+    );
+
+    for (const value of [null, undefined]) {
+      createRoot((dispose) => {
+        const [id] = createSignal<string | null | undefined>(value);
+        let query!: ReturnType<typeof useProjectOverviewQuery>;
+        QueryClientProvider({
+          client: queryClient,
+          get children() {
+            query = useProjectOverviewQuery(id);
+            return null;
+          },
+        });
+
+        expect(query.isEnabled).toBe(false);
+        expect(mocks.fetchWithToken).not.toHaveBeenCalled();
+        dispose();
+      });
+    }
+  });
+
+  it('returns the overview and throws typed Result errors unchanged', async () => {
+    mocks.fetchWithToken.mockResolvedValueOnce(
+      ok({ data: overview, error: false })
+    );
+    await expect(fetchProjectOverview('project-a')).resolves.toEqual(overview);
+
+    const errors = [{ code: 'FORBIDDEN', message: 'missing access' }];
+    mocks.fetchWithToken.mockResolvedValueOnce(err(errors));
+    await expect(fetchProjectOverview('project-a')).rejects.toEqual(
+      expect.objectContaining({ errors })
+    );
+    await expect(
+      (async () => {
+        mocks.fetchWithToken.mockResolvedValueOnce(err(errors));
+        await fetchProjectOverview('project-a');
+      })()
+    ).rejects.toBeInstanceOf(ThrownResultError);
+  });
+});
