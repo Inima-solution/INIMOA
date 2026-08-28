@@ -44,8 +44,9 @@ use uuid::Uuid;
 use super::{projects_router, ProjectRouterState};
 use crate::domain::{
     models::{
-        ProjectError, ProjectOperationalStatus, ProjectOperations, ProjectPriority,
-        PurgedProjectTree, RevertDeleteResult, SoftDeleteResult, UpdateProjectOperationsRequest,
+        ProjectError, ProjectOperationalStatus, ProjectOperations, ProjectOverview,
+        ProjectOverviewImmediateChildren, ProjectPriority, PurgedProjectTree, RevertDeleteResult,
+        SoftDeleteResult, UpdateProjectOperationsRequest,
     },
     ports::ProjectService,
 };
@@ -144,6 +145,24 @@ impl ProjectService for FakeProjectService {
             .lock()
             .expect("operations lock poisoned")
             .clone())
+    }
+
+    async fn get_project_overview(
+        &self,
+        _receipt: EntityAccessReceipt<entity_access::domain::models::ViewAccessLevel>,
+        _company_receipt: EntityAccessReceipt<entity_access::domain::models::ReadProjectWorkScoped>,
+    ) -> Result<ProjectOverview, ProjectError> {
+        Ok(ProjectOverview {
+            project: project(),
+            user_access_level: ShareAccessLevel::Owner,
+            operations: test_operations(),
+            immediate_children: ProjectOverviewImmediateChildren {
+                child_projects: 0,
+                tasks: 0,
+                non_task_documents: 0,
+                chats: 0,
+            },
+        })
     }
 
     async fn update_project_operations(

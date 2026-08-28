@@ -5,6 +5,7 @@ mod create;
 mod delete;
 mod edit;
 mod operations;
+mod overview;
 mod revert_delete;
 mod share;
 mod upload_folder;
@@ -22,9 +23,9 @@ use model::project::{
 use sqlx::PgPool;
 
 use crate::domain::models::{
-    CreateProjectArgs, EditProjectArgs, MarkedUploadedTree, ProjectOperations, PurgedProjectTree,
-    RevertDeleteResult, SoftDeleteResult, UpdateProjectOperationsCommand,
-    UpdateProjectOperationsOutcome, UploadFolderRepoArgs,
+    CreateProjectArgs, EditProjectArgs, MarkedUploadedTree, ProjectOperations,
+    ProjectOverviewSnapshot, PurgedProjectTree, RevertDeleteResult, SoftDeleteResult,
+    UpdateProjectOperationsCommand, UpdateProjectOperationsOutcome, UploadFolderRepoArgs,
 };
 use crate::domain::ports::ProjectRepo;
 
@@ -119,6 +120,15 @@ impl ProjectRepo for PgProjectRepo {
         team_id: uuid::Uuid,
     ) -> Result<Option<ProjectOperations>, Self::Err> {
         operations::get_project_operations_scoped(&self.pool, project_id, team_id).await
+    }
+
+    #[tracing::instrument(err, skip(self))]
+    async fn get_project_overview_scoped(
+        &self,
+        project_id: &str,
+        team_id: uuid::Uuid,
+    ) -> Result<Option<ProjectOverviewSnapshot>, Self::Err> {
+        overview::get_project_overview_scoped(&self.pool, project_id, team_id).await
     }
 
     #[tracing::instrument(err, skip(self, command))]

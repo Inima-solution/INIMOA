@@ -124,6 +124,239 @@ async fn basic_lookup_includes_deleted_but_full_lookup_excludes_it(
     migrator = "MACRO_DB_MIGRATIONS",
     fixtures(path = "../../../fixtures", scripts("projects_test_data"))
 )]
+async fn overview_is_scoped_and_counts_only_live_direct_canonical_children(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    let project_id = "10000000-0000-0000-0000-000000000101";
+    let child_id = "10000000-0000-0000-0000-000000000102";
+    let grandchild_id = "10000000-0000-0000-0000-000000000103";
+    let deleted_child_id = "10000000-0000-0000-0000-000000000104";
+    let personal_project_id = "10000000-0000-0000-0000-000000000105";
+    let personal_owner_id = "macro|overview-personal@test.com";
+    let team_id = uuid::Uuid::from_u128(1001);
+
+    sqlx::query(r#"INSERT INTO "team" (id, name, owner_id) VALUES ($1, 'overview', 'macro|owner@test.com')"#)
+        .bind(team_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO team_user (user_id, team_id, team_role) VALUES ($1, $2, 'owner')")
+        .bind("macro|owner@test.com")
+        .bind(team_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query(
+        "INSERT INTO macro_user (id, username, email, stripe_customer_id) VALUES ($1::uuid, $2, $2, $3)",
+    )
+    .bind("a3333333-3333-3333-3333-333333333333")
+    .bind("overview-personal@test.com")
+    .bind("stripe-overview-personal")
+    .execute(&pool)
+    .await?;
+    sqlx::query("INSERT INTO \"User\" (id, email, \"stripeCustomerId\", macro_user_id) VALUES ($1, $2, $3, $4::uuid)")
+        .bind(personal_owner_id)
+        .bind("overview-personal@test.com")
+        .bind("stripe-overview-personal")
+        .bind("a3333333-3333-3333-3333-333333333333")
+        .execute(&pool)
+        .await?;
+    for (id, parent_id, deleted_at, owner_id) in [
+        (project_id, None, None, "macro|owner@test.com"),
+        (child_id, Some(project_id), None, "macro|owner@test.com"),
+        (grandchild_id, Some(child_id), None, "macro|owner@test.com"),
+        (
+            deleted_child_id,
+            Some(project_id),
+            Some("2026-08-29"),
+            "macro|owner@test.com",
+        ),
+        (personal_project_id, None, None, personal_owner_id),
+    ] {
+        sqlx::query(
+            r#"INSERT INTO "Project" (id, name, "userId", "parentId", "deletedAt") VALUES ($1, $2, $3, $4, $5::timestamp)"#,
+        )
+        .bind(id)
+        .bind(format!("overview-{id}"))
+        .bind(owner_id)
+        .bind(parent_id)
+        .bind(deleted_at)
+        .execute(&pool)
+        .await?;
+    }
+
+    let documents = [
+        (
+            "20000000-0000-0000-0000-000000000101",
+            "ordinary",
+            Some("pdf"),
+            project_id,
+            None,
+        ),
+        (
+            "20000000-0000-0000-0000-000000000102",
+            "task",
+            None,
+            project_id,
+            None,
+        ),
+        (
+            "20000000-0000-0000-0000-000000000103",
+            "snippet",
+            None,
+            project_id,
+            None,
+        ),
+        (
+            "20000000-0000-0000-0000-000000000104",
+            "skill",
+            Some("md"),
+            project_id,
+            None,
+        ),
+        (
+            "20000000-0000-0000-0000-000000000105",
+            "deleted",
+            Some("pdf"),
+            project_id,
+            Some("2026-08-29"),
+        ),
+        (
+            "20000000-0000-0000-0000-000000000106",
+            "nested",
+            Some("pdf"),
+            child_id,
+            None,
+        ),
+        (
+            "20000000-0000-0000-0000-000000000107",
+            "deleted-task",
+            None,
+            project_id,
+            Some("2026-08-29"),
+        ),
+        (
+            "20000000-0000-0000-0000-000000000108",
+            "nested-task",
+            None,
+            child_id,
+            None,
+        ),
+    ];
+    for (id, name, file_type, document_project_id, deleted_at) in documents {
+        sqlx::query(
+            r#"INSERT INTO "Document" (id, name, owner, "fileType", "projectId", "deletedAt") VALUES ($1, $2, 'macro|owner@test.com', $3, $4, $5::timestamp)"#,
+        )
+        .bind(id)
+        .bind(name)
+        .bind(file_type)
+        .bind(document_project_id)
+        .bind(deleted_at)
+        .execute(&pool)
+        .await?;
+    }
+    for (document_id, sub_type) in [
+        ("20000000-0000-0000-0000-000000000102", "task"),
+        ("20000000-0000-0000-0000-000000000103", "snippet"),
+        ("20000000-0000-0000-0000-000000000104", "skill"),
+        ("20000000-0000-0000-0000-000000000107", "task"),
+        ("20000000-0000-0000-0000-000000000108", "task"),
+    ] {
+        sqlx::query("INSERT INTO document_sub_type (document_id, sub_type) VALUES ($1, $2::document_sub_type_value)")
+            .bind(document_id)
+            .bind(sub_type)
+            .execute(&pool)
+            .await?;
+    }
+    for (id, chat_project_id, deleted_at) in [
+        ("30000000-0000-0000-0000-000000000101", project_id, None),
+        (
+            "30000000-0000-0000-0000-000000000102",
+            project_id,
+            Some("2026-08-29"),
+        ),
+        ("30000000-0000-0000-0000-000000000103", child_id, None),
+    ] {
+        sqlx::query(
+            r#"INSERT INTO "Chat" (id, name, "userId", "projectId", "deletedAt") VALUES ($1, 'overview', 'macro|owner@test.com', $2, $3::timestamp)"#,
+        )
+        .bind(id)
+        .bind(chat_project_id)
+        .bind(deleted_at)
+        .execute(&pool)
+        .await?;
+    }
+    sqlx::query(
+        "UPDATE project_operations SET status = 'active', priority = 'high', lead_user_id = $1, start_date = DATE '2026-08-01', target_date = DATE '2026-08-31', policy = '{\"source\":\"overview-test\"}'::jsonb, created_at = TIMESTAMPTZ '2026-08-01 01:00:00Z', updated_at = TIMESTAMPTZ '2026-08-02 01:00:00Z' WHERE project_id = $2",
+    )
+        .bind("macro|viewer@test.com")
+        .bind(project_id)
+        .execute(&pool)
+        .await?;
+
+    let overview = repo
+        .get_project_overview_scoped(project_id, team_id)
+        .await?
+        .expect("scoped overview");
+    assert_eq!(overview.project.id, project_id);
+    assert_eq!(overview.project.name, format!("overview-{project_id}"));
+    assert_eq!(overview.project.user_id, "macro|owner@test.com");
+    assert!(overview.project.parent_id.is_none());
+    assert_eq!(overview.operations.project_id, project_id);
+    assert!(overview.operations.lead_user_id.is_none());
+    assert_eq!(overview.operations.status, ProjectOperationalStatus::Active);
+    assert_eq!(overview.operations.priority, ProjectPriority::High);
+    assert_eq!(
+        overview.operations.start_date.unwrap().to_string(),
+        "2026-08-01"
+    );
+    assert_eq!(
+        overview.operations.target_date.unwrap().to_string(),
+        "2026-08-31"
+    );
+    assert_eq!(
+        overview.operations.policy,
+        Some(serde_json::json!({"source": "overview-test"}))
+    );
+    assert!(overview.operations.completed_at.is_none());
+    assert_eq!(
+        overview.operations.created_at.to_rfc3339(),
+        "2026-08-01T01:00:00+00:00"
+    );
+    assert_eq!(
+        overview.operations.updated_at.to_rfc3339(),
+        "2026-08-02T01:00:00+00:00"
+    );
+    assert_eq!(overview.immediate_children.child_projects, 1);
+    assert_eq!(overview.immediate_children.tasks, 1);
+    assert_eq!(overview.immediate_children.non_task_documents, 3);
+    assert_eq!(overview.immediate_children.chats, 1);
+    assert!(
+        repo.get_project_overview_scoped(project_id, uuid::Uuid::from_u128(1002))
+            .await?
+            .is_none()
+    );
+    assert!(
+        repo.get_project_overview_scoped(DELETED_ID, team_id)
+            .await?
+            .is_none()
+    );
+    assert!(
+        repo.get_project_overview_scoped("missing", team_id)
+            .await?
+            .is_none()
+    );
+    assert!(
+        repo.get_project_overview_scoped(personal_project_id, team_id)
+            .await?
+            .is_none()
+    );
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
 async fn operations_update_is_team_scoped_audited_and_noop_is_not_audited(
     pool: Pool<Postgres>,
 ) -> anyhow::Result<()> {

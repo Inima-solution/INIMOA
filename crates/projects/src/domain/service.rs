@@ -31,8 +31,8 @@ use super::events::{
     ProjectUploadedMetadata,
 };
 use super::models::{
-    CreateProjectArgs, EditProjectArgs, ProjectError, ProjectOperations, PurgedProjectTree,
-    RevertDeleteResult, SoftDeleteResult, UpdateProjectOperationsCommand,
+    CreateProjectArgs, EditProjectArgs, ProjectError, ProjectOperations, ProjectOverview,
+    PurgedProjectTree, RevertDeleteResult, SoftDeleteResult, UpdateProjectOperationsCommand,
     UpdateProjectOperationsOutcome, UpdateProjectOperationsRequest, UploadFolderRepoArgs,
 };
 use super::ports::{
@@ -276,6 +276,34 @@ where
             .await
             .map_err(|error| internal_error(error, "unable to get project operations"))?
             .ok_or_else(|| ProjectError::NotFound(project_id.clone()))
+    }
+
+    async fn get_project_overview(
+        &self,
+        receipt: EntityAccessReceipt<ViewAccessLevel>,
+        company_receipt: EntityAccessReceipt<ReadProjectWorkScoped>,
+    ) -> Result<ProjectOverview, ProjectError> {
+        let access_level = receipt_access_level(&receipt)?;
+        let actor = receipt
+            .get_authenticated_user()
+            .map_err(|_| ProjectError::Unauthorized)?;
+        let team_id = verified_company_team(&company_receipt, actor)?;
+        if receipt.entity().entity_type != EntityType::Project {
+            return Err(ProjectError::Unauthorized);
+        }
+        let project_id = &receipt.entity().entity_id;
+        let snapshot = self
+            .repo
+            .get_project_overview_scoped(project_id, team_id)
+            .await
+            .map_err(|error| internal_error(error, "unable to get project overview"))?
+            .ok_or_else(|| ProjectError::NotFound(project_id.clone()))?;
+        Ok(ProjectOverview {
+            project: snapshot.project,
+            user_access_level: access_level,
+            operations: snapshot.operations,
+            immediate_children: snapshot.immediate_children,
+        })
     }
 
     async fn update_project_operations(

@@ -150,6 +150,47 @@ pub struct ProjectOperations {
     pub policy: Option<serde_json::Value>,
 }
 
+/// The bounded, canonical overview for one project.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectOverview {
+    /// The canonical project row.
+    pub project: Project,
+    /// The validated caller access level for this project.
+    pub user_access_level: models_permissions::share_permission::access_level::AccessLevel,
+    /// The canonical project operational metadata.
+    pub operations: ProjectOperations,
+    /// Exact counts of live, direct children only.
+    pub immediate_children: ProjectOverviewImmediateChildren,
+}
+
+/// Exact live depth-one child counts for a project overview.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectOverviewImmediateChildren {
+    /// Non-deleted direct child projects.
+    pub child_projects: i64,
+    /// Non-deleted direct documents classified as tasks.
+    pub tasks: i64,
+    /// Non-deleted direct documents not classified as tasks.
+    pub non_task_documents: i64,
+    /// Non-deleted direct chats.
+    pub chats: i64,
+}
+
+/// Repository-facing project overview data before receipt access is attached.
+///
+/// This is not an API model and deliberately omits caller-specific access.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectOverviewSnapshot {
+    /// The canonical project row returned by the scoped repository read.
+    pub project: Project,
+    /// The canonical operations row returned by the scoped repository read.
+    pub operations: ProjectOperations,
+    /// Exact direct-child counts returned by the scoped repository read.
+    pub immediate_children: ProjectOverviewImmediateChildren,
+}
+
 /// A full replacement of mutable project operational fields.
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReplaceProjectOperationsArgs {

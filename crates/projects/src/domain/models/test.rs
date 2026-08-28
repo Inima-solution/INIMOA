@@ -4,9 +4,13 @@ use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::json;
 
 use super::{
-    is_valid_operations_transition, ProjectOperationalStatus, ProjectOperations,
-    ProjectOperationsValidationError, ProjectPriority, ReplaceProjectOperationsArgs,
+    ProjectOperationalStatus, ProjectOperations, ProjectOperationsValidationError, ProjectOverview,
+    ProjectOverviewImmediateChildren, ProjectPriority, ReplaceProjectOperationsArgs,
+    is_valid_operations_transition,
 };
+use model::project::Project;
+use models_permissions::share_permission::access_level::AccessLevel;
+use utoipa::PartialSchema;
 
 fn timestamp(value: &str) -> DateTime<Utc> {
     value.parse().unwrap()
@@ -40,6 +44,71 @@ fn replacement(status: ProjectOperationalStatus) -> ReplaceProjectOperationsArgs
         policy: None,
         expected_updated_at: timestamp("2026-08-28T01:00:00Z"),
     }
+}
+
+#[test]
+fn project_overview_serializes_only_the_fixed_sections_and_immediate_child_counts() {
+    let overview = ProjectOverview {
+        project: Project {
+            id: "project-1".to_owned(),
+            name: "Project".to_owned(),
+            user_id: "macro|owner@example.com".to_owned(),
+            parent_id: None,
+            created_at: None,
+            updated_at: None,
+            deleted_at: None,
+        },
+        user_access_level: AccessLevel::View,
+        operations: operations(ProjectOperationalStatus::Planned, None),
+        immediate_children: ProjectOverviewImmediateChildren {
+            child_projects: 1,
+            tasks: 2,
+            non_task_documents: 3,
+            chats: 4,
+        },
+    };
+
+    let value = serde_json::to_value(overview).unwrap();
+    let object = value.as_object().unwrap();
+    assert_eq!(
+        object.keys().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "project",
+            "userAccessLevel",
+            "operations",
+            "immediateChildren"
+        ]
+    );
+    let children = value["immediateChildren"].as_object().unwrap();
+    assert_eq!(
+        children.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["childProjects", "tasks", "nonTaskDocuments", "chats"]
+    );
+    assert!(children.values().all(serde_json::Value::is_i64));
+
+    let schema = serde_json::to_value(ProjectOverview::schema()).unwrap();
+    let schema_properties = schema["properties"].as_object().unwrap();
+    assert_eq!(
+        schema_properties
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "immediateChildren",
+            "operations",
+            "project",
+            "userAccessLevel"
+        ]
+    );
+    let child_schema = serde_json::to_value(ProjectOverviewImmediateChildren::schema()).unwrap();
+    let child_properties = child_schema["properties"].as_object().unwrap();
+    assert_eq!(
+        child_properties
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["chats", "childProjects", "nonTaskDocuments", "tasks"]
+    );
 }
 
 #[test]

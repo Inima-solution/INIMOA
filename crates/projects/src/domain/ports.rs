@@ -30,9 +30,9 @@ use uuid::Uuid;
 
 use super::models::{
     CreateProjectArgs, EditProjectArgs, MarkedUploadedTree, MutatedProject, ProjectError,
-    ProjectOperations, PurgedProjectTree, RevertDeleteResult, SoftDeleteResult,
-    UpdateProjectOperationsCommand, UpdateProjectOperationsOutcome, UpdateProjectOperationsRequest,
-    UploadFolderRepoArgs,
+    ProjectOperations, ProjectOverview, ProjectOverviewSnapshot, PurgedProjectTree,
+    RevertDeleteResult, SoftDeleteResult, UpdateProjectOperationsCommand,
+    UpdateProjectOperationsOutcome, UpdateProjectOperationsRequest, UploadFolderRepoArgs,
 };
 
 /// Repository for reading project data from persistent storage.
@@ -68,6 +68,13 @@ pub trait ProjectRepo: Send + Sync + 'static {
         project_id: &str,
         team_id: Uuid,
     ) -> impl Future<Output = Result<Option<ProjectOperations>, Self::Err>> + Send;
+
+    /// Get one canonical project overview only when its active owner team matches `team_id`.
+    fn get_project_overview_scoped(
+        &self,
+        project_id: &str,
+        team_id: Uuid,
+    ) -> impl Future<Output = Result<Option<ProjectOverviewSnapshot>, Self::Err>> + Send;
 
     /// Atomically replace one project's operational state and write its audit fact.
     fn update_project_operations(
@@ -371,6 +378,13 @@ pub trait ProjectService: Send + Sync + 'static {
         receipt: EntityAccessReceipt<ViewAccessLevel>,
         company_receipt: EntityAccessReceipt<ReadProjectWorkScoped>,
     ) -> impl Future<Output = Result<ProjectOperations, ProjectError>> + Send;
+
+    /// Get the bounded canonical overview after project and company access were verified.
+    fn get_project_overview(
+        &self,
+        receipt: EntityAccessReceipt<ViewAccessLevel>,
+        company_receipt: EntityAccessReceipt<ReadProjectWorkScoped>,
+    ) -> impl Future<Output = Result<ProjectOverview, ProjectError>> + Send;
 
     /// Atomically replace operational metadata after typed project/company receipt checks.
     fn update_project_operations(
