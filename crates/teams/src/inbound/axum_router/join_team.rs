@@ -1,7 +1,12 @@
-use axum::extract::{Path, State};
+use axum::{
+    Extension,
+    extract::{Path, State},
+};
+use business_audit::RequestCorrelationId;
 use entity_access::domain::ports::EntityAccessService;
 use macro_authorization::{MacroAuthorizationExtractor, MacroAuthorizationService, UserOrInternal};
 use model_error_response::ErrorResponse;
+use tower_http::request_id::RequestId;
 
 use crate::domain::{model::JoinTeamError, team_repo::TeamService};
 
@@ -33,13 +38,24 @@ pub struct TeamInvitePathParam {
 pub async fn handler<T: TeamService, Eas: EntityAccessService, Auth: MacroAuthorizationService>(
     State(state): State<TeamRouterState<T, Eas, Auth>>,
     authorization: MacroAuthorizationExtractor<Auth, UserOrInternal>,
+    Extension(request_id): Extension<RequestId>,
     Path(TeamInvitePathParam { team_invite_id }): Path<TeamInvitePathParam>,
 ) -> Result<(), JoinTeamError> {
     state
         .service
-        .join_team(
+        .join_team_with_request_id(
             &team_invite_id,
             &authorization.authorization.user.macro_user_id,
+            RequestCorrelationId::try_new(request_id.header_value().to_str().map_err(|_| {
+                JoinTeamError::TeamError(crate::domain::model::TeamError::StorageLayerError(
+                    anyhow::anyhow!("invalid request correlation"),
+                ))
+            })?)
+            .map_err(|_| {
+                JoinTeamError::TeamError(crate::domain::model::TeamError::StorageLayerError(
+                    anyhow::anyhow!("invalid request correlation"),
+                ))
+            })?,
         )
         .await?;
     Ok(())

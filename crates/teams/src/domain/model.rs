@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use macro_user_id::{email::Email, lowercased::Lowercase, user_id::MacroUserIdStr};
 use models_permissions::share_permission::LinkShare;
+use models_team::BusinessRole;
 use roles_and_permissions::domain::model::UserRolesAndPermissionsError;
 
 /// Team plans
@@ -484,6 +485,32 @@ pub struct AcceptedTeamInvite<'a> {
     pub member: TeamMember<'a>,
     /// Snapshot of the invite before it was accepted
     pub invite: TeamInviteSnapshot<'a>,
+}
+
+/// Stored business-role data captured when a team membership is removed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemovedBusinessRole {
+    /// The stored company business role.
+    pub business_role: BusinessRole,
+    /// The principal recorded as the original role granter.
+    pub granted_by: String,
+    /// The original grant timestamp.
+    pub created_at: DateTime<Utc>,
+}
+
+/// Complete snapshot needed to compensate an audited membership removal.
+#[derive(Debug, Clone)]
+pub struct RemovedMember {
+    /// The team whose membership was removed.
+    pub team_id: uuid::Uuid,
+    /// The removed user.
+    pub user_id: MacroUserIdStr<'static>,
+    /// The governance role held by the removed user.
+    pub role: TeamRole,
+    /// The actor whose removal request is being compensated.
+    pub actor: MacroUserIdStr<'static>,
+    /// Stored company roles removed with the membership.
+    pub business_roles: Vec<RemovedBusinessRole>,
 }
 
 /// Errors for team

@@ -5,6 +5,7 @@ mod test;
 
 use std::{collections::HashSet, sync::Arc};
 
+use business_audit::RequestCorrelationId;
 use channels::domain::{
     models::{ChannelType, CreateChannelRequest, Sender},
     ports::{ChannelMutationErr, ChannelService},
@@ -441,10 +442,11 @@ where
         &self,
         team_id: &uuid::Uuid,
         user_id: &MacroUserIdStr<'_>,
+        request_id: &RequestCorrelationId,
         failed_step: &str,
     ) {
         self.team_repository
-            .remove_user_from_team(team_id, user_id)
+            .rollback_membership_with_audit(team_id, user_id, request_id)
             .await
             .inspect_err(|rollback_err| {
                 tracing::error!(
@@ -823,6 +825,22 @@ where
         entity_access_receipt: EntityAccessReceipt<AdminTeamRole>,
         user_id: &MacroUserIdStr<'_>,
     ) -> Result<(), RemoveUserFromTeamError> {
+        self.remove_user_from_team_with_request_id(
+            entity_access_receipt,
+            user_id,
+            RequestCorrelationId::try_new("legacy-team-membership")
+                .expect("static legacy request correlation is valid"),
+        )
+        .await
+    }
+
+    #[tracing::instrument(skip(self, request_id), err)]
+    async fn remove_user_from_team_with_request_id(
+        &self,
+        entity_access_receipt: EntityAccessReceipt<AdminTeamRole>,
+        user_id: &MacroUserIdStr<'_>,
+        request_id: RequestCorrelationId,
+    ) -> Result<(), RemoveUserFromTeamError> {
         let team_id =
             macro_uuid::string_to_uuid(&entity_access_receipt.entity().entity_id).unwrap();
         let removed_by_id = entity_access_receipt
@@ -838,7 +856,7 @@ where
 
         let removed_member = self
             .team_repository
-            .remove_user_from_team(&team_id, user_id)
+            .remove_user_from_team_audited(&team_id, user_id, &removed_by_id, &request_id)
             .await?;
 
         let subscription_id = if enterprise {
@@ -853,7 +871,7 @@ where
                 Ok(subscription_id) => subscription_id,
                 Err(e) => {
                     self.team_repository
-                        .rollback_remove_user_from_team(&removed_member)
+                        .rollback_remove_user_from_team_audited(&removed_member, &request_id)
                         .await
                         .inspect_err(|rollback_err| {
                             tracing::error!(
@@ -874,7 +892,7 @@ where
                 .await
         {
             self.team_repository
-                .rollback_remove_user_from_team(&removed_member)
+                .rollback_remove_user_from_team_audited(&removed_member, &request_id)
                 .await
                 .inspect_err(|rollback_err| {
                     tracing::error!(
@@ -906,7 +924,7 @@ where
                         .ok();
                 }
                 self.team_repository
-                    .rollback_remove_user_from_team(&removed_member)
+                    .rollback_remove_user_from_team_audited(&removed_member, &request_id)
                     .await
                     .inspect_err(|rollback_err| {
                         tracing::error!(
@@ -952,7 +970,7 @@ where
                     .ok();
             }
             self.team_repository
-                .rollback_remove_user_from_team(&removed_member)
+                .rollback_remove_user_from_team_audited(&removed_member, &request_id)
                 .await
                 .inspect_err(|rollback_err| {
                     tracing::error!(
@@ -1133,6 +1151,22 @@ where
         team_invite_id: &uuid::Uuid,
         user_id: &MacroUserIdStr<'_>,
     ) -> Result<TeamMember<'_>, JoinTeamError> {
+        self.join_team_with_request_id(
+            team_invite_id,
+            user_id,
+            RequestCorrelationId::try_new("legacy-team-membership")
+                .expect("static legacy request correlation is valid"),
+        )
+        .await
+    }
+
+    #[tracing::instrument(skip(self, request_id), err)]
+    async fn join_team_with_request_id(
+        &self,
+        team_invite_id: &uuid::Uuid,
+        user_id: &MacroUserIdStr<'_>,
+        request_id: RequestCorrelationId,
+    ) -> Result<TeamMember<'_>, JoinTeamError> {
         // This will fail if the user is already in another team
         let accepted_invite = self
             .team_repository
@@ -1149,7 +1183,7 @@ where
             Ok(enterprise) => enterprise,
             Err(error) => {
                 self.team_repository
-                    .rollback_accept_team_invite(&accepted_invite)
+                    .rollback_accept_team_invite_audited(&accepted_invite, &request_id)
                     .await
                     .inspect_err(|rollback_err| {
                         tracing::error!(
@@ -1173,7 +1207,7 @@ where
                 Ok(team_payment_status) => team_payment_status,
                 Err(error) => {
                     self.team_repository
-                        .rollback_accept_team_invite(&accepted_invite)
+                        .rollback_accept_team_invite_audited(&accepted_invite, &request_id)
                         .await
                         .inspect_err(|rollback_err| {
                             tracing::error!(
@@ -1196,7 +1230,7 @@ where
                     Ok(team_subscription_id) => team_subscription_id,
                     Err(error) => {
                         self.team_repository
-                            .rollback_accept_team_invite(&accepted_invite)
+                            .rollback_accept_team_invite_audited(&accepted_invite, &request_id)
                             .await
                             .inspect_err(|rollback_err| {
                                 tracing::error!(
@@ -1211,7 +1245,7 @@ where
 
                 if team_subscription_id.is_some() {
                     self.team_repository
-                        .rollback_accept_team_invite(&accepted_invite)
+                        .rollback_accept_team_invite_audited(&accepted_invite, &request_id)
                         .await
                         .inspect_err(|rollback_err| {
                             tracing::error!(
@@ -1228,7 +1262,7 @@ where
                     .await
                 {
                     self.team_repository
-                        .rollback_accept_team_invite(&accepted_invite)
+                        .rollback_accept_team_invite_audited(&accepted_invite, &request_id)
                         .await
                         .inspect_err(|rollback_err| {
                             tracing::error!(
@@ -1249,7 +1283,7 @@ where
                 Ok(team_subscription_id) => team_subscription_id,
                 Err(error) => {
                     self.team_repository
-                        .rollback_accept_team_invite(&accepted_invite)
+                        .rollback_accept_team_invite_audited(&accepted_invite, &request_id)
                         .await
                         .inspect_err(|rollback_err| {
                             tracing::error!(
@@ -1275,7 +1309,7 @@ where
                         Ok(seat_count) => seat_count,
                         Err(error) => {
                             self.team_repository
-                                .rollback_accept_team_invite(&accepted_invite)
+                                .rollback_accept_team_invite_audited(&accepted_invite, &request_id)
                                 .await
                                 .inspect_err(|rollback_err| {
                                     tracing::error!(
@@ -1290,7 +1324,7 @@ where
 
                     if seat_count > FREE_TEAM_MAX_MEMBERS {
                         self.team_repository
-                            .rollback_accept_team_invite(&accepted_invite)
+                            .rollback_accept_team_invite_audited(&accepted_invite, &request_id)
                             .await
                             .inspect_err(|rollback_err| {
                                 tracing::error!(
@@ -1311,7 +1345,7 @@ where
                         .await
                     {
                         self.team_repository
-                            .rollback_accept_team_invite(&accepted_invite)
+                            .rollback_accept_team_invite_audited(&accepted_invite, &request_id)
                             .await
                             .inspect_err(|rollback_err| {
                                 tracing::error!(
@@ -1355,7 +1389,7 @@ where
                         .ok();
                 }
                 self.team_repository
-                    .rollback_accept_team_invite(&accepted_invite)
+                    .rollback_accept_team_invite_audited(&accepted_invite, &request_id)
                     .await
                     .inspect_err(|rollback_err| {
                         tracing::error!(
@@ -1399,7 +1433,7 @@ where
                     .ok();
             }
             self.team_repository
-                .rollback_accept_team_invite(&accepted_invite)
+                .rollback_accept_team_invite_audited(&accepted_invite, &request_id)
                 .await
                 .inspect_err(|rollback_err| {
                     tracing::error!(
@@ -1773,6 +1807,20 @@ where
         &self,
         user_id: &MacroUserIdStr<'_>,
     ) -> Result<Option<TeamMember<'static>>, TryJoinTeamByDomainError> {
+        self.try_join_team_by_domain_with_request_id(
+            user_id,
+            RequestCorrelationId::try_new("legacy-team-membership")
+                .expect("static legacy request correlation is valid"),
+        )
+        .await
+    }
+
+    #[tracing::instrument(skip(self, request_id), err)]
+    async fn try_join_team_by_domain_with_request_id(
+        &self,
+        user_id: &MacroUserIdStr<'_>,
+        request_id: RequestCorrelationId,
+    ) -> Result<Option<TeamMember<'static>>, TryJoinTeamByDomainError> {
         let Some(team_id) = self.team_repository.get_team_id_by_domain(user_id).await? else {
             return Ok(None);
         };
@@ -1814,6 +1862,7 @@ where
                         self.rollback_add_user_to_team(
                             &team_id,
                             user_id,
+                            &request_id,
                             "getting team payment status",
                         )
                         .await;
@@ -1833,6 +1882,7 @@ where
                         self.rollback_add_user_to_team(
                             &team_id,
                             user_id,
+                            &request_id,
                             "getting team subscription id",
                         )
                         .await;
@@ -1841,8 +1891,13 @@ where
                 };
 
                 if team_subscription_id.is_some() {
-                    self.rollback_add_user_to_team(&team_id, user_id, "the payment status check")
-                        .await;
+                    self.rollback_add_user_to_team(
+                        &team_id,
+                        user_id,
+                        &request_id,
+                        "the payment status check",
+                    )
+                    .await;
                     return Err(JoinTeamError::TeamError(TeamError::TeamNotPaying).into());
                 }
 
@@ -1853,6 +1908,7 @@ where
                     self.rollback_add_user_to_team(
                         &team_id,
                         user_id,
+                        &request_id,
                         "backfilling team subscription",
                     )
                     .await;
@@ -1867,8 +1923,13 @@ where
             {
                 Ok(team_subscription_id) => team_subscription_id,
                 Err(error) => {
-                    self.rollback_add_user_to_team(&team_id, user_id, "getting team subscription")
-                        .await;
+                    self.rollback_add_user_to_team(
+                        &team_id,
+                        user_id,
+                        &request_id,
+                        "getting team subscription",
+                    )
+                    .await;
                     return Err(error.into());
                 }
             };
@@ -1886,6 +1947,7 @@ where
                             self.rollback_add_user_to_team(
                                 &team_id,
                                 user_id,
+                                &request_id,
                                 "getting team seat count",
                             )
                             .await;
@@ -1898,6 +1960,7 @@ where
                         self.rollback_add_user_to_team(
                             &team_id,
                             user_id,
+                            &request_id,
                             "the free member limit check",
                         )
                         .await;
@@ -1915,6 +1978,7 @@ where
                         self.rollback_add_user_to_team(
                             &team_id,
                             user_id,
+                            &request_id,
                             "incrementing seat count",
                         )
                         .await;
@@ -1952,8 +2016,13 @@ where
                         })
                         .ok();
                 }
-                self.rollback_add_user_to_team(&team_id, user_id, "adding team member roles")
-                    .await;
+                self.rollback_add_user_to_team(
+                    &team_id,
+                    user_id,
+                    &request_id,
+                    "adding team member roles",
+                )
+                .await;
                 return Err(JoinTeamError::AddRolesToUserError(e).into());
             }
         }
@@ -1988,8 +2057,13 @@ where
                     })
                     .ok();
             }
-            self.rollback_add_user_to_team(&team_id, user_id, "adding team member to channels")
-                .await;
+            self.rollback_add_user_to_team(
+                &team_id,
+                user_id,
+                &request_id,
+                "adding team member to channels",
+            )
+            .await;
             return Err(JoinTeamError::TeamError(channel_error_to_team_error(e)).into());
         }
 

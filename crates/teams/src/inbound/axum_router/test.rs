@@ -4,9 +4,9 @@ use std::{
 };
 
 use axum::{
-    Router,
+    Extension, Router,
     body::{Body, to_bytes},
-    http::{Request, StatusCode, header},
+    http::{HeaderValue, Request, StatusCode, header},
     response::IntoResponse,
 };
 use entity_access::domain::{
@@ -32,6 +32,7 @@ use roles_and_permissions::domain::model::PermissionId;
 use rootcause::Report;
 use serde_json::{Value, json};
 use tower::ServiceExt;
+use tower_http::request_id::RequestId;
 
 use crate::domain::{
     model::{
@@ -203,6 +204,7 @@ struct TeamReceiptCall {
 struct FakeTeamService {
     user_calls: Arc<Mutex<Vec<String>>>,
     team_receipt_calls: Arc<Mutex<Vec<TeamReceiptCall>>>,
+    request_ids: Arc<Mutex<Vec<String>>>,
 }
 
 impl FakeTeamService {
@@ -217,6 +219,13 @@ impl FakeTeamService {
         self.team_receipt_calls
             .lock()
             .expect("team receipt calls lock poisoned")
+            .clone()
+    }
+
+    fn request_ids(&self) -> Vec<String> {
+        self.request_ids
+            .lock()
+            .expect("request ids lock poisoned")
             .clone()
     }
 }
@@ -254,6 +263,19 @@ impl TeamService for FakeTeamService {
         panic!("unexpected remove_user_from_team call")
     }
 
+    async fn remove_user_from_team_with_request_id(
+        &self,
+        _entity_access_receipt: EntityAccessReceipt<AdminTeamRole>,
+        _user_id: &MacroUserIdStr<'_>,
+        request_id: business_audit::RequestCorrelationId,
+    ) -> Result<(), RemoveUserFromTeamError> {
+        self.request_ids
+            .lock()
+            .unwrap()
+            .push(request_id.as_ref().to_owned());
+        Ok(())
+    }
+
     async fn reject_invitation(
         &self,
         _user_id: &MacroUserIdStr<'_>,
@@ -283,6 +305,19 @@ impl TeamService for FakeTeamService {
         _user_id: &MacroUserIdStr<'_>,
     ) -> Result<TeamMember<'_>, JoinTeamError> {
         panic!("unexpected join_team call")
+    }
+
+    async fn join_team_with_request_id(
+        &self,
+        _team_invite_id: &uuid::Uuid,
+        _user_id: &MacroUserIdStr<'_>,
+        request_id: business_audit::RequestCorrelationId,
+    ) -> Result<TeamMember<'_>, JoinTeamError> {
+        self.request_ids
+            .lock()
+            .unwrap()
+            .push(request_id.as_ref().to_owned());
+        Err(JoinTeamError::TeamError(TeamError::TeamInviteDoesNotExist))
     }
 
     async fn revoke_permissions_for_team_members(
@@ -559,11 +594,106 @@ fn user_context(user_id: &str) -> UserContext {
 }
 
 fn router(service: FakeTeamService, entity_access: FakeEntityAccessService) -> Router {
+    router_with_request_id(service, entity_access, "router-request-id")
+}
+
+fn router_with_request_id(
+    service: FakeTeamService,
+    entity_access: FakeEntityAccessService,
+    request_id: &'static str,
+) -> Router {
     teams_router(TeamRouterState {
         service: Arc::new(service),
         entity_access_service: Arc::new(entity_access),
         authorization_state: MacroAuthorizationState::new(Arc::new(FakeAuthorizationService)),
     })
+    .layer(Extension(RequestId::new(HeaderValue::from_static(
+        request_id,
+    ))))
+}
+
+#[tokio::test]
+async fn remove_handler_forwards_middleware_request_id() {
+    let service = FakeTeamService::default();
+    let response = router(
+        service.clone(),
+        FakeEntityAccessService::with_membership(USER_ID, TeamRole::Admin),
+    )
+    .oneshot(
+        Request::delete("/remove/macro%7Cuser2%40user.com")
+            .header(header::AUTHORIZATION, "Bearer valid")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(service.request_ids(), vec!["router-request-id"]);
+}
+
+#[tokio::test]
+async fn join_handler_forwards_middleware_request_id() {
+    let service = FakeTeamService::default();
+    let response = router(
+        service.clone(),
+        FakeEntityAccessService::with_membership(USER_ID, TeamRole::Member),
+    )
+    .oneshot(
+        Request::get("/join/22222222-2222-2222-2222-222222222222")
+            .header(header::AUTHORIZATION, "Bearer valid")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(service.request_ids(), vec!["router-request-id"]);
+}
+
+#[tokio::test]
+async fn oversized_request_id_is_an_obfuscated_internal_error() {
+    let request_id = "x".repeat(257);
+    // RequestId requires a static header value in this narrow test helper.
+    let request_id: &'static str = Box::leak(request_id.into_boxed_str());
+    for (path, expected_body) in [
+        (
+            "/remove/macro%7Cuser2%40user.com",
+            r#"{"message":"unable to remove user from team"}"#,
+        ),
+        (
+            "/join/22222222-2222-2222-2222-222222222222",
+            r#"{"message":"unable to join team"}"#,
+        ),
+    ] {
+        let response = router_with_request_id(
+            FakeTeamService::default(),
+            FakeEntityAccessService::with_membership(USER_ID, TeamRole::Admin),
+            request_id,
+        )
+        .oneshot(
+            Request::builder()
+                .method(if path.starts_with("/remove/") {
+                    "DELETE"
+                } else {
+                    "GET"
+                })
+                .uri(path)
+                .header(header::AUTHORIZATION, "Bearer valid")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+        let (status, body, json) = response_parts(response).await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(body, expected_body);
+        assert_eq!(
+            json,
+            serde_json::from_str::<serde_json::Value>(expected_body).unwrap()
+        );
+        assert!(!body.contains(request_id));
+        assert!(!body.contains("request correlation"));
+    }
 }
 
 fn get_user_teams_request() -> axum::http::request::Builder {

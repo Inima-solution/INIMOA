@@ -1,5 +1,7 @@
+use business_audit::RequestCorrelationId;
 use macro_db_migrator::MACRO_DB_MIGRATIONS;
 use macro_user_id::user_id::MacroUserIdStr;
+use models_team::BusinessRole;
 use sqlx::{Pool, Postgres, Row};
 
 ///! Tests for the team_repo implementation for teams
@@ -768,6 +770,222 @@ async fn test_remove_user_from_team(pool: Pool<Postgres>) -> anyhow::Result<()> 
 
     assert!(err.to_string().contains("Cannot remove owner"));
 
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("teams"))
+)]
+async fn audited_membership_removal_restores_only_the_original_membership(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let team_repo = TeamRepositoryImpl::new(pool.clone());
+    let team_id = macro_uuid::string_to_uuid("11111111-1111-1111-1111-111111111111")?;
+    let user_id = MacroUserIdStr::parse_from_str("macro|user2@user.com")?;
+    let actor = MacroUserIdStr::parse_from_str("macro|user@user.com")?;
+    let request_id = RequestCorrelationId::try_new("ws02-membership-removal")?;
+
+    // Zero stored roles produces no role audit rows but still removes membership.
+    let removed = team_repo
+        .remove_user_from_team_audited(&team_id, &user_id, &actor, &request_id)
+        .await?;
+    assert!(removed.business_roles.is_empty());
+    team_repo
+        .rollback_remove_user_from_team_audited(&removed, &request_id)
+        .await?;
+
+    sqlx::query(
+        "INSERT INTO team_business_role (team_id, principal, business_role, granted_by) VALUES ($1, $2, $3, $4), ($1, $2, $5, $4)",
+    )
+    .bind(team_id)
+    .bind(user_id.as_ref())
+    .bind(BusinessRole::OrgAdmin)
+    .bind(actor.as_ref())
+    .bind(BusinessRole::Manager)
+    .execute(&pool)
+    .await?;
+
+    let removed = team_repo
+        .remove_user_from_team_audited(&team_id, &user_id, &actor, &request_id)
+        .await?;
+    assert_eq!(removed.business_roles.len(), 2);
+    let revocations: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM business_audit_events WHERE request_id = $1 AND action = 'role_revoked'",
+    )
+    .bind(request_id.as_ref())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(revocations, 2);
+
+    let seat_before: i32 = sqlx::query_scalar("SELECT seat_count FROM team WHERE id = $1")
+        .bind(team_id)
+        .fetch_one(&pool)
+        .await?;
+    team_repo
+        .rollback_remove_user_from_team_audited(&removed, &request_id)
+        .await?;
+    let restored_roles: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM team_business_role WHERE team_id = $1 AND principal = $2",
+    )
+    .bind(team_id)
+    .bind(user_id.as_ref())
+    .fetch_one(&pool)
+    .await?;
+    let granted: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM business_audit_events WHERE request_id = $1 AND action = 'role_granted'",
+    )
+    .bind(request_id.as_ref())
+    .fetch_one(&pool)
+    .await?;
+    let seat_after_restore: i32 = sqlx::query_scalar("SELECT seat_count FROM team WHERE id = $1")
+        .bind(team_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(
+        (restored_roles, granted, seat_after_restore),
+        (2, 2, seat_before + 1)
+    );
+
+    let second_request_id = RequestCorrelationId::try_new("ws02-membership-rejoin")?;
+    let removed = team_repo
+        .remove_user_from_team_audited(&team_id, &user_id, &actor, &second_request_id)
+        .await?;
+    // A concurrent/rejoined membership wins: compensation must not restore stale roles.
+    sqlx::query("INSERT INTO team_user (team_id, user_id, team_role) VALUES ($1, $2, 'member')")
+        .bind(team_id)
+        .bind(user_id.as_ref())
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE team SET seat_count = seat_count + 1 WHERE id = $1")
+        .bind(team_id)
+        .execute(&pool)
+        .await?;
+    let seat_after_rejoin: i32 = sqlx::query_scalar("SELECT seat_count FROM team WHERE id = $1")
+        .bind(team_id)
+        .fetch_one(&pool)
+        .await?;
+    team_repo
+        .rollback_remove_user_from_team_audited(&removed, &second_request_id)
+        .await?;
+    let roles: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM team_business_role WHERE team_id = $1 AND principal = $2",
+    )
+    .bind(team_id)
+    .bind(user_id.as_ref())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(roles, 0);
+    let seat_after_rejoin_guard: i32 =
+        sqlx::query_scalar("SELECT seat_count FROM team WHERE id = $1")
+            .bind(team_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(seat_after_rejoin_guard, seat_after_rejoin);
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("teams"))
+)]
+async fn audited_removal_rolls_back_when_audit_insert_fails(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let team_repo = TeamRepositoryImpl::new(pool.clone());
+    let team_id = macro_uuid::string_to_uuid("11111111-1111-1111-1111-111111111111")?;
+    let user_id = MacroUserIdStr::parse_from_str("macro|user2@user.com")?;
+    let actor = MacroUserIdStr::parse_from_str("macro|user@user.com")?;
+    let request_id = RequestCorrelationId::try_new("ws02-audit-failure")?;
+    let seat_before: i32 = sqlx::query_scalar("SELECT seat_count FROM team WHERE id = $1")
+        .bind(team_id)
+        .fetch_one(&pool)
+        .await?;
+    sqlx::query("INSERT INTO team_business_role (team_id, principal, business_role, granted_by) VALUES ($1, $2, 'manager', $3)")
+        .bind(team_id).bind(user_id.as_ref()).bind(actor.as_ref()).execute(&pool).await?;
+    sqlx::query("CREATE FUNCTION ws02_fail_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'ws02 audit failure'; END; $$")
+        .execute(&pool).await?;
+    sqlx::query("CREATE TRIGGER ws02_fail_audit BEFORE INSERT ON business_audit_events FOR EACH ROW EXECUTE FUNCTION ws02_fail_audit()")
+        .execute(&pool).await?;
+    assert!(
+        team_repo
+            .remove_user_from_team_audited(&team_id, &user_id, &actor, &request_id)
+            .await
+            .is_err()
+    );
+    let membership: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM team_user WHERE team_id = $1 AND user_id = $2")
+            .bind(team_id)
+            .bind(user_id.as_ref())
+            .fetch_one(&pool)
+            .await?;
+    let roles: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM team_business_role WHERE team_id = $1 AND principal = $2",
+    )
+    .bind(team_id)
+    .bind(user_id.as_ref())
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!((membership, roles), (1, 1));
+    let seat_after: i32 = sqlx::query_scalar("SELECT seat_count FROM team WHERE id = $1")
+        .bind(team_id)
+        .fetch_one(&pool)
+        .await?;
+    let audits: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM business_audit_events WHERE request_id = $1")
+            .bind(request_id.as_ref())
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!((seat_after, audits), (seat_before, 0));
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("teams"))
+)]
+async fn audited_invite_rollback_removes_roles_and_restores_invite(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let team_repo = TeamRepositoryImpl::new(pool.clone());
+    let team_id = macro_uuid::string_to_uuid("11111111-1111-1111-1111-111111111111")?;
+    let invite_id = macro_uuid::string_to_uuid("22222222-2222-2222-2222-222222222222")?;
+    let user_id = MacroUserIdStr::parse_from_str("macro|user3@user.com")?;
+    let seat_before: i32 = sqlx::query_scalar("SELECT seat_count FROM team WHERE id = $1")
+        .bind(team_id)
+        .fetch_one(&pool)
+        .await?;
+    let accepted = team_repo.accept_team_invite(&invite_id, &user_id).await?;
+    sqlx::query("INSERT INTO team_business_role (team_id, principal, business_role, granted_by) VALUES ($1, $2, 'manager', $2)")
+        .bind(team_id).bind(user_id.as_ref()).execute(&pool).await?;
+    let request_id = RequestCorrelationId::try_new("ws02-invite-rollback")?;
+    team_repo
+        .rollback_accept_team_invite_audited(&accepted, &request_id)
+        .await?;
+    let member: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM team_user WHERE team_id = $1 AND user_id = $2")
+            .bind(team_id)
+            .bind(user_id.as_ref())
+            .fetch_one(&pool)
+            .await?;
+    let roles: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM team_business_role WHERE team_id = $1 AND principal = $2",
+    )
+    .bind(team_id)
+    .bind(user_id.as_ref())
+    .fetch_one(&pool)
+    .await?;
+    let invites: i64 = sqlx::query_scalar("SELECT count(*) FROM team_invite WHERE id = $1")
+        .bind(invite_id)
+        .fetch_one(&pool)
+        .await?;
+    let audits: i64 = sqlx::query_scalar("SELECT count(*) FROM business_audit_events WHERE request_id = $1 AND action = 'role_revoked'").bind(request_id.as_ref()).fetch_one(&pool).await?;
+    assert_eq!((member, roles, invites, audits), (0, 0, 1, 1));
+    let seat_after: i32 = sqlx::query_scalar("SELECT seat_count FROM team WHERE id = $1")
+        .bind(team_id)
+        .fetch_one(&pool)
+        .await?;
+    assert_eq!(seat_after, seat_before);
     Ok(())
 }
 

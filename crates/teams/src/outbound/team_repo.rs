@@ -2,12 +2,18 @@
 use crate::domain::{
     model::{
         AcceptedTeamInvite, CreateTeamError, InviteUsersToTeamError, PatchTeamRequest,
-        RemoveTeamInviteError, RemoveUserFromTeamError, Team, TeamError, TeamInvite,
-        TeamInviteDetails, TeamInviteSnapshot, TeamMember, TeamMembers, TeamPlan, TeamRole,
-        TeamWithMembers, ToggleAutoJoinDomainError, is_generic_email_domain, normalize_team_slug,
+        RemoveTeamInviteError, RemoveUserFromTeamError, RemovedBusinessRole, RemovedMember, Team,
+        TeamError, TeamInvite, TeamInviteDetails, TeamInviteSnapshot, TeamMember, TeamMembers,
+        TeamPlan, TeamRole, TeamWithMembers, ToggleAutoJoinDomainError, is_generic_email_domain,
+        normalize_team_slug,
     },
     team_repo::{TeamMembersService, TeamRepository},
 };
+use business_audit::{
+    Actor, AuditAction, AuditEvent, AuditOutcome, AuditTarget, RequestCorrelationId,
+    RetentionClass, RoleChangeMetadata, insert_with_tx,
+};
+use chrono::Utc;
 use macro_user_id::{
     cowlike::CowLike,
     email::{Email, ReadEmailParts},
@@ -15,6 +21,7 @@ use macro_user_id::{
     user_id::MacroUserIdStr,
 };
 use models_permissions::share_permission::LinkShare;
+use models_team::BusinessRole;
 use sqlx::{PgPool, Row};
 use std::str::FromStr;
 
@@ -63,6 +70,77 @@ impl TeamRepositoryImpl {
         .await?;
 
         Ok(())
+    }
+
+    /// Deletes one membership and every stored company role, recording one
+    /// successful revocation audit per removed role in the caller's transaction.
+    async fn delete_membership_with_audit(
+        transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+        team_id: &uuid::Uuid,
+        user_id: &MacroUserIdStr<'_>,
+        actor: &MacroUserIdStr<'_>,
+        request_id: &RequestCorrelationId,
+    ) -> Result<Option<(TeamRole, Vec<RemovedBusinessRole>)>, anyhow::Error> {
+        let member = sqlx::query!(
+            r#"
+            DELETE FROM team_user
+            WHERE team_id = $1 AND user_id = $2
+            RETURNING team_role as "team_role!: TeamRole"
+            "#,
+            team_id,
+            user_id.as_ref(),
+        )
+        .fetch_optional(transaction.as_mut())
+        .await?;
+
+        let Some(member) = member else {
+            return Ok(None);
+        };
+
+        let rows = sqlx::query!(
+            r#"
+            DELETE FROM team_business_role
+            WHERE team_id = $1 AND principal = $2
+            RETURNING
+                business_role as "business_role!: BusinessRole",
+                granted_by,
+                created_at
+            "#,
+            team_id,
+            user_id.as_ref(),
+        )
+        .fetch_all(transaction.as_mut())
+        .await?;
+
+        Self::bump_seat_count(transaction, team_id, -1).await?;
+
+        let occurred_at = Utc::now();
+        let target = Actor::new_from_user(user_id.clone().into_owned());
+        let audit_actor = Actor::new_from_user(actor.clone().into_owned());
+        let mut business_roles = Vec::with_capacity(rows.len());
+        for row in rows {
+            let metadata = RoleChangeMetadata::new(row.business_role, target.clone())?;
+            let event = AuditEvent::new(
+                *team_id,
+                audit_actor.clone(),
+                None,
+                AuditAction::RoleRevoked(metadata),
+                AuditTarget::Principal(target.clone()),
+                AuditOutcome::Success,
+                occurred_at,
+                request_id.clone(),
+                None,
+                RetentionClass::Standard,
+            )?;
+            insert_with_tx(transaction, &event).await?;
+            business_roles.push(RemovedBusinessRole {
+                business_role: row.business_role,
+                granted_by: row.granted_by,
+                created_at: row.created_at,
+            });
+        }
+
+        Ok(Some((member.team_role, business_roles)))
     }
 
     /// Gets the owner of a team
@@ -579,6 +657,42 @@ impl TeamRepository for TeamRepositoryImpl {
         Ok(removed_member)
     }
 
+    #[tracing::instrument(skip(self, request_id), err)]
+    async fn remove_user_from_team_audited(
+        &self,
+        team_id: &uuid::Uuid,
+        user_id: &MacroUserIdStr<'_>,
+        actor: &MacroUserIdStr<'_>,
+        request_id: &RequestCorrelationId,
+    ) -> Result<RemovedMember, RemoveUserFromTeamError> {
+        let owner_id = self.get_team_owner(team_id).await?;
+        if user_id.as_ref() == owner_id.as_ref() {
+            return Err(RemoveUserFromTeamError::CannotRemoveOwner);
+        }
+
+        let mut transaction = self.pool.begin().await?;
+        let Some((role, business_roles)) = Self::delete_membership_with_audit(
+            &mut transaction,
+            team_id,
+            user_id,
+            actor,
+            request_id,
+        )
+        .await?
+        else {
+            return Err(RemoveUserFromTeamError::UserNotInTeam);
+        };
+        transaction.commit().await?;
+
+        Ok(RemovedMember {
+            team_id: *team_id,
+            user_id: user_id.clone().into_owned(),
+            role,
+            actor: actor.clone().into_owned(),
+            business_roles,
+        })
+    }
+
     #[tracing::instrument(skip(self), err)]
     async fn get_team_invite_by_id(
         &self,
@@ -903,6 +1017,43 @@ impl TeamRepository for TeamRepositoryImpl {
         Ok(())
     }
 
+    #[tracing::instrument(skip(self, request_id), err)]
+    async fn rollback_accept_team_invite_audited(
+        &self,
+        accepted_invite: &AcceptedTeamInvite<'_>,
+        request_id: &RequestCorrelationId,
+    ) -> Result<(), TeamError> {
+        let mut transaction = self.pool.begin().await?;
+        Self::delete_membership_with_audit(
+            &mut transaction,
+            &accepted_invite.member.team_id,
+            &accepted_invite.member.user_id,
+            &accepted_invite.member.user_id,
+            request_id,
+        )
+        .await?;
+
+        sqlx::query!(
+            r#"
+            INSERT INTO team_invite
+                (id, team_id, email, team_role, invited_by, created_at, last_sent_at)
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            ON CONFLICT DO NOTHING
+            "#,
+            accepted_invite.invite.id,
+            accepted_invite.invite.team_id,
+            accepted_invite.invite.email.as_ref(),
+            accepted_invite.invite.team_role as _,
+            accepted_invite.invite.invited_by.as_ref(),
+            accepted_invite.invite.created_at.naive_utc(),
+            accepted_invite.invite.last_sent_at.naive_utc(),
+        )
+        .execute(transaction.as_mut())
+        .await?;
+        transaction.commit().await?;
+        Ok(())
+    }
+
     #[tracing::instrument(skip(self), err)]
     #[allow(clippy::disallowed_methods, reason = "legacy code. fix later")]
     async fn rollback_remove_user_from_team(
@@ -931,6 +1082,84 @@ impl TeamRepository for TeamRepositoryImpl {
 
         transaction.commit().await?;
 
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self, request_id), err)]
+    async fn rollback_remove_user_from_team_audited(
+        &self,
+        removed_member: &RemovedMember,
+        request_id: &RequestCorrelationId,
+    ) -> Result<(), TeamError> {
+        let mut transaction = self.pool.begin().await?;
+        let inserted = sqlx::query!(
+            r#"
+            INSERT INTO team_user (team_id, user_id, team_role)
+            VALUES ($1, $2, $3)
+            ON CONFLICT DO NOTHING
+            "#,
+            removed_member.team_id,
+            removed_member.user_id.as_ref(),
+            removed_member.role as _,
+        )
+        .execute(transaction.as_mut())
+        .await?;
+
+        if inserted.rows_affected() > 0 {
+            Self::bump_seat_count(&mut transaction, &removed_member.team_id, 1).await?;
+            let occurred_at = Utc::now();
+            let target = Actor::new_from_user(removed_member.user_id.clone());
+            let audit_actor = Actor::new_from_user(removed_member.actor.clone());
+            for role in &removed_member.business_roles {
+                sqlx::query!(
+                    r#"
+                    INSERT INTO team_business_role
+                        (team_id, principal, business_role, granted_by, created_at)
+                    VALUES ($1, $2, $3, $4, $5)
+                    "#,
+                    removed_member.team_id,
+                    removed_member.user_id.as_ref(),
+                    role.business_role as _,
+                    role.granted_by,
+                    role.created_at,
+                )
+                .execute(transaction.as_mut())
+                .await?;
+
+                let metadata = RoleChangeMetadata::new(role.business_role, target.clone())
+                    .map_err(anyhow::Error::from)?;
+                let event = AuditEvent::new(
+                    removed_member.team_id,
+                    audit_actor.clone(),
+                    None,
+                    AuditAction::RoleGranted(metadata),
+                    AuditTarget::Principal(target.clone()),
+                    AuditOutcome::Success,
+                    occurred_at,
+                    request_id.clone(),
+                    None,
+                    RetentionClass::Standard,
+                )
+                .map_err(anyhow::Error::from)?;
+                insert_with_tx(&mut transaction, &event).await?;
+            }
+        }
+
+        transaction.commit().await?;
+        Ok(())
+    }
+
+    #[tracing::instrument(skip(self, request_id), err)]
+    async fn rollback_membership_with_audit(
+        &self,
+        team_id: &uuid::Uuid,
+        user_id: &MacroUserIdStr<'_>,
+        request_id: &RequestCorrelationId,
+    ) -> Result<(), TeamError> {
+        let mut transaction = self.pool.begin().await?;
+        Self::delete_membership_with_audit(&mut transaction, team_id, user_id, user_id, request_id)
+            .await?;
+        transaction.commit().await?;
         Ok(())
     }
 

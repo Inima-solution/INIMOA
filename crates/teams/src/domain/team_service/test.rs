@@ -59,7 +59,7 @@ use crate::domain::{
     customer_repo::CustomerRepository,
     model::{
         AcceptedTeamInvite, CustomerError, PatchTeamRequest, PatchTeamUserRole,
-        RemoveTeamInviteError, RemoveUserFromTeamError, Team, TeamError, TeamInvite,
+        RemoveTeamInviteError, RemoveUserFromTeamError, RemovedMember, Team, TeamError, TeamInvite,
         TeamInviteDetails, TeamInviteSnapshot, TeamMember, TeamPlan, TeamRole, TeamWithMembers,
         ToggleAutoJoinDomainError, TryJoinTeamByDomainError,
     },
@@ -93,6 +93,10 @@ struct MockTeamRepository {
     rollback_remove_calls: Arc<Mutex<usize>>,
     fail_rollback_accept: bool,
     fail_rollback_remove: bool,
+    audited_remove_calls: Arc<Mutex<usize>>,
+    audited_rollback_remove_calls: Arc<Mutex<usize>>,
+    audited_rollback_accept_calls: Arc<Mutex<usize>>,
+    audited_membership_rollback_calls: Arc<Mutex<usize>>,
     patch_team_user_role_calls: Arc<Mutex<Vec<(uuid::Uuid, String, TeamRole)>>>,
     fail_patch_team_user_role_at: Option<usize>,
     patch_team_name_calls: Arc<Mutex<Vec<(uuid::Uuid, Option<String>, Option<String>)>>>,
@@ -158,6 +162,10 @@ impl MockTeamRepository {
             rollback_remove_calls: Arc::new(Mutex::new(0)),
             fail_rollback_accept: false,
             fail_rollback_remove: false,
+            audited_remove_calls: Arc::new(Mutex::new(0)),
+            audited_rollback_remove_calls: Arc::new(Mutex::new(0)),
+            audited_rollback_accept_calls: Arc::new(Mutex::new(0)),
+            audited_membership_rollback_calls: Arc::new(Mutex::new(0)),
             patch_team_user_role_calls: Arc::new(Mutex::new(Vec::new())),
             fail_patch_team_user_role_at: None,
             patch_team_name_calls: Arc::new(Mutex::new(Vec::new())),
@@ -536,6 +544,80 @@ impl TeamRepository for MockTeamRepository {
                 Ok(())
             }
         }
+    }
+
+    fn remove_user_from_team_audited(
+        &self,
+        _: &uuid::Uuid,
+        _: &MacroUserIdStr<'_>,
+        _: &MacroUserIdStr<'_>,
+        _: &business_audit::RequestCorrelationId,
+    ) -> impl Future<Output = Result<RemovedMember, RemoveUserFromTeamError>> + Send {
+        *self.audited_remove_calls.lock().unwrap() += 1;
+        *self.remove_user_calls.lock().unwrap() += 1;
+        let removed_member = self.removed_member.clone();
+        async move {
+            removed_member
+                .map(|member| RemovedMember {
+                    team_id: member.team_id,
+                    user_id: member.user_id,
+                    role: member.role,
+                    actor: MacroUserIdStr::parse_from_str("macro|actor@example.com")
+                        .unwrap()
+                        .into_owned(),
+                    business_roles: Vec::new(),
+                })
+                .ok_or(RemoveUserFromTeamError::UserNotInTeam)
+        }
+    }
+
+    fn rollback_accept_team_invite_audited(
+        &self,
+        _: &AcceptedTeamInvite<'_>,
+        _: &business_audit::RequestCorrelationId,
+    ) -> impl Future<Output = Result<(), TeamError>> + Send {
+        *self.audited_rollback_accept_calls.lock().unwrap() += 1;
+        *self.rollback_accept_calls.lock().unwrap() += 1;
+        let fail = self.fail_rollback_accept;
+        async move {
+            if fail {
+                Err(TeamError::StorageLayerError(anyhow::anyhow!(
+                    "rollback failed"
+                )))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn rollback_remove_user_from_team_audited(
+        &self,
+        _: &RemovedMember,
+        _: &business_audit::RequestCorrelationId,
+    ) -> impl Future<Output = Result<(), TeamError>> + Send {
+        *self.audited_rollback_remove_calls.lock().unwrap() += 1;
+        *self.rollback_remove_calls.lock().unwrap() += 1;
+        let fail = self.fail_rollback_remove;
+        async move {
+            if fail {
+                Err(TeamError::StorageLayerError(anyhow::anyhow!(
+                    "rollback failed"
+                )))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn rollback_membership_with_audit(
+        &self,
+        _: &uuid::Uuid,
+        _: &MacroUserIdStr<'_>,
+        _: &business_audit::RequestCorrelationId,
+    ) -> impl Future<Output = Result<(), TeamError>> + Send {
+        *self.audited_membership_rollback_calls.lock().unwrap() += 1;
+        *self.remove_user_calls.lock().unwrap() += 1;
+        async { Ok(()) }
     }
 
     fn is_user_member_of_team(
@@ -4077,7 +4159,7 @@ async fn test_join_team_increments_customer_seat_count() {
     let upsert_role_calls = roles_service.upsert_calls.clone();
 
     let service = TeamServiceImpl::new(
-        team_repo,
+        team_repo.clone(),
         customer_repo,
         channels_repo,
         roles_service,
@@ -4264,7 +4346,7 @@ async fn test_remove_user_from_team_decrements_customer_seat_count() {
     let remove_role_calls = roles_service.remove_calls.clone();
 
     let service = TeamServiceImpl::new(
-        team_repo,
+        team_repo.clone(),
         customer_repo,
         channels_repo,
         roles_service,
@@ -4414,7 +4496,7 @@ async fn test_remove_user_from_team_rolls_back_remove_when_customer_decrement_fa
     let remove_role_calls = roles_service.remove_calls.clone();
 
     let service = TeamServiceImpl::new(
-        team_repo,
+        team_repo.clone(),
         customer_repo,
         channels_repo,
         roles_service,
@@ -4438,6 +4520,8 @@ async fn test_remove_user_from_team_rolls_back_remove_when_customer_decrement_fa
         vec![(subscription_id.to_string(), 1)]
     );
     assert_eq!(*rollback_remove_calls.lock().unwrap(), 1);
+    assert_eq!(*team_repo.audited_remove_calls.lock().unwrap(), 1);
+    assert_eq!(*team_repo.audited_rollback_remove_calls.lock().unwrap(), 1);
     assert!(remove_channel_calls.lock().unwrap().is_empty());
     assert!(remove_role_calls.lock().unwrap().is_empty());
 }
@@ -5577,6 +5661,13 @@ async fn team_contacts_invite_join_does_not_enqueue_when_channel_work_rolls_back
 
     assert!(matches!(error, JoinTeamError::TeamError(_)));
     assert_eq!(*team_repository.rollback_accept_calls.lock().unwrap(), 1);
+    assert_eq!(
+        *team_repository
+            .audited_rollback_accept_calls
+            .lock()
+            .unwrap(),
+        1
+    );
     assert_eq!(*team_repository.get_team_by_id_calls.lock().unwrap(), 0);
     assert!(contacts_enqueuer.batches.lock().unwrap().is_empty());
 }
@@ -6075,7 +6166,7 @@ async fn try_join_team_by_domain_free_team_at_cap_skips() {
     let roles_service = MockUserRolesAndPermissionsService::default();
 
     let service = TeamServiceImpl::new(
-        team_repo,
+        team_repo.clone(),
         customer_repo,
         RecordingChannelService::default(),
         roles_service.clone(),
@@ -6089,6 +6180,10 @@ async fn try_join_team_by_domain_free_team_at_cap_skips() {
     assert!(result.is_none());
     assert_eq!(*add_user_calls.lock().unwrap(), 1);
     assert_eq!(*remove_user_calls.lock().unwrap(), 1);
+    assert_eq!(
+        *team_repo.audited_membership_rollback_calls.lock().unwrap(),
+        1
+    );
     assert!(increment_calls.lock().unwrap().is_empty());
     assert!(roles_service.upsert_calls.lock().unwrap().is_empty());
 }

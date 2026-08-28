@@ -22,6 +22,7 @@ axum = [
   "dep:macro_authorization",
   "dep:model-error-response",
   "dep:model_user",
+  "dep:tower-http",
   "dep:utoipa",
   "entity_access/axum",
   "entity_access/inbound",
@@ -101,6 +102,7 @@ axum = { workspace = true, optional = true }
 model-error-response = { path = "../model-error-response", optional = true }
 model_user = { path = "../model_user", optional = true }
 utoipa = { workspace = true, optional = true }
+tower-http = { workspace = true, optional = true }
 
 # Notification dependencies (for ports)
 model-entity = { path = "../model-entity", optional = true }

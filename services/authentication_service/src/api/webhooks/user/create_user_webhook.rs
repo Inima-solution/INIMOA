@@ -4,10 +4,12 @@ mod test;
 use analytics_client::{MetaActionSource, MetaUserData};
 use anyhow::Context;
 use axum::{
+    Extension,
     extract::{self, State},
     http::StatusCode,
     response::{IntoResponse, Response},
 };
+use business_audit::RequestCorrelationId;
 use macro_authorization::{InternalOnly, MacroAuthorizationExtractor};
 use rand::Rng;
 
@@ -31,6 +33,7 @@ use model::authentication::webhooks::{FusionAuthUserWebhook, User as FusionAuthW
 use model_entity::EntityType;
 use std::collections::HashSet;
 use teams::domain::team_repo::TeamService;
+use tower_http::request_id::RequestId;
 
 /// Macro support team members added to every new user's support channel.
 const MACRO_SUPPORT_EMAILS: [&str; 3] = ["jacob@macro.com", "julia@macro.com", "teo@macro.com"];
@@ -76,6 +79,7 @@ fn identity_provider_name(user: &FusionAuthWebhookUser) -> (Option<String>, Opti
 pub async fn handler(
     State(ctx): State<ApiContext>,
     _internal_authorization: MacroAuthorizationExtractor<AuthorizationService, InternalOnly>,
+    Extension(request_id): Extension<RequestId>,
     extract::Json(req): extract::Json<FusionAuthUserWebhook>,
 ) -> Result<Response, Response> {
     tracing::info!("create_user_webhook");
@@ -88,10 +92,31 @@ pub async fn handler(
             })?;
         }
         "user.create" => {
-            create_user_webhook(&ctx, req).await.map_err(|e| {
-                tracing::error!(error=?e, "unable to user.create");
-                (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
-            })?;
+            let request_id = request_id
+                .header_value()
+                .to_str()
+                .map_err(|_| {
+                    (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "invalid request correlation",
+                    )
+                        .into_response()
+                })
+                .and_then(|value| {
+                    RequestCorrelationId::try_new(value).map_err(|_| {
+                        (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "invalid request correlation",
+                        )
+                            .into_response()
+                    })
+                })?;
+            create_user_webhook(&ctx, req, request_id)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error=?e, "unable to user.create");
+                    (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()
+                })?;
         }
         "user.email.verified" => {
             verify_user_email_webhook(&ctx, req).await.map_err(|e| {
@@ -146,7 +171,11 @@ async fn create_user_webhook_complete(
 }
 
 #[tracing::instrument(skip(ctx, req), err)]
-async fn create_user_webhook(ctx: &ApiContext, req: FusionAuthUserWebhook) -> anyhow::Result<()> {
+async fn create_user_webhook(
+    ctx: &ApiContext,
+    req: FusionAuthUserWebhook,
+    request_id: RequestCorrelationId,
+) -> anyhow::Result<()> {
     let ip_address = req.event.info.ip_address;
     let email = req.event.user.email.to_lowercase();
     let (first_name, last_name) = identity_provider_name(&req.event.user);
@@ -332,6 +361,7 @@ async fn create_user_webhook(ctx: &ApiContext, req: FusionAuthUserWebhook) -> an
     tokio::spawn({
         let teams_service = ctx.teams_service.clone();
         let user_id = user_id.clone();
+        let request_id = request_id.clone();
         async move {
             let user_id = match MacroUserIdStr::parse_from_str(&user_id) {
                 Ok(user_id) => user_id,
@@ -340,7 +370,10 @@ async fn create_user_webhook(ctx: &ApiContext, req: FusionAuthUserWebhook) -> an
                     return;
                 }
             };
-            match teams_service.try_join_team_by_domain(&user_id).await {
+            match teams_service
+                .try_join_team_by_domain_with_request_id(&user_id, request_id)
+                .await
+            {
                 Ok(Some(member)) => {
                     tracing::info!(team_id=%member.team_id, %user_id, "auto-joined user to team by email domain");
                 }

@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use business_audit::RequestCorrelationId;
 use entity_access::domain::models::{
     AdminTeamRole, EntityAccessReceipt, MemberTeamRole, OwnerTeamRole,
 };
@@ -10,9 +11,9 @@ use macro_user_id::{email::Email, lowercased::Lowercase, user_id::MacroUserIdStr
 use crate::domain::model::{
     AcceptedTeamInvite, CreateTeamError, DeleteTeamError, InviteUsersToTeamError, JoinTeamError,
     PatchTeamCrmSettingsResponse, PatchTeamRequest, RemoveTeamInviteError, RemoveUserFromTeamError,
-    RestorePermissionsForTeamMembersError, RevokePermissionsForTeamMembersError, Team, TeamError,
-    TeamInvite, TeamInviteDetails, TeamMember, TeamMembers, TeamPlan, TeamRole, TeamWithMembers,
-    ToggleAutoJoinDomainError, TryJoinTeamByDomainError,
+    RemovedMember, RestorePermissionsForTeamMembersError, RevokePermissionsForTeamMembersError,
+    Team, TeamError, TeamInvite, TeamInviteDetails, TeamMember, TeamMembers, TeamPlan, TeamRole,
+    TeamWithMembers, ToggleAutoJoinDomainError, TryJoinTeamByDomainError,
 };
 
 /// The TeamRepository defines a set of actions to perform on teams data
@@ -95,6 +96,15 @@ pub trait TeamRepository: Clone + Send + Sync + 'static {
         user_id: &MacroUserIdStr<'_>,
     ) -> impl Future<Output = Result<TeamMember<'static>, RemoveUserFromTeamError>> + Send;
 
+    /// Removes a user and all stored company roles in one audited transaction.
+    fn remove_user_from_team_audited(
+        &self,
+        team_id: &uuid::Uuid,
+        user_id: &MacroUserIdStr<'_>,
+        actor: &MacroUserIdStr<'_>,
+        request_id: &RequestCorrelationId,
+    ) -> impl Future<Output = Result<RemovedMember, RemoveUserFromTeamError>> + Send;
+
     ///Gets a team invite by id
     fn get_team_invite_by_id(
         &self,
@@ -150,10 +160,32 @@ pub trait TeamRepository: Clone + Send + Sync + 'static {
         accepted_invite: &AcceptedTeamInvite<'_>,
     ) -> impl Future<Output = Result<(), TeamError>> + Send;
 
+    /// Audits failed invite-accept cleanup and restores the invite atomically.
+    fn rollback_accept_team_invite_audited(
+        &self,
+        accepted_invite: &AcceptedTeamInvite<'_>,
+        request_id: &RequestCorrelationId,
+    ) -> impl Future<Output = Result<(), TeamError>> + Send;
+
     /// Rolls back a previously removed team member.
     fn rollback_remove_user_from_team(
         &self,
         removed_member: &TeamMember<'_>,
+    ) -> impl Future<Output = Result<(), TeamError>> + Send;
+
+    /// Compensates an audited public removal without restoring stale roles after a rejoin.
+    fn rollback_remove_user_from_team_audited(
+        &self,
+        removed_member: &RemovedMember,
+        request_id: &RequestCorrelationId,
+    ) -> impl Future<Output = Result<(), TeamError>> + Send;
+
+    /// Audits cleanup of a membership created by a failed auto-join flow.
+    fn rollback_membership_with_audit(
+        &self,
+        team_id: &uuid::Uuid,
+        user_id: &MacroUserIdStr<'_>,
+        request_id: &RequestCorrelationId,
     ) -> impl Future<Output = Result<(), TeamError>> + Send;
 
     /// Checks if a user is a member (not owner) of any team
@@ -361,6 +393,18 @@ pub trait TeamService: Clone + Send + Sync + 'static {
         user_id: &MacroUserIdStr<'_>,
     ) -> impl Future<Output = Result<(), RemoveUserFromTeamError>> + Send;
 
+    /// Removes a member while preserving the request correlation for the
+    /// audited membership lifecycle. Implementations that do not own the
+    /// audit boundary retain the legacy behavior.
+    fn remove_user_from_team_with_request_id(
+        &self,
+        entity_access_receipt: EntityAccessReceipt<AdminTeamRole>,
+        user_id: &MacroUserIdStr<'_>,
+        _request_id: RequestCorrelationId,
+    ) -> impl Future<Output = Result<(), RemoveUserFromTeamError>> + Send {
+        self.remove_user_from_team(entity_access_receipt, user_id)
+    }
+
     /// Rejects an invitation to join a team.
     fn reject_invitation(
         &self,
@@ -387,6 +431,17 @@ pub trait TeamService: Clone + Send + Sync + 'static {
         team_invite_id: &uuid::Uuid,
         user_id: &MacroUserIdStr<'_>,
     ) -> impl Future<Output = Result<TeamMember<'_>, JoinTeamError>> + Send;
+
+    /// Accepts an invite while preserving request correlation for any
+    /// compensating audited membership removal.
+    fn join_team_with_request_id(
+        &self,
+        team_invite_id: &uuid::Uuid,
+        user_id: &MacroUserIdStr<'_>,
+        _request_id: RequestCorrelationId,
+    ) -> impl Future<Output = Result<TeamMember<'_>, JoinTeamError>> + Send {
+        self.join_team(team_invite_id, user_id)
+    }
 
     /// Revokes permissions for all team members (not owner)
     /// This is used when a team subscription is canceled or frozen in some way.
@@ -508,4 +563,14 @@ pub trait TeamService: Clone + Send + Sync + 'static {
         &self,
         user_id: &MacroUserIdStr<'_>,
     ) -> impl Future<Output = Result<Option<TeamMember<'static>>, TryJoinTeamByDomainError>> + Send;
+
+    /// Auto-joins using a correlation id for an audited compensating removal.
+    fn try_join_team_by_domain_with_request_id(
+        &self,
+        user_id: &MacroUserIdStr<'_>,
+        _request_id: RequestCorrelationId,
+    ) -> impl Future<Output = Result<Option<TeamMember<'static>>, TryJoinTeamByDomainError>> + Send
+    {
+        self.try_join_team_by_domain(user_id)
+    }
 }
