@@ -3,6 +3,64 @@ use super::*;
 use ai_toolset::schema::generate_validated_input_schema;
 
 #[test]
+fn property_target_schemas_expose_document_and_exclude_task() {
+    let get_schema = serde_json::to_value(
+        &generate_validated_input_schema::<GetEntityProperties>()
+            .unwrap()
+            .schema,
+    )
+    .unwrap();
+    let set_schema = serde_json::to_value(
+        &generate_validated_input_schema::<SetEntityProperty>()
+            .unwrap()
+            .schema,
+    )
+    .unwrap();
+    let bulk_schema = serde_json::to_value(
+        &generate_validated_input_schema::<BulkSetEntityPropertyOptions>()
+            .unwrap()
+            .schema,
+    )
+    .unwrap();
+
+    let expected_targets = serde_json::json!([
+        "document", "project", "chat", "thread", "channel", "call", "user", "company"
+    ]);
+    for schema in [&get_schema, &set_schema] {
+        assert_eq!(
+            schema["properties"]["entity_type"]["enum"],
+            expected_targets
+        );
+    }
+    assert_eq!(
+        bulk_schema["properties"]["entities"]["items"]["properties"]["entity_type"]["enum"],
+        expected_targets
+    );
+}
+
+#[test]
+fn set_entity_property_reference_schema_keeps_task_for_parent_and_subtasks() {
+    let schema = serde_json::to_value(
+        &generate_validated_input_schema::<SetEntityProperty>()
+            .unwrap()
+            .schema,
+    )
+    .unwrap();
+    assert_eq!(
+        schema["properties"]["entity_ref"]["properties"]["entityType"]["enum"],
+        serde_json::json!([
+            "document", "task", "project", "chat", "thread", "channel", "call", "user", "company"
+        ])
+    );
+    assert_eq!(
+        schema["properties"]["entity_refs"]["items"]["properties"]["entityType"]["enum"],
+        serde_json::json!([
+            "document", "task", "project", "chat", "thread", "channel", "call", "user", "company"
+        ])
+    );
+}
+
+#[test]
 fn test_get_entity_properties_schema_validation() {
     let result = generate_validated_input_schema::<GetEntityProperties>();
     assert!(result.is_ok(), "{:?}", result);

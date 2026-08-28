@@ -114,3 +114,91 @@ where
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use macro_db_migrator::MACRO_DB_MIGRATIONS;
+    use macro_user_id::user_id::MacroUserIdStr;
+    use notification::domain::{
+        models::{Notification, NotificationResult, SendNotificationRequest},
+        service::SendNotificationError,
+    };
+    use rootcause::Report;
+    use serde::Serialize;
+    use sqlx::{Pool, Postgres};
+    use uuid::Uuid;
+
+    use super::*;
+
+    /// Captures the serialized ingress request, which is the wire contract
+    /// handed to the notification service.
+    #[derive(Clone, Default)]
+    struct CapturingIngress {
+        sent: Arc<Mutex<Vec<serde_json::Value>>>,
+    }
+
+    impl CapturingIngress {
+        fn only_request(&self) -> serde_json::Value {
+            let sent = self.sent.lock().expect("capture lock is available");
+            assert_eq!(sent.len(), 1, "one recipient produces one request");
+            sent[0].clone()
+        }
+    }
+
+    impl NotificationIngress for CapturingIngress {
+        async fn send_notification<
+            'a,
+            T: Notification + Clone + 'static,
+            U: Serialize + Send + Sync + 'static,
+        >(
+            &'a self,
+            request: SendNotificationRequest<'a, T, U>,
+        ) -> Result<Option<NotificationResult<'a>>, Report<SendNotificationError>> {
+            self.sent
+                .lock()
+                .expect("capture lock is available")
+                .push(serde_json::to_value(request).expect("request serializes"));
+            Ok(None)
+        }
+    }
+
+    fn user_id(value: &str) -> MacroUserIdStr<'static> {
+        MacroUserIdStr::parse_from_str(value)
+            .expect("valid macro user id")
+            .into_owned()
+    }
+
+    #[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
+    async fn task_assignment_uses_document_notification_entity_and_task_metadata(
+        pool: Pool<Postgres>,
+    ) -> anyhow::Result<()> {
+        let task_id = Uuid::from_u128(0x20000001_0000_0000_0000_000000000001);
+        let ingress = CapturingIngress::default();
+        let service = NotificationServiceImpl::new(ingress.clone(), pool);
+
+        service
+            .send_task_assigned(TaskAssignedNotification {
+                task_id,
+                assigned_by: user_id("macro|assigner@example.com"),
+                recipient_ids: vec![user_id("macro|recipient@example.com")],
+            })
+            .await?;
+
+        let request = ingress.only_request();
+        let entity = &request["req"]["notification_entity"];
+        assert_eq!(entity["entity_type"], "document");
+        assert_eq!(entity["entity_id"], task_id.to_string());
+
+        let metadata = &request["req"]["notification"];
+        assert_eq!(metadata["tag"], "task_assigned");
+        assert_eq!(metadata["content"]["taskId"], task_id.to_string());
+        assert_eq!(
+            metadata["content"]["subType"],
+            serde_json::json!({ "type": "task" })
+        );
+
+        Ok(())
+    }
+}

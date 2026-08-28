@@ -1471,6 +1471,33 @@ fn maps_all_property_lifecycle_events_to_index_actions() {
 }
 
 #[test]
+fn task_property_event_reindexes_the_same_task_id_in_the_task_namespace() {
+    let event = PropertyTopicEvent::EntityPropertyUpdated(EntityPropertyUpdatedMetadata {
+        entity_property_id: ENTITY_PROPERTY_ID,
+        entity_id: PROPERTY_ENTITY_ID.to_string(),
+        entity_type: EntityType::Task,
+        property_definition_id: PROPERTY_DEFINITION_ID,
+        actor_user_id: Some(user_id()),
+        actor: None,
+        on_behalf_of: None,
+        value: None,
+        previous_value: None,
+        updated_at: Utc::now(),
+    });
+
+    assert_eq!(
+        describe_property_event(&event),
+        PropertyEventDescription {
+            action: PropertyIndexAction::Reindex {
+                entity_id: PROPERTY_ENTITY_ID,
+                entity_type: EntityType::Task,
+            },
+            event_type: "entity_property.updated",
+        }
+    );
+}
+
+#[test]
 fn project_id_collection_is_stable_and_drops_missing_or_empty_ids() {
     assert_eq!(
         collect_project_ids([

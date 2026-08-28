@@ -439,6 +439,46 @@ async fn anonymous_view_mints_public_receipt_but_invalid_token_is_rejected() {
 }
 
 #[tokio::test]
+async fn document_target_mints_a_document_receipt_for_a_task_shaped_id() {
+    let entity_access_service = FakeEntityAccessService::default();
+    let response = test_router(entity_access_service.clone())
+        .oneshot(bearer_request("/view/DOCUMENT/task-shaped-id", "valid"))
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response_body(response).await, "authenticated");
+    assert_eq!(
+        entity_access_service.calls(),
+        [AccessCall::GenerateReceipt {
+            user_id: VALID_USER_ID.to_string(),
+            organization_id: None,
+            entity_id: "task-shaped-id".to_string(),
+            entity_type: EntityType::Document,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn task_target_is_rejected_before_authorization_or_entity_access() {
+    let entity_access_service = FakeEntityAccessService::default();
+    let response = test_router(entity_access_service.clone())
+        .oneshot(request("/view/TASK/task-shaped-id"))
+        .await
+        .expect("request should complete");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(
+        response_body(response).await,
+        "Missing or invalid entity_type / entity_id in path"
+    );
+    assert!(
+        entity_access_service.calls().is_empty(),
+        "invalid task targets must not reach authorization or entity access"
+    );
+}
+
+#[tokio::test]
 async fn edit_receipt_omits_organization_from_access_check() {
     let entity_access_service = FakeEntityAccessService::default();
     let response = test_router(entity_access_service.clone())
