@@ -47,6 +47,7 @@ aws-sdk-sesv2 = { workspace = true }
 aws-sdk-sqs = { workspace = true }
 axum = { workspace = true, features = ["macros"] }
 base64 = { workspace = true }
+business_audit = { path = "../../crates/business_audit", default-features = false }
 channels = { path = "../../crates/channels", default-features = false, features = [
   "outbound",
 ] }
@@ -115,6 +116,7 @@ mockall = { workspace = true }
 model = { path = "../../crates/model" }
 model-entity = { path = "../../crates/model-entity" }
 models_permissions = { path = "../../crates/models_permissions" }
+models_team = { path = "../../crates/models_team" }
 model_notifications = { path = "../../crates/model_notifications" }
 native_app_service = { path = "../../crates/native_app_service" }
 non_empty = { path = "../../crates/non_empty" }

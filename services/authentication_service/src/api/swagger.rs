@@ -18,6 +18,7 @@ use teams::inbound::axum_router::{
 use user_quota::UserQuota;
 use utoipa::OpenApi;
 
+use crate::api::business_role_change::{BusinessRoleChangeRequest, BusinessRoleChangeResponse};
 use crate::api::cursor_api_key::{CursorApiKeyStatus, put_cursor_api_key::PutCursorApiKeyRequest};
 use crate::api::email::generate_email_link::GenerateEmailLinkRequest;
 use crate::api::email::resend_fusionauth_verify_user_email::ResendFusionauthVerifyUserEmailRequest;
@@ -154,6 +155,8 @@ use model::user::{
                 teams::inbound::axum_router::remove_user_from_team::handler::<crate::api::context::TeamsServiceType, crate::api::context::EntityAccessServiceType, crate::api::context::AuthorizationService>,
                 teams::inbound::axum_router::delete_team_invite::handler::<crate::api::context::TeamsServiceType, crate::api::context::EntityAccessServiceType, crate::api::context::AuthorizationService>,
                 crate::api::reauth::handler,
+                crate::api::business_role_change::grant_handler,
+                crate::api::business_role_change::revoke_handler,
 
                 /// /referral
                 referral::inbound::axum_router::get_referral_code_handler::<crate::api::context::ReferralServiceType, crate::api::context::RateLimiter, crate::api::context::AuthorizationService>,
@@ -232,6 +235,8 @@ use model::user::{
                         TeamInviteDetails,
                         ReauthenticateRequest,
                         ReauthenticateResponse,
+                        BusinessRoleChangeRequest,
+                        BusinessRoleChangeResponse,
                         CreateTeamRequest,
                         InviteToTeamRequest,
                         PatchTeamRequest,
@@ -348,5 +353,51 @@ mod tests {
             Some("#/components/schemas/ReauthenticateResponse")
         );
         assert!(operation["responses"].get("429").is_some());
+    }
+
+    #[test]
+    fn team_business_role_change_openapi_includes_both_paths() {
+        let openapi = serde_json::to_value(ApiDoc::openapi()).unwrap();
+
+        for (path, operation_id) in [
+            ("/team/business-role/grant", "grant_team_business_role"),
+            ("/team/business-role/revoke", "revoke_team_business_role"),
+        ] {
+            let operation = &openapi["paths"][path]["post"];
+            assert_eq!(operation["operationId"], operation_id);
+            assert_eq!(
+                operation["requestBody"]["content"]["application/json"]["schema"]["$ref"].as_str(),
+                Some("#/components/schemas/BusinessRoleChangeRequest")
+            );
+            assert_eq!(
+                operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"]
+                    .as_str(),
+                Some("#/components/schemas/BusinessRoleChangeResponse")
+            );
+            for status in ["400", "403", "404", "409", "500"] {
+                assert!(
+                    operation["responses"].get(status).is_some(),
+                    "missing {status}"
+                );
+            }
+        }
+
+        // The body carries only the change payload; team and actor come from
+        // the authenticated receipts and must not be request fields.
+        let properties =
+            &openapi["components"]["schemas"]["BusinessRoleChangeRequest"]["properties"];
+        for field in [
+            "target",
+            "business_role",
+            "reauthentication_receipt",
+            "reason",
+        ] {
+            assert!(properties.get(field).is_some(), "missing field {field}");
+        }
+        assert!(properties.get("team_id").is_none());
+        assert!(properties.get("actor").is_none());
+
+        // The existing reauthentication route stays registered.
+        assert!(openapi["paths"]["/team/reauth"]["post"].is_object());
     }
 }

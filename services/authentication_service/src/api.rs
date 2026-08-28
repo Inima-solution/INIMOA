@@ -15,6 +15,7 @@ use utoipa_swagger_ui::SwaggerUi;
 pub(crate) mod context;
 
 // Routes
+mod business_role_change;
 mod cursor_api_key;
 #[allow(unused_imports)]
 mod email;
@@ -103,7 +104,8 @@ fn api_router(state: ApiContext) -> Router<ApiContext> {
                     authorization_state: state.authorization_state.clone(),
                 },
             )
-            .merge(reauth::router()),
+            .merge(reauth::router())
+            .merge(business_role_change::router()),
         )
         .nest(
             "/referral",
