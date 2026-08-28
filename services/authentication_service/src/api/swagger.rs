@@ -477,8 +477,10 @@ mod tests {
         );
         let properties =
             &openapi["components"]["schemas"]["BusinessAuditListResponse"]["properties"];
-        assert!(properties.get("items").is_some());
-        assert!(properties.get("next_cursor").is_some());
+        let properties = properties.as_object().unwrap();
+        assert_eq!(properties.len(), 2);
+        assert!(properties.contains_key("items"));
+        assert!(properties.contains_key("next_cursor"));
         for forbidden in [
             "count",
             "total",
@@ -489,6 +491,79 @@ mod tests {
         ] {
             assert!(properties.get(forbidden).is_none());
         }
+
+        let item_properties =
+            openapi["components"]["schemas"]["BusinessAuditListItem"]["properties"]
+                .as_object()
+                .unwrap();
+        assert_eq!(item_properties.len(), 9);
+        for field in [
+            "id",
+            "action",
+            "target_type",
+            "target_id",
+            "actor",
+            "delegated_actor",
+            "outcome",
+            "occurred_at",
+            "retention_class",
+        ] {
+            assert!(item_properties.contains_key(field), "missing {field}");
+        }
+    }
+
+    #[test]
+    fn team_business_audit_openapi_surface_has_no_aggregate_or_count_route() {
+        let openapi = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let paths = openapi["paths"].as_object().unwrap();
+        let audit_paths: Vec<_> = paths
+            .iter()
+            .filter(|(path, _)| path.starts_with("/team/business-audit"))
+            .collect();
+        assert_eq!(audit_paths.len(), 6);
+
+        for (path, method, operation_id) in [
+            (
+                "/team/business-audit/access",
+                "get",
+                "get_team_business_audit_access",
+            ),
+            ("/team/business-audit", "get", "list_team_business_audit"),
+            (
+                "/team/business-audit/{id}",
+                "get",
+                "get_team_business_audit_detail",
+            ),
+            (
+                "/team/business-audit/reauth",
+                "post",
+                "reauthenticate_for_team_business_audit_export",
+            ),
+            (
+                "/team/business-audit/reauth/mfa",
+                "post",
+                "complete_team_business_audit_export_reauthentication_mfa",
+            ),
+            (
+                "/team/business-audit/export",
+                "post",
+                "export_team_business_audit",
+            ),
+        ] {
+            let path_item = &openapi["paths"][path];
+            assert_eq!(
+                path_item.as_object().unwrap().len(),
+                1,
+                "unexpected method at {path}"
+            );
+            assert_eq!(path_item[method]["operationId"], operation_id);
+        }
+
+        let error_properties = openapi["components"]["schemas"]["ErrorResponse"]["properties"]
+            .as_object()
+            .unwrap();
+        assert_eq!(error_properties.len(), 1);
+        assert!(error_properties.contains_key("message"));
     }
 
     #[test]

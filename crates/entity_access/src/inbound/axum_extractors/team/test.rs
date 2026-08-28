@@ -28,8 +28,9 @@ use super::*;
 use crate::{
     domain::models::{
         AccessError, AccessLevel, AdminTeamRole, BotAccessScope, BotId, BotReceiptScope,
-        CallChannelInfo, EntityAccessAuth, EntityPermission, MemberTeamRole, OwnerTeamRole,
-        TeamRole, UserTeamInfo, WriteApprovalDecision, WriteApprovalSubmit, WritePayroll,
+        CallChannelInfo, EntityAccessAuth, EntityPermission, ExportAuditBusiness, MemberTeamRole,
+        OwnerTeamRole, ReadAuditBusiness, TeamRole, UserTeamInfo, WriteApprovalDecision,
+        WriteApprovalSubmit, WritePayroll,
     },
     inbound::axum_extractors::test_support::{
         BOT_ACTING_USER_ID, BOT_ACTING_USER_ORGANIZATION_ID, BOT_ID, BOT_TEAM_ID, BotAccessCall,
@@ -430,6 +431,22 @@ fn assert_receipt<T: RequiredPermission>(
     ));
 }
 
+fn assert_audit_company_receipt<T: RequiredPermission>(
+    receipt: &EntityAccessReceipt<T>,
+    business_role: models_team::BusinessRole,
+) {
+    assert_eq!(receipt.entity().entity_id, TEAM_ID.to_string());
+    assert_eq!(receipt.entity().entity_type, EntityType::Team);
+    assert!(matches!(
+        receipt.auth(),
+        EntityAccessAuth::Authenticated(actual_user_id) if actual_user_id.to_string() == USER_ID
+    ));
+    assert!(matches!(
+        receipt.entity_permission(),
+        EntityPermission::TeamBusinessRoles { roles } if roles.contains(business_role)
+    ));
+}
+
 fn assert_bot_receipt<T: RequiredPermission>(
     receipt: &EntityAccessReceipt<T>,
     team_id: Uuid,
@@ -513,6 +530,155 @@ async fn company_permission_rejects_an_unheld_key() {
         error,
         ExtractorError::UnauthorizedWithMessage("you do not have a high enough role")
     ));
+}
+
+#[tokio::test]
+async fn audit_company_permissions_follow_the_business_role_matrix_for_humans() {
+    let member_state = state(
+        FakeEntityAccessService::default().with_membership(USER_ID, TeamRole::Member),
+        FakeAuthorizationService::default(),
+    );
+    for error in [
+        extract_required_company_v2::<ReadAuditBusiness>(bearer_request("valid"), &member_state)
+            .await
+            .expect_err("Member must not read the business audit list"),
+        extract_required_company_v2::<ExportAuditBusiness>(bearer_request("valid"), &member_state)
+            .await
+            .expect_err("Member must not export business audit data"),
+    ] {
+        assert!(matches!(
+            error,
+            ExtractorError::UnauthorizedWithMessage("you do not have a high enough role")
+        ));
+    }
+
+    let auditor_roles = models_team::effective_business_roles(
+        models_team::BusinessRoleSet::from_role(models_team::BusinessRole::Auditor),
+        true,
+    );
+    let auditor_state = state(
+        FakeEntityAccessService::default().with_business_roles(
+            USER_ID,
+            TeamRole::Member,
+            auditor_roles,
+        ),
+        FakeAuthorizationService::default(),
+    );
+    let audit_list =
+        extract_required_company_v2::<ReadAuditBusiness>(bearer_request("valid"), &auditor_state)
+            .await
+            .expect("Auditor should read the business audit list");
+    assert_audit_company_receipt(
+        &audit_list.entity_access_receipt,
+        models_team::BusinessRole::Auditor,
+    );
+    let error =
+        extract_required_company_v2::<ExportAuditBusiness>(bearer_request("valid"), &auditor_state)
+            .await
+            .expect_err("Auditor must not export business audit data");
+    assert!(matches!(
+        error,
+        ExtractorError::UnauthorizedWithMessage("you do not have a high enough role")
+    ));
+
+    let org_admin_roles = models_team::effective_business_roles(
+        models_team::BusinessRoleSet::from_role(models_team::BusinessRole::OrgAdmin),
+        true,
+    );
+    let org_admin_state = state(
+        FakeEntityAccessService::default().with_business_roles(
+            USER_ID,
+            TeamRole::Member,
+            org_admin_roles,
+        ),
+        FakeAuthorizationService::default(),
+    );
+    let audit_list =
+        extract_required_company_v2::<ReadAuditBusiness>(bearer_request("valid"), &org_admin_state)
+            .await
+            .expect("OrgAdmin should read the business audit list");
+    assert_audit_company_receipt(
+        &audit_list.entity_access_receipt,
+        models_team::BusinessRole::OrgAdmin,
+    );
+    let audit_export = extract_required_company_v2::<ExportAuditBusiness>(
+        bearer_request("valid"),
+        &org_admin_state,
+    )
+    .await
+    .expect("OrgAdmin should export business audit data");
+    assert_audit_company_receipt(
+        &audit_export.entity_access_receipt,
+        models_team::BusinessRole::OrgAdmin,
+    );
+}
+
+#[tokio::test]
+async fn bot_and_agent_credential_paths_fail_closed_for_audit_company_permissions() {
+    for scope in [BotScope::Team, BotScope::User] {
+        let service = match scope {
+            BotScope::Team => FakeEntityAccessService::default(),
+            BotScope::User => FakeEntityAccessService::default()
+                .with_membership(BOT_ACTING_USER_ID, TeamRole::Member),
+        };
+        let state = state(service, FakeAuthorizationService::default());
+
+        for error in [
+            extract_required_company_v2::<ReadAuditBusiness>(
+                bot_request(VALID_BOT_TOKEN, scope),
+                &state,
+            )
+            .await
+            .expect_err("bot or agent credential must not read business audit data"),
+            extract_required_company_v2::<ExportAuditBusiness>(
+                bot_request(VALID_BOT_TOKEN, scope),
+                &state,
+            )
+            .await
+            .expect_err("bot or agent credential must not export business audit data"),
+        ] {
+            assert!(matches!(
+                error,
+                ExtractorError::UnauthorizedWithMessage("you do not have a high enough role")
+            ));
+        }
+        assert_eq!(state.entity_access.bot_calls().len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn denied_audit_company_extraction_serializes_only_the_stable_error_message() {
+    let state = state(
+        FakeEntityAccessService::default().with_membership(USER_ID, TeamRole::Member),
+        FakeAuthorizationService::default(),
+    );
+
+    let error = extract_required_company_v2::<ReadAuditBusiness>(bearer_request("valid"), &state)
+        .await
+        .expect_err("Member must not read the business audit list");
+    let (status, body) = response_parts(error.into_response()).await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    let response = serde_json::from_str::<serde_json::Value>(&body)
+        .expect("denied audit response should be valid JSON");
+    let response = response
+        .as_object()
+        .expect("denied audit response should be a JSON object");
+    assert_eq!(response.len(), 1);
+    assert_eq!(
+        response.get("message"),
+        Some(&serde_json::Value::String(
+            "you do not have a high enough role".to_string()
+        ))
+    );
+    for forbidden in [
+        "items", "count", "total", "team", "role", "receipt", "audit",
+    ] {
+        assert!(
+            !response.contains_key(forbidden),
+            "denied audit response must not disclose a {forbidden} field"
+        );
+    }
 }
 
 #[tokio::test]

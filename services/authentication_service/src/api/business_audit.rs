@@ -838,7 +838,26 @@ mod test {
             next_cursor: None,
         };
         let value = serde_json::to_value(response).unwrap();
+        let response_fields = value.as_object().unwrap();
+        assert_eq!(response_fields.len(), 2);
+        assert!(response_fields.contains_key("items"));
+        assert!(response_fields.contains_key("next_cursor"));
         let item = &value["items"][0];
+        let item_fields = item.as_object().unwrap();
+        assert_eq!(item_fields.len(), 9);
+        for approved in [
+            "id",
+            "action",
+            "target_type",
+            "target_id",
+            "actor",
+            "delegated_actor",
+            "outcome",
+            "occurred_at",
+            "retention_class",
+        ] {
+            assert!(item_fields.contains_key(approved), "missing {approved}");
+        }
         for forbidden in [
             "reason",
             "request_id",
@@ -1094,6 +1113,9 @@ mod test {
                 "metadata",
                 "actor",
                 "target_id",
+                "team",
+                "role",
+                "reauthentication_receipt",
             ] {
                 assert!(!body.contains(forbidden), "error leaked {forbidden}");
             }
