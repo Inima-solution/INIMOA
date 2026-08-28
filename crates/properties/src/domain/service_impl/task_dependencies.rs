@@ -8,8 +8,12 @@ use models_properties::api::requests::SetPropertyValue;
 use uuid::Uuid;
 
 use crate::domain::error::PropertiesErr;
-use crate::domain::model::{EditReceipt, PropertyAccessReceiptExt, TaskDependencyMutationOutcome};
+use crate::domain::model::{
+    EditReceipt, PropertyAccessReceiptExt, TaskDependencyMutationOutcome, TaskDependencyReadiness,
+    ViewReceipt,
+};
 use crate::domain::ports::{NotificationService, PermissionService, PropertiesRepo};
+use crate::domain::service::ProjectWorkReadReceipt;
 use crate::domain::service_impl::PropertiesServiceImpl;
 use macro_event_broker::MacroEventBroker;
 
@@ -21,6 +25,48 @@ where
     B: MacroEventBroker,
     anyhow::Error: From<R::Err> + From<P::Err> + From<N::Err>,
 {
+    /// Maximum requested source tasks accepted by the readiness read model.
+    pub(crate) const TASK_DEPENDENCY_READINESS_BATCH_MAX: usize = 200;
+
+    /// Validate the two independent receipts before the single scoped read.
+    pub(crate) async fn get_task_dependency_readiness_scoped(
+        &self,
+        project: &ViewReceipt,
+        team: &ProjectWorkReadReceipt,
+        task_ids: &[Uuid],
+    ) -> Result<Vec<TaskDependencyReadiness>, PropertiesErr> {
+        let actor = project
+            .get_authenticated_user()
+            .map_err(|_| PropertiesErr::PermissionDenied)?;
+        if project.entity().entity_type != AccessEntityType::Project
+            || team.entity().entity_type != AccessEntityType::Team
+            || team
+                .get_authenticated_user()
+                .map_err(|_| PropertiesErr::PermissionDenied)?
+                != actor
+        {
+            return Err(PropertiesErr::PermissionDenied);
+        }
+        let team_id = Uuid::parse_str(&team.entity().entity_id)
+            .map_err(|_| PropertiesErr::PermissionDenied)?;
+        if task_ids.len() > Self::TASK_DEPENDENCY_READINESS_BATCH_MAX {
+            return Err(PropertiesErr::Validation(format!(
+                "At most {} task IDs may be requested",
+                Self::TASK_DEPENDENCY_READINESS_BATCH_MAX
+            )));
+        }
+        // Empty requests still prove both independently minted human scopes,
+        // but deliberately do not touch persistence.
+        if task_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        self.repository
+            .get_task_dependency_readiness(project.entity_id(), team_id, task_ids)
+            .await
+            .map_err(anyhow::Error::from)?
+            .ok_or(PropertiesErr::NotFound)
+    }
+
     pub(crate) async fn handle_task_dependencies_property(
         &self,
         access: &EditReceipt,

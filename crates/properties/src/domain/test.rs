@@ -4602,3 +4602,287 @@ async fn merge_tag_rejects_merging_a_label_into_itself() {
         .unwrap_err();
     assert!(matches!(err, PropertiesErr::Validation(_)));
 }
+
+fn project_work_read_receipt(
+    user: MacroUserIdStr<'static>,
+    id: &str,
+) -> crate::domain::service::ProjectWorkReadReceipt {
+    crate::domain::service::ProjectWorkReadReceipt::dangerously_assert_authenticated_user(
+        user,
+        id,
+        AccessEntityType::Team,
+    )
+}
+
+#[test]
+fn task_dependency_readiness_uses_future_api_camel_case_shape() {
+    let value = crate::domain::model::TaskDependencyReadiness {
+        task_id: Uuid::from_u128(1),
+        readiness: crate::domain::model::TaskReadiness::Blocked,
+        depends_on_task_ids: vec![Uuid::from_u128(2)],
+        blocking_task_ids: vec![Uuid::from_u128(2)],
+        has_unavailable_dependencies: true,
+    };
+    assert_eq!(
+        serde_json::to_value(value).unwrap(),
+        serde_json::json!({
+            "taskId": Uuid::from_u128(1),
+            "readiness": "blocked",
+            "dependsOnTaskIds": [Uuid::from_u128(2)],
+            "blockingTaskIds": [Uuid::from_u128(2)],
+            "hasUnavailableDependencies": true,
+        })
+    );
+}
+
+#[tokio::test]
+async fn dependency_readiness_validates_scopes_and_empty_batch_before_repository() {
+    let project_id = Uuid::from_u128(0xD401);
+    let invalid_team = project_work_read_receipt(caller_user_id(), "not-a-uuid");
+    let service = PropertiesServiceImpl::new(
+        MockPropertiesRepo::new(),
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+    assert!(matches!(
+        service
+            .get_task_dependency_readiness(
+                &view_receipt(&project_id.to_string(), EntityType::Project),
+                &invalid_team,
+                &[],
+            )
+            .await,
+        Err(PropertiesErr::PermissionDenied)
+    ));
+
+    let empty_team = project_work_read_receipt(caller_user_id(), &team_id().to_string());
+    let service = PropertiesServiceImpl::new(
+        MockPropertiesRepo::new(),
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+    assert!(
+        service
+            .get_task_dependency_readiness(
+                &view_receipt(&project_id.to_string(), EntityType::Project),
+                &empty_team,
+                &[],
+            )
+            .await
+            .unwrap()
+            .is_empty()
+    );
+
+    let valid_team = project_work_read_receipt(caller_user_id(), &team_id().to_string());
+    let unauthenticated_project = EntityAccessReceipt::<ViewAccessLevel>::try_new(
+        EntityAccessAuth::Unauthenticated,
+        Entity {
+            entity_id: project_id.to_string(),
+            entity_type: AccessEntityType::Project,
+        },
+        EntityPermission::AccessLevel {
+            access_level: AccessLevel::View,
+        },
+    )
+    .unwrap();
+    assert!(matches!(
+        PropertiesServiceImpl::new(
+            MockPropertiesRepo::new(),
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        )
+        .get_task_dependency_readiness(&unauthenticated_project, &valid_team, &[Uuid::new_v4()])
+        .await,
+        Err(PropertiesErr::PermissionDenied)
+    ));
+    // Company receipts require company-role evidence at minting time; an
+    // unauthenticated access-level receipt cannot be constructed as one.
+    assert!(
+        crate::domain::service::ProjectWorkReadReceipt::try_new(
+            EntityAccessAuth::Unauthenticated,
+            Entity {
+                entity_id: team_id().to_string(),
+                entity_type: AccessEntityType::Team,
+            },
+            EntityPermission::AccessLevel {
+                access_level: AccessLevel::Owner,
+            },
+        )
+        .is_err()
+    );
+    for project_receipt in [
+        ViewReceipt::dangerously_assert_internal_user(
+            &project_id.to_string(),
+            AccessEntityType::Project,
+        ),
+        ViewReceipt::dangerously_assert_bot(
+            BotId::new_from_uuid(Uuid::new_v4()).into_storage_id(),
+            BotReceiptScope::User {
+                acting_user: caller_user_id(),
+            },
+            &project_id.to_string(),
+            AccessEntityType::Project,
+        ),
+        view_receipt(&project_id.to_string(), EntityType::Document),
+    ] {
+        assert!(matches!(
+            PropertiesServiceImpl::new(
+                MockPropertiesRepo::new(),
+                None::<MockPermissionService>,
+                None::<MockNotificationService>,
+            )
+            .get_task_dependency_readiness(&project_receipt, &valid_team, &[Uuid::new_v4()])
+            .await,
+            Err(PropertiesErr::PermissionDenied)
+        ));
+    }
+    for team_receipt in [
+        crate::domain::service::ProjectWorkReadReceipt::dangerously_assert_internal_user(
+            &team_id().to_string(),
+            AccessEntityType::Team,
+        ),
+        crate::domain::service::ProjectWorkReadReceipt::dangerously_assert_bot(
+            BotId::new_from_uuid(Uuid::new_v4()).into_storage_id(),
+            BotReceiptScope::User {
+                acting_user: caller_user_id(),
+            },
+            &team_id().to_string(),
+            AccessEntityType::Team,
+        ),
+        crate::domain::service::ProjectWorkReadReceipt::dangerously_assert_authenticated_user(
+            caller_user_id(),
+            &team_id().to_string(),
+            AccessEntityType::Project,
+        ),
+    ] {
+        assert!(matches!(
+            PropertiesServiceImpl::new(
+                MockPropertiesRepo::new(),
+                None::<MockPermissionService>,
+                None::<MockNotificationService>,
+            )
+            .get_task_dependency_readiness(
+                &view_receipt(&project_id.to_string(), EntityType::Project),
+                &team_receipt,
+                &[Uuid::new_v4()],
+            )
+            .await,
+            Err(PropertiesErr::PermissionDenied)
+        ));
+    }
+}
+
+#[tokio::test]
+async fn dependency_readiness_enforces_batch_limit_and_human_actor_match_before_repository() {
+    let project_id = Uuid::from_u128(0xD402);
+    let team = project_work_read_receipt(caller_user_id(), &team_id().to_string());
+    let over_limit = vec![Uuid::new_v4(); 201];
+    let service = PropertiesServiceImpl::new(
+        MockPropertiesRepo::new(),
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+    assert!(matches!(
+        service
+            .get_task_dependency_readiness(
+                &view_receipt(&project_id.to_string(), EntityType::Project),
+                &team,
+                &over_limit,
+            )
+            .await,
+        Err(PropertiesErr::Validation(_))
+    ));
+
+    let other = MacroUserIdStr::parse_from_str("macro|other@test.com").unwrap();
+    let mismatched_team = project_work_read_receipt(other, &team_id().to_string());
+    let service = PropertiesServiceImpl::new(
+        MockPropertiesRepo::new(),
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+    assert!(matches!(
+        service
+            .get_task_dependency_readiness(
+                &view_receipt(&project_id.to_string(), EntityType::Project),
+                &mismatched_team,
+                &[Uuid::new_v4()],
+            )
+            .await,
+        Err(PropertiesErr::PermissionDenied)
+    ));
+}
+
+#[tokio::test]
+async fn dependency_readiness_routes_scoped_batch_and_maps_unavailable_project() {
+    let project_id = Uuid::from_u128(0xD403);
+    let first = Uuid::from_u128(0xD404);
+    let second = Uuid::from_u128(0xD405);
+    let team = project_work_read_receipt(caller_user_id(), &team_id().to_string());
+    let expected = crate::domain::model::TaskDependencyReadiness {
+        task_id: first,
+        readiness: crate::domain::model::TaskReadiness::Ready,
+        depends_on_task_ids: Vec::new(),
+        blocking_task_ids: Vec::new(),
+        has_unavailable_dependencies: false,
+    };
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_task_dependency_readiness()
+        .return_once(move |id, scoped_team, requested| {
+            assert_eq!(id, project_id.to_string());
+            assert_eq!(scoped_team, team_id());
+            assert_eq!(requested, [first, second, first]);
+            Box::pin(async move { Ok(Some(vec![expected])) })
+        });
+    let results = PropertiesServiceImpl::new(
+        repo,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    )
+    .get_task_dependency_readiness(
+        &view_receipt(&project_id.to_string(), EntityType::Project),
+        &team,
+        &[first, second, first],
+    )
+    .await
+    .unwrap();
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].task_id, first);
+
+    let mut none_repo = MockPropertiesRepo::new();
+    none_repo
+        .expect_get_task_dependency_readiness()
+        .return_once(|_, _, _| Box::pin(async { Ok(None) }));
+    assert!(matches!(
+        PropertiesServiceImpl::new(
+            none_repo,
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        )
+        .get_task_dependency_readiness(
+            &view_receipt(&project_id.to_string(), EntityType::Project),
+            &team,
+            &[first],
+        )
+        .await,
+        Err(PropertiesErr::NotFound)
+    ));
+
+    let mut failing_repo = MockPropertiesRepo::new();
+    failing_repo
+        .expect_get_task_dependency_readiness()
+        .return_once(|_, _, _| Box::pin(async { Err(anyhow!("sentinel repository failure")) }));
+    assert!(matches!(
+        PropertiesServiceImpl::new(
+            failing_repo,
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        )
+        .get_task_dependency_readiness(
+            &view_receipt(&project_id.to_string(), EntityType::Project),
+            &team,
+            &[first],
+        )
+        .await,
+        Err(PropertiesErr::Repo(_))
+    ));
+}

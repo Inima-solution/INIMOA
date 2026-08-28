@@ -24,7 +24,8 @@ use super::model::{
     EditReceipt, EntityPropertiesKey, EntityPropertyInfo, EntityPropertyMutationSnapshot,
     EntityPropertyOptionSelection, EntityPropertyOptionUpdate, GetOrCreateTagDefinitionResult,
     PropertyDefinitionOwner, TagPromotionOutcome, TagRemapOutcome, TaskAssignedNotification,
-    TaskDependencyMutationOutcome, UpdatePropertyOptionOutcome, ViewReceipt,
+    TaskDependencyMutationOutcome, TaskDependencyReadiness, UpdatePropertyOptionOutcome,
+    ViewReceipt,
 };
 
 /// Repository trait for property operations.
@@ -211,6 +212,15 @@ pub trait PropertiesRepo: Send + Sync + 'static {
         task_id: Uuid,
         dependency_ids: &[Uuid],
     ) -> impl Future<Output = Result<TaskDependencyMutationOutcome, Self::Err>> + Send;
+
+    /// Read direct task dependency readiness for a verified project/team scope.
+    /// Returns `None` when the project is unavailable in that team scope.
+    fn get_task_dependency_readiness(
+        &self,
+        project_id: &str,
+        team_id: Uuid,
+        task_ids: &[Uuid],
+    ) -> impl Future<Output = Result<Option<Vec<TaskDependencyReadiness>>, Self::Err>> + Send;
 
     /// Atomically add one option to a multi-select entity property value,
     /// attaching the property if needed. Re-adding a present option is deduped.

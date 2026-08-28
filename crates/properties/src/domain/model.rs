@@ -12,6 +12,39 @@ use models_properties::service::property_value::PropertyValue;
 use models_properties::{DataType, EntityReference, EntityType, PropertyOwner};
 use uuid::Uuid;
 
+/// Computed direct-dependency readiness for one task.
+///
+/// This is a read model only. Its value is intentionally never stored as a
+/// property or status option.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TaskReadiness {
+    /// Every direct, available dependency is completed (or there are none).
+    Ready,
+    /// At least one available dependency is not completed, or one is unavailable.
+    Blocked,
+}
+
+/// Computed direct task-dependency state for one requested task.
+///
+/// IDs of unavailable dependencies are deliberately omitted so this model can
+/// be exposed by a later scoped API without leaking cross-project or deleted
+/// task identifiers.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDependencyReadiness {
+    /// The scoped, live source task identifier.
+    pub task_id: Uuid,
+    /// Non-persisted readiness derived from canonical Depends On and Status.
+    pub readiness: TaskReadiness,
+    /// Direct live same-project task dependencies, in stored reference order.
+    pub depends_on_task_ids: Vec<Uuid>,
+    /// Available direct dependencies whose Status is not exactly Completed.
+    pub blocking_task_ids: Vec<Uuid>,
+    /// Whether at least one stored dependency was malformed or unavailable.
+    pub has_unavailable_dependencies: bool,
+}
+
 /// Map an internal properties storage type to its canonical entity type.
 pub fn canonical_entity_type(entity_type: EntityType) -> AccessEntityType {
     match entity_type {

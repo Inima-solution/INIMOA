@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use entity_access::domain::models::{EntityAccessReceipt, MemberTeamRole};
+use entity_access::domain::models::{EntityAccessReceipt, MemberTeamRole, ReadProjectWorkScoped};
 use macro_user_id::user_id::MacroUserIdStr;
 use models_properties::EntityType;
 use models_properties::api::requests::SetPropertyValue;
@@ -28,12 +28,16 @@ use uuid::Uuid;
 use super::error::PropertiesErr;
 use super::model::{
     EditReceipt, EntityOptionUpdateOutcome, EntityPropertyInfo, EntityPropertyOptionSelection,
-    EntityPropertyOptionUpdate, PropertyTargetKey, TagScope, TagSet, ViewReceipt,
+    EntityPropertyOptionUpdate, PropertyTargetKey, TagScope, TagSet, TaskDependencyReadiness,
+    ViewReceipt,
 };
 
 /// The caller's team-membership proof, used to scope definition/option/tag
 /// operations to the team the caller actually belongs to.
 pub type TeamReceipt = EntityAccessReceipt<MemberTeamRole>;
+
+/// Proof that the caller may read project work within the derived team scope.
+pub type ProjectWorkReadReceipt = EntityAccessReceipt<ReadProjectWorkScoped>;
 
 /// The team id a team receipt proves membership of, if any.
 pub fn team_id_from_receipt(team: Option<&TeamReceipt>) -> Option<Uuid> {
@@ -42,6 +46,15 @@ pub fn team_id_from_receipt(team: Option<&TeamReceipt>) -> Option<Uuid> {
 
 /// Service trait for property operations.
 pub trait PropertiesService: Send + Sync + 'static {
+    /// Read the direct dependency graph and computed readiness for requested
+    /// live task IDs in a project. Invalid requested source IDs are omitted.
+    fn get_task_dependency_readiness(
+        &self,
+        project: &ViewReceipt,
+        team: &ProjectWorkReadReceipt,
+        task_ids: &[Uuid],
+    ) -> impl Future<Output = Result<Vec<TaskDependencyReadiness>, PropertiesErr>> + Send;
+
     /// Get all properties attached to an entity, with definitions, values, and
     /// options. Tag properties are restricted to the viewer's own and their
     /// teams' definitions (the viewer being the receipt's authenticated user).

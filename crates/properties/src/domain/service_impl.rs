@@ -43,10 +43,12 @@ use super::model::{
     EditReceipt, EntityOptionUpdateOutcome, EntityPropertyInfo, EntityPropertyOptionSelection,
     EntityPropertyOptionUpdate, PropertyAccessReceiptExt, PropertyDefinitionOwner,
     PropertyTargetKey, ResolvedPropertySubject, TagPromotionOutcome, TagRemapOutcome, TagScope,
-    TagSet, UpdatePropertyOptionOutcome, ViewReceipt,
+    TagSet, TaskDependencyReadiness, UpdatePropertyOptionOutcome, ViewReceipt,
 };
 use super::ports::{NotificationService, PermissionService, PropertiesRepo};
-use super::service::{PropertiesService, TeamReceipt, team_id_from_receipt};
+use super::service::{
+    ProjectWorkReadReceipt, PropertiesService, TeamReceipt, team_id_from_receipt,
+};
 
 use helpers::{
     extract_option_ids_from_property_value, is_property_applicable_to, retain_caller_visible_tags,
@@ -522,6 +524,17 @@ where
     B: MacroEventBroker,
     anyhow::Error: From<R::Err> + From<P::Err> + From<N::Err>,
 {
+    #[tracing::instrument(skip(self, project, team, task_ids), err)]
+    async fn get_task_dependency_readiness(
+        &self,
+        project: &ViewReceipt,
+        team: &ProjectWorkReadReceipt,
+        task_ids: &[Uuid],
+    ) -> Result<Vec<TaskDependencyReadiness>, PropertiesErr> {
+        self.get_task_dependency_readiness_scoped(project, team, task_ids)
+            .await
+    }
+
     #[tracing::instrument(skip(self, access), fields(entity_id = %access.entity_id(), entity_type = ?access.entity_type()), err)]
     async fn get_entity_properties(
         &self,

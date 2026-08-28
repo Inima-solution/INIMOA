@@ -1,0 +1,51 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH scoped_project AS (\n            SELECT project.id\n            FROM \"Project\" project\n            JOIN team_user owner_membership\n              ON owner_membership.user_id = project.\"userId\"\n             AND owner_membership.team_id = $2\n            WHERE project.id = $1\n              AND project.\"deletedAt\" IS NULL\n        ),\n        requested AS (\n            SELECT requested_id, requested_ordinal\n            FROM unnest($3::uuid[]) WITH ORDINALITY AS input(requested_id, requested_ordinal)\n        ),\n        requested_dedup AS (\n            SELECT DISTINCT ON (requested_id) requested_id, requested_ordinal\n            FROM requested\n            ORDER BY requested_id, requested_ordinal\n        ),\n        source_tasks AS (\n            SELECT requested_dedup.requested_id AS task_id, requested_dedup.requested_ordinal\n            FROM requested_dedup\n            JOIN \"Document\" source ON source.id = requested_dedup.requested_id::text\n            JOIN document_sub_type source_sub_type\n              ON source_sub_type.document_id = source.id\n             AND source_sub_type.sub_type = 'task'::document_sub_type_value\n            JOIN scoped_project ON scoped_project.id = source.\"projectId\"\n            WHERE source.\"deletedAt\" IS NULL\n        ),\n        expanded_refs AS (\n            SELECT\n                source_tasks.task_id,\n                refs.reference,\n                refs.reference_ordinal,\n                dependency_property.values IS NOT NULL\n                  AND NOT COALESCE((\n                    jsonb_typeof(dependency_property.values) = 'object'\n                    AND dependency_property.values->>'type' = 'EntityReference'\n                    AND jsonb_typeof(dependency_property.values->'value') = 'array'\n                  ), FALSE) AS malformed_value\n            FROM source_tasks\n            LEFT JOIN entity_properties dependency_property\n              ON dependency_property.entity_id = source_tasks.task_id::text\n             AND dependency_property.entity_type = 'TASK'\n             AND dependency_property.property_definition_id = $4\n            LEFT JOIN LATERAL jsonb_array_elements(\n                CASE\n                    WHEN dependency_property.values IS NOT NULL\n                     AND jsonb_typeof(dependency_property.values) = 'object'\n                     AND dependency_property.values->>'type' = 'EntityReference'\n                     AND jsonb_typeof(dependency_property.values->'value') = 'array'\n                    THEN dependency_property.values->'value'\n                    ELSE '[]'::jsonb\n                END\n            ) WITH ORDINALITY AS refs(reference, reference_ordinal) ON TRUE\n        ),\n        normalized_refs AS (\n            SELECT\n                task_id,\n                reference_ordinal,\n                malformed_value,\n                reference,\n                CASE\n                    WHEN reference->>'entity_type' = 'TASK'\n                     AND reference->>'specific_message_id' IS NULL\n                     AND reference->>'entity_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'\n                    THEN CASE\n                        WHEN (reference->>'entity_id')::uuid <> task_id\n                        THEN (reference->>'entity_id')::uuid\n                        ELSE NULL\n                    END\n                    ELSE NULL\n                END AS dependency_id\n            FROM expanded_refs\n        ),\n        valid_refs AS (\n            SELECT DISTINCT ON (task_id, dependency_id)\n                task_id, dependency_id, reference_ordinal\n            FROM normalized_refs\n            WHERE dependency_id IS NOT NULL\n            ORDER BY task_id, dependency_id, reference_ordinal\n        ),\n        classified_refs AS (\n            SELECT\n                valid_refs.task_id,\n                valid_refs.dependency_id,\n                valid_refs.reference_ordinal,\n                dependency.id IS NOT NULL AND dependency_sub_type.document_id IS NOT NULL\n                  AS live_same_project_task,\n                status_property.values = jsonb_build_object(\n                    'type', 'SelectOption',\n                    'value', jsonb_build_array($6::uuid)\n                ) AS completed\n            FROM valid_refs\n            LEFT JOIN \"Document\" dependency\n              ON dependency.id = valid_refs.dependency_id::text\n             AND dependency.\"projectId\" = $1\n             AND dependency.\"deletedAt\" IS NULL\n            LEFT JOIN document_sub_type dependency_sub_type\n              ON dependency_sub_type.document_id = dependency.id\n             AND dependency_sub_type.sub_type = 'task'::document_sub_type_value\n            LEFT JOIN entity_properties status_property\n              ON status_property.entity_id = dependency.id\n             AND status_property.entity_type = 'TASK'\n             AND status_property.property_definition_id = $5\n        ),\n        source_flags AS (\n            SELECT\n                source_tasks.task_id,\n                COALESCE(bool_or(normalized_refs.malformed_value), FALSE)\n                  OR COALESCE(bool_or(\n                    normalized_refs.reference IS NOT NULL\n                    AND normalized_refs.dependency_id IS NULL\n                  ), FALSE) AS has_malformed_dependency\n            FROM source_tasks\n            LEFT JOIN normalized_refs ON normalized_refs.task_id = source_tasks.task_id\n            GROUP BY source_tasks.task_id\n        )\n        SELECT\n            source_tasks.task_id,\n            CASE WHEN COALESCE(source_flags.has_malformed_dependency, FALSE)\n                    OR COALESCE(bool_or(NOT classified_refs.live_same_project_task), FALSE)\n                    OR COALESCE(bool_or(\n                        classified_refs.live_same_project_task\n                          AND NOT COALESCE(classified_refs.completed, FALSE)\n                    ), FALSE)\n                 THEN 'blocked' ELSE 'ready' END AS \"readiness!\",\n            COALESCE(\n                array_agg(classified_refs.dependency_id ORDER BY classified_refs.reference_ordinal)\n                    FILTER (WHERE classified_refs.live_same_project_task),\n                ARRAY[]::uuid[]\n            ) AS \"depends_on_task_ids!\",\n            COALESCE(\n                array_agg(classified_refs.dependency_id ORDER BY classified_refs.reference_ordinal)\n                    FILTER (\n                        WHERE classified_refs.live_same_project_task\n                          AND NOT COALESCE(classified_refs.completed, FALSE)\n                    ),\n                ARRAY[]::uuid[]\n            ) AS \"blocking_task_ids!\",\n            COALESCE(source_flags.has_malformed_dependency, FALSE)\n              OR COALESCE(bool_or(NOT classified_refs.live_same_project_task), FALSE)\n              AS \"has_unavailable_dependencies!\"\n        FROM scoped_project\n        LEFT JOIN source_tasks ON TRUE\n        LEFT JOIN source_flags ON source_flags.task_id = source_tasks.task_id\n        LEFT JOIN classified_refs ON classified_refs.task_id = source_tasks.task_id\n        GROUP BY source_tasks.task_id, source_tasks.requested_ordinal, source_flags.has_malformed_dependency\n        ORDER BY source_tasks.requested_ordinal\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "task_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "readiness!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "depends_on_task_ids!",
+        "type_info": "UuidArray"
+      },
+      {
+        "ordinal": 3,
+        "name": "blocking_task_ids!",
+        "type_info": "UuidArray"
+      },
+      {
+        "ordinal": 4,
+        "name": "has_unavailable_dependencies!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "UuidArray",
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "bd38db8f9cc2dd60b6a83d3c2a3f6b18578c03e48edd6b228c37762654878bf6"
+}

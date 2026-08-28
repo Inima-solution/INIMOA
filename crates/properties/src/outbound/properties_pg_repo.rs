@@ -12,12 +12,12 @@ use uuid::Uuid;
 use super::{
     entity_properties_get_query, entity_property_queries, metadata_queries,
     property_definition_queries, property_option_queries, tag_promotion_queries,
-    task_dependency_queries, task_property_queries,
+    task_dependency_queries, task_dependency_read_queries, task_property_queries,
 };
 use crate::domain::model::{
     EntityPropertiesKey, EntityPropertyInfo, EntityPropertyMutationSnapshot,
     GetOrCreateTagDefinitionResult, PropertyDefinitionOwner, TagPromotionOutcome, TagRemapOutcome,
-    TaskDependencyMutationOutcome, UpdatePropertyOptionOutcome,
+    TaskDependencyMutationOutcome, TaskDependencyReadiness, UpdatePropertyOptionOutcome,
 };
 use crate::domain::ports::PropertiesRepo;
 use models_properties::DataType;
@@ -309,6 +309,19 @@ impl PropertiesRepo for PropertiesPgRepo {
     ) -> Result<TaskDependencyMutationOutcome, Self::Err> {
         task_dependency_queries::replace_task_dependencies(&self.pool, task_id, dependency_ids)
             .await
+    }
+
+    #[tracing::instrument(skip(self, task_ids), err)]
+    async fn get_task_dependency_readiness(
+        &self,
+        project_id: &str,
+        team_id: Uuid,
+        task_ids: &[Uuid],
+    ) -> Result<Option<Vec<TaskDependencyReadiness>>, Self::Err> {
+        task_dependency_read_queries::get_task_dependency_readiness(
+            &self.pool, project_id, team_id, task_ids,
+        )
+        .await
     }
 
     #[tracing::instrument(skip(self))]
