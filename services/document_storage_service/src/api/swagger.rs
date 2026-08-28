@@ -127,10 +127,13 @@ use projects_hex::inbound::axum_router::delete_project::{
     ProjectDeleteResponse, ProjectDeleteResponseData,
 };
 use projects_hex::{
-    domain::models::{ProjectOperationalStatus, ProjectOperations, ProjectPriority},
+    domain::models::{
+        ProjectOperationalStatus, ProjectOperations, ProjectOverview, ProjectPriority,
+    },
     inbound::axum_router::project_operations::{
         GetProjectOperationsResponse, ReplaceProjectOperationsRequest,
     },
+    inbound::axum_router::project_overview::GetProjectOverviewResponse,
 };
 use reminders::domain::models::{Reminder, ReminderSchedule, RemindersList};
 use reminders::inbound::axum_router::{CreateReminderRequest, UpdateReminderRequest};
@@ -309,6 +312,7 @@ use utoipa::OpenApi;
         projects_hex::inbound::axum_router::revert_delete_project::revert_delete_project_handler,
         projects_hex::inbound::axum_router::project_operations::get_project_operations_handler,
         projects_hex::inbound::axum_router::project_operations::replace_project_operations_handler,
+        projects_hex::inbound::axum_router::project_overview::get_project_overview_handler,
 
         entity::get_entity_permission::handler,
 
@@ -640,6 +644,8 @@ use utoipa::OpenApi;
             ProjectPriority,
             GetProjectOperationsResponse,
             ReplaceProjectOperationsRequest,
+            ProjectOverview,
+            GetProjectOverviewResponse,
 
             // Preview
             GetDocumentPermissionsResponseDataV2,

@@ -11079,6 +11079,153 @@
         }
       }
     },
+    "/v2/projects/{id}/overview": {
+      "get": {
+        "tags": ["project"],
+        "summary": "Read the canonical, bounded overview for one project.",
+        "operationId": "get_project_overview",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "ID of the project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error", "data"],
+                  "properties": {
+                    "data": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "description": "The bounded, canonical overview for one project.",
+                          "required": [
+                            "project",
+                            "userAccessLevel",
+                            "operations",
+                            "immediateChildren"
+                          ],
+                          "properties": {
+                            "immediateChildren": {
+                              "$ref": "#/components/schemas/ProjectOverviewImmediateChildren",
+                              "description": "Exact counts of live, direct children only."
+                            },
+                            "operations": {
+                              "$ref": "#/components/schemas/ProjectOperations",
+                              "description": "The canonical project operational metadata."
+                            },
+                            "project": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "required": ["id", "name", "userId"],
+                                  "properties": {
+                                    "createdAt": {
+                                      "type": ["string", "null"],
+                                      "format": "date-time",
+                                      "description": "The time the project was created"
+                                    },
+                                    "deletedAt": {
+                                      "type": ["string", "null"],
+                                      "format": "date-time"
+                                    },
+                                    "id": {
+                                      "type": "string",
+                                      "description": "The id of the project"
+                                    },
+                                    "name": {
+                                      "type": "string",
+                                      "description": "The name of the project"
+                                    },
+                                    "parentId": {
+                                      "type": ["string", "null"],
+                                      "description": "The parent project id"
+                                    },
+                                    "updatedAt": {
+                                      "type": ["string", "null"],
+                                      "format": "date-time",
+                                      "description": "The time the project was updated"
+                                    },
+                                    "userId": {
+                                      "type": "string",
+                                      "description": "The user id of who created the project"
+                                    }
+                                  }
+                                }
+                              ],
+                              "description": "The canonical project row."
+                            },
+                            "userAccessLevel": {
+                              "$ref": "#/components/schemas/AccessLevel",
+                              "description": "The validated caller access level for this project."
+                            }
+                          }
+                        }
+                      ],
+                      "description": "Data to be returned"
+                    },
+                    "error": {
+                      "type": "boolean",
+                      "description": "Indicates if an error occurred"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/v2/projects/{id}/operations": {
       "get": {
         "tags": ["project"],
@@ -21917,6 +22064,98 @@
             "type": "string",
             "format": "date-time",
             "description": "When the operational record was last updated."
+          }
+        }
+      },
+      "ProjectOverview": {
+        "type": "object",
+        "description": "The bounded, canonical overview for one project.",
+        "required": [
+          "project",
+          "userAccessLevel",
+          "operations",
+          "immediateChildren"
+        ],
+        "properties": {
+          "immediateChildren": {
+            "$ref": "#/components/schemas/ProjectOverviewImmediateChildren",
+            "description": "Exact counts of live, direct children only."
+          },
+          "operations": {
+            "$ref": "#/components/schemas/ProjectOperations",
+            "description": "The canonical project operational metadata."
+          },
+          "project": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["id", "name", "userId"],
+                "properties": {
+                  "createdAt": {
+                    "type": ["string", "null"],
+                    "format": "date-time",
+                    "description": "The time the project was created"
+                  },
+                  "deletedAt": {
+                    "type": ["string", "null"],
+                    "format": "date-time"
+                  },
+                  "id": {
+                    "type": "string",
+                    "description": "The id of the project"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "The name of the project"
+                  },
+                  "parentId": {
+                    "type": ["string", "null"],
+                    "description": "The parent project id"
+                  },
+                  "updatedAt": {
+                    "type": ["string", "null"],
+                    "format": "date-time",
+                    "description": "The time the project was updated"
+                  },
+                  "userId": {
+                    "type": "string",
+                    "description": "The user id of who created the project"
+                  }
+                }
+              }
+            ],
+            "description": "The canonical project row."
+          },
+          "userAccessLevel": {
+            "$ref": "#/components/schemas/AccessLevel",
+            "description": "The validated caller access level for this project."
+          }
+        }
+      },
+      "ProjectOverviewImmediateChildren": {
+        "type": "object",
+        "description": "Exact live depth-one child counts for a project overview.",
+        "required": ["childProjects", "tasks", "nonTaskDocuments", "chats"],
+        "properties": {
+          "chats": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Non-deleted direct chats."
+          },
+          "childProjects": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Non-deleted direct child projects."
+          },
+          "nonTaskDocuments": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Non-deleted direct documents not classified as tasks."
+          },
+          "tasks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Non-deleted direct documents classified as tasks."
           }
         }
       },

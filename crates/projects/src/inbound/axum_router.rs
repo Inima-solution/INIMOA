@@ -10,6 +10,7 @@ pub mod get_batch_preview;
 pub mod get_project;
 pub mod get_projects;
 pub mod project_operations;
+pub mod project_overview;
 pub mod project_permission;
 pub mod revert_delete_project;
 pub mod upload_folder;
@@ -37,6 +38,7 @@ use self::{
     get_project::{get_project_content_handler, get_project_handler},
     get_projects::{get_pending_projects_handler, get_projects_handler},
     project_operations::{get_project_operations_handler, replace_project_operations_handler},
+    project_overview::get_project_overview_handler,
     project_permission::{get_project_access_level_handler, get_project_permissions_handler},
     revert_delete_project::revert_delete_project_handler,
     upload_folder::{upload_extract_folder_handler, upload_folder_handler},
@@ -138,6 +140,10 @@ where
             "/{id}/operations",
             axum::routing::get(get_project_operations_handler::<T, Svc, Auth>)
                 .put(replace_project_operations_handler::<T, Svc, Auth>),
+        )
+        .route(
+            "/{id}/overview",
+            axum::routing::get(get_project_overview_handler::<T, Svc, Auth>),
         )
         .route(
             "/{id}/permissions",

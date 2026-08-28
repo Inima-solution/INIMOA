@@ -67,6 +67,8 @@ struct FakeProjectService {
         Arc<Mutex<Vec<(MacroUserIdStr<'static>, UpdateProjectOperationsRequest)>>>,
     operations_read_failure: Arc<Mutex<Option<&'static str>>>,
     operations_update_failure: Arc<Mutex<Option<&'static str>>>,
+    overview_calls: Arc<Mutex<usize>>,
+    overview_failure: Arc<Mutex<Option<&'static str>>>,
 }
 
 impl FakeProjectService {
@@ -86,6 +88,8 @@ impl FakeProjectService {
             operations_update_requests: Arc::new(Mutex::new(Vec::new())),
             operations_read_failure: Arc::new(Mutex::new(None)),
             operations_update_failure: Arc::new(Mutex::new(None)),
+            overview_calls: Arc::new(Mutex::new(0)),
+            overview_failure: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -99,6 +103,8 @@ impl FakeProjectService {
             operations_update_requests: Arc::new(Mutex::new(Vec::new())),
             operations_read_failure: Arc::new(Mutex::new(None)),
             operations_update_failure: Arc::new(Mutex::new(None)),
+            overview_calls: Arc::new(Mutex::new(0)),
+            overview_failure: Arc::new(Mutex::new(None)),
         }
     }
 }
@@ -152,6 +158,17 @@ impl ProjectService for FakeProjectService {
         _receipt: EntityAccessReceipt<entity_access::domain::models::ViewAccessLevel>,
         _company_receipt: EntityAccessReceipt<entity_access::domain::models::ReadProjectWorkScoped>,
     ) -> Result<ProjectOverview, ProjectError> {
+        *self
+            .overview_calls
+            .lock()
+            .expect("overview calls lock poisoned") += 1;
+        if let Some(failure) = *self
+            .overview_failure
+            .lock()
+            .expect("overview failure lock poisoned")
+        {
+            return Err(project_operations_failure(failure));
+        }
         Ok(ProjectOverview {
             project: project(),
             user_access_level: ShareAccessLevel::Owner,
@@ -885,6 +902,176 @@ async fn operations_user_only_rejects_internal_before_project_or_team_access() {
     .await
     .expect("router should respond");
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn overview_returns_exact_bounded_camel_case_envelope_after_one_service_call() {
+    let service = FakeProjectService::with_project("macro|owner@example.com", false);
+    let calls = service.overview_calls.clone();
+    let response = router_with_team(service, Some(AccessLevel::View), Some(team_info("member")))
+        .oneshot(authenticated_request(&format!("/{PROJECT_ID}/overview")))
+        .await
+        .expect("router should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        json_body(response).await,
+        json!({
+            "error": false,
+            "data": {
+                "project": {
+                    "id": PROJECT_ID,
+                    "name": "Project",
+                    "userId": USER_ID,
+                    "createdAt": null,
+                    "updatedAt": null,
+                    "deletedAt": null
+                },
+                "userAccessLevel": "owner",
+                "operations": {
+                    "projectId": PROJECT_ID,
+                    "status": "planned",
+                    "priority": "normal",
+                    "leadUserId": null,
+                    "startDate": null,
+                    "targetDate": null,
+                    "completedAt": null,
+                    "createdAt": "2026-08-28T00:00:00Z",
+                    "updatedAt": "2026-08-28T00:00:00Z",
+                    "policy": null
+                },
+                "immediateChildren": {
+                    "childProjects": 0,
+                    "tasks": 0,
+                    "nonTaskDocuments": 0,
+                    "chats": 0
+                }
+            }
+        })
+    );
+    assert_eq!(*calls.lock().expect("overview calls lock poisoned"), 1);
+}
+
+#[tokio::test]
+async fn overview_stops_before_service_for_auth_access_and_missing_failures() {
+    let unauthenticated_service = FakeProjectService::with_project(USER_ID, false);
+    let unauthenticated_calls = unauthenticated_service.overview_calls.clone();
+    let unauthenticated = router_with_team(
+        unauthenticated_service,
+        Some(AccessLevel::View),
+        Some(team_info("member")),
+    )
+    .oneshot(
+        Request::get(format!("/{PROJECT_ID}/overview"))
+            .body(Body::empty())
+            .expect("valid request"),
+    )
+    .await
+    .expect("router should respond");
+    assert_eq!(unauthenticated.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        *unauthenticated_calls
+            .lock()
+            .expect("overview calls lock poisoned"),
+        0
+    );
+
+    let internal_service = FakeProjectService::with_project(USER_ID, false);
+    let internal_calls = internal_service.overview_calls.clone();
+    let internal = router_with_team(
+        internal_service,
+        Some(AccessLevel::View),
+        Some(team_info("member")),
+    )
+    .oneshot(internal_json_request(
+        "GET",
+        &format!("/{PROJECT_ID}/overview"),
+        json!({}),
+    ))
+    .await
+    .expect("router should respond");
+    assert_eq!(internal.status(), StatusCode::FORBIDDEN);
+    assert_eq!(
+        *internal_calls.lock().expect("overview calls lock poisoned"),
+        0
+    );
+
+    let project_denied_service = FakeProjectService::with_project("macro|owner@example.com", false);
+    let project_denied_calls = project_denied_service.overview_calls.clone();
+    let project_denied = router_with_team(project_denied_service, None, Some(team_info("member")))
+        .oneshot(authenticated_request(&format!("/{PROJECT_ID}/overview")))
+        .await
+        .expect("router should respond");
+    assert_eq!(project_denied.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        *project_denied_calls
+            .lock()
+            .expect("overview calls lock poisoned"),
+        0
+    );
+
+    let team_denied_service = FakeProjectService::with_project("macro|owner@example.com", false);
+    let team_denied_calls = team_denied_service.overview_calls.clone();
+    let team_denied = router_with_team(team_denied_service, Some(AccessLevel::View), None)
+        .oneshot(authenticated_request(&format!("/{PROJECT_ID}/overview")))
+        .await
+        .expect("router should respond");
+    assert_eq!(team_denied.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        *team_denied_calls
+            .lock()
+            .expect("overview calls lock poisoned"),
+        0
+    );
+
+    let missing_service = FakeProjectService::missing();
+    let missing_calls = missing_service.overview_calls.clone();
+    let missing = router_with_team(
+        missing_service,
+        Some(AccessLevel::View),
+        Some(team_info("member")),
+    )
+    .oneshot(authenticated_request(&format!("/{PROJECT_ID}/overview")))
+    .await
+    .expect("router should respond");
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    assert_eq!(
+        *missing_calls.lock().expect("overview calls lock poisoned"),
+        0
+    );
+}
+
+#[tokio::test]
+async fn overview_internal_failure_is_generic_and_does_not_leak_sentinel() {
+    let service = FakeProjectService::with_project("macro|owner@example.com", false);
+    let calls = service.overview_calls.clone();
+    *service
+        .overview_failure
+        .lock()
+        .expect("overview failure lock poisoned") = Some("internal");
+    let response = router_with_team(service, Some(AccessLevel::View), Some(team_info("member")))
+        .oneshot(authenticated_request(&format!("/{PROJECT_ID}/overview")))
+        .await
+        .expect("router should respond");
+
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(
+        json_body(response).await,
+        json!({ "error": true, "message": "internal server error" })
+    );
+    assert_eq!(*calls.lock().expect("overview calls lock poisoned"), 1);
+}
+
+#[test]
+fn overview_handler_declaration_keeps_authorization_and_receipts_ordered() {
+    let source = include_str!("project_overview.rs");
+    let handler = source
+        .split("pub async fn get_project_overview_handler")
+        .nth(1)
+        .expect("overview handler declaration");
+
+    assert!(handler.find("UserOnly") < handler.find("ViewAccessLevel"));
+    assert!(handler.find("ViewAccessLevel") < handler.find("ReadProjectWorkScoped"));
 }
 
 #[test]

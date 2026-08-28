@@ -155,6 +155,7 @@ pub struct ProjectOperations {
 #[serde(rename_all = "camelCase")]
 pub struct ProjectOverview {
     /// The canonical project row.
+    #[schema(inline)]
     pub project: Project,
     /// The validated caller access level for this project.
     pub user_access_level: models_permissions::share_permission::access_level::AccessLevel,

@@ -27187,6 +27187,94 @@ export const getProjectOperationsResponse = zod.object({
 });
 
 /**
+ * @summary Read the canonical, bounded overview for one project.
+ */
+export const getProjectOverviewParams = zod.object({
+  id: zod.string().describe('ID of the project'),
+});
+
+export const getProjectOverviewResponse = zod.object({
+  data: zod
+    .object({
+      immediateChildren: zod
+        .object({
+          chats: zod.number().describe('Non-deleted direct chats.'),
+          childProjects: zod
+            .number()
+            .describe('Non-deleted direct child projects.'),
+          nonTaskDocuments: zod
+            .number()
+            .describe('Non-deleted direct documents not classified as tasks.'),
+          tasks: zod
+            .number()
+            .describe('Non-deleted direct documents classified as tasks.'),
+        })
+        .describe('Exact live depth-one child counts for a project overview.'),
+      operations: zod
+        .object({
+          completedAt: zod.iso
+            .datetime({})
+            .nullish()
+            .describe('When work was completed, if recorded.'),
+          createdAt: zod.iso
+            .datetime({})
+            .describe('When the operational record was created.'),
+          leadUserId: zod.union([zod.null(), zod.string()]).optional(),
+          policy: zod
+            .object({})
+            .nullish()
+            .describe('Optional bounded object-shaped operational policy.'),
+          priority: zod
+            .enum(['low', 'normal', 'high', 'urgent'])
+            .describe('The relative operational urgency stored for a project.'),
+          projectId: zod.string().describe('Canonical project identifier.'),
+          startDate: zod.iso
+            .date()
+            .nullish()
+            .describe('Optional planned start date.'),
+          status: zod
+            .enum(['planned', 'active', 'paused', 'completed', 'archived'])
+            .describe('The operational lifecycle state stored for a project.'),
+          targetDate: zod.iso
+            .date()
+            .nullish()
+            .describe('Optional planned target date.'),
+          updatedAt: zod.iso
+            .datetime({})
+            .describe('When the operational record was last updated.'),
+        })
+        .describe(
+          'Operational metadata attached one-to-one to a canonical project.\n\nThis model deliberately excludes project content and generic project fields.'
+        ),
+      project: zod
+        .object({
+          createdAt: zod.iso
+            .datetime({})
+            .nullish()
+            .describe('The time the project was created'),
+          deletedAt: zod.iso.datetime({}).nullish(),
+          id: zod.string().describe('The id of the project'),
+          name: zod.string().describe('The name of the project'),
+          parentId: zod.string().nullish().describe('The parent project id'),
+          updatedAt: zod.iso
+            .datetime({})
+            .nullish()
+            .describe('The time the project was updated'),
+          userId: zod
+            .string()
+            .describe('The user id of who created the project'),
+        })
+        .describe('The canonical project row.'),
+      userAccessLevel: zod
+        .enum(['view', 'comment', 'edit', 'owner'])
+        .describe('Ordered from least to most access top -> bottom'),
+    })
+    .describe('The bounded, canonical overview for one project.')
+    .describe('Data to be returned'),
+  error: zod.boolean().describe('Indicates if an error occurred'),
+});
+
+/**
  * @summary Replace all client-owned operational metadata for one project.
  */
 export const replaceProjectOperationsParams = zod.object({
