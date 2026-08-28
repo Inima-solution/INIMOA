@@ -1,3 +1,4 @@
+use super::set_entity_property::map_set_entity_property_error;
 #[allow(unused_imports)]
 use super::*;
 use ai_toolset::schema::generate_validated_input_schema;
@@ -204,6 +205,122 @@ fn test_delete_tag_schema_validation() {
     assert!(
         schema_json.contains("property_definition_id"),
         "schema should require the tag set's property_definition_id"
+    );
+}
+
+#[test]
+fn set_entity_property_response_omits_readiness_for_success_and_exposes_exact_blocker_shape() {
+    let task_id = uuid::Uuid::from_u128(0xB01);
+    let blocking_id = uuid::Uuid::from_u128(0xB02);
+    assert_eq!(
+        serde_json::to_value(SetEntityPropertyResponse {
+            success: true,
+            message: "Property updated successfully.".to_owned(),
+            task_dependency_readiness: None,
+        })
+        .unwrap(),
+        serde_json::json!({
+            "success": true,
+            "message": "Property updated successfully.",
+        })
+    );
+    assert_eq!(
+        serde_json::to_value(SetEntityPropertyResponse {
+            success: false,
+            message: "Task transition is blocked by dependencies".to_owned(),
+            task_dependency_readiness: Some(crate::domain::model::TaskDependencyReadiness {
+                task_id,
+                readiness: crate::domain::model::TaskReadiness::Blocked,
+                depends_on_task_ids: vec![blocking_id],
+                blocking_task_ids: vec![blocking_id],
+                has_unavailable_dependencies: true,
+            }),
+        })
+        .unwrap(),
+        serde_json::json!({
+            "success": false,
+            "message": "Task transition is blocked by dependencies",
+            "taskDependencyReadiness": {
+                "taskId": task_id,
+                "readiness": "blocked",
+                "dependsOnTaskIds": [blocking_id],
+                "blockingTaskIds": [blocking_id],
+                "hasUnavailableDependencies": true,
+            },
+        })
+    );
+}
+
+#[test]
+fn set_entity_property_response_schema_contains_optional_five_field_readiness() {
+    let schema = serde_json::to_value(schemars::schema_for!(SetEntityPropertyResponse)).unwrap();
+    assert!(schema["properties"]["taskDependencyReadiness"].is_object());
+    let schema_text = schema.to_string();
+    for key in [
+        "taskDependencyReadiness",
+        "taskId",
+        "readiness",
+        "dependsOnTaskIds",
+        "blockingTaskIds",
+        "hasUnavailableDependencies",
+    ] {
+        assert!(
+            schema_text.contains(key),
+            "missing {key} from response schema"
+        );
+    }
+    assert!(
+        !schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "taskDependencyReadiness")
+    );
+}
+
+#[test]
+fn set_entity_property_error_mapping_executes_structured_and_ordinary_branches() {
+    let task_id = uuid::Uuid::from_u128(0xB11);
+    let blocker = uuid::Uuid::from_u128(0xB12);
+    let structured = map_set_entity_property_error(
+        crate::domain::error::PropertiesErr::TaskTransitionBlockedWithReadiness(
+            crate::domain::model::TaskTransitionBlockedDetails::new(
+                crate::domain::model::TaskDependencyReadiness {
+                    task_id,
+                    readiness: crate::domain::model::TaskReadiness::Blocked,
+                    depends_on_task_ids: vec![blocker],
+                    blocking_task_ids: vec![blocker],
+                    has_unavailable_dependencies: false,
+                },
+            ),
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(structured).unwrap(),
+        serde_json::json!({
+            "success": false,
+            "message": "Task transition is blocked by dependencies",
+            "taskDependencyReadiness": {
+                "taskId": task_id,
+                "readiness": "blocked",
+                "dependsOnTaskIds": [blocker],
+                "blockingTaskIds": [blocker],
+                "hasUnavailableDependencies": false,
+            },
+        })
+    );
+
+    let ordinary =
+        map_set_entity_property_error(crate::domain::error::PropertiesErr::TaskDependencyCycle)
+            .unwrap_err();
+    assert_eq!(
+        ordinary.description,
+        "Failed to set property: Task dependencies cannot contain a cycle"
+    );
+    assert_eq!(
+        ordinary.internal_error.to_string(),
+        "Task dependencies cannot contain a cycle"
     );
 }
 

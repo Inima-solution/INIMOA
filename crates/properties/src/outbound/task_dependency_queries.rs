@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::domain::model::{EntityPropertyMutationSnapshot, TaskDependencyMutationOutcome};
 use crate::outbound::task_status_transition_queries::{
-    all_dependencies_completed, load_task_guard_state, requires_readiness,
+    load_task_guard_state, requires_readiness, task_dependency_readiness_snapshot,
 };
 
 pub async fn replace_task_dependencies(
@@ -57,16 +57,24 @@ pub async fn replace_task_dependencies(
         return Ok(TaskDependencyMutationOutcome::Unavailable);
     }
 
-    // The same lock and completion policy as Status writes closes the race:
-    // an already guarded source cannot replace Depends On with an incomplete
-    // predecessor set. This is intentionally checked only at this commit.
     if requires_readiness(state.status) {
-        if !all_dependencies_completed(&mut tx, state.project_id.as_deref(), dependency_ids).await?
-        {
-            return Ok(TaskDependencyMutationOutcome::Blocked);
+        let readiness = task_dependency_readiness_snapshot(
+            &mut tx,
+            task_id,
+            state.project_id.as_deref(),
+            dependency_ids,
+        )
+        .await?;
+        if readiness.readiness == crate::domain::model::TaskReadiness::Blocked {
+            return Ok(TaskDependencyMutationOutcome::BlockedWithReadiness(
+                readiness,
+            ));
         }
     }
 
+    // The same lock and completion policy as Status writes closes the race:
+    // an already guarded source cannot replace Depends On with an incomplete
+    // predecessor set. This is intentionally checked only at this commit.
     if !dependency_ids.is_empty() {
         let dependency_text = dependency_ids
             .iter()

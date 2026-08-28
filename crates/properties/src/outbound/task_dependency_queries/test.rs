@@ -6,7 +6,7 @@ use tokio::sync::Barrier;
 use uuid::Uuid;
 
 use super::replace_task_dependencies;
-use crate::domain::model::TaskDependencyMutationOutcome;
+use crate::domain::model::{TaskDependencyMutationOutcome, TaskDependencyReadiness, TaskReadiness};
 use crate::outbound::task_status_transition_queries::transition_task_status;
 use macro_db_migrator::MACRO_DB_MIGRATIONS;
 
@@ -79,6 +79,13 @@ async fn store_status(pool: &Pool<Postgres>, id: Uuid, status: system_properties
     sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4) ON CONFLICT (entity_id, entity_type, property_definition_id) DO UPDATE SET values = EXCLUDED.values")
         .bind(Uuid::new_v4()).bind(id.to_string()).bind(system_properties::SystemPropertyKey::STATUS_UUID)
         .bind(serde_json::json!({"type":"SelectOption","value":[status.uuid()]})).execute(pool).await.unwrap();
+}
+
+fn blocked_readiness(outcome: TaskDependencyMutationOutcome) -> TaskDependencyReadiness {
+    let TaskDependencyMutationOutcome::BlockedWithReadiness(readiness) = outcome else {
+        panic!("expected structured blocked outcome");
+    };
+    readiness
 }
 
 #[sqlx::test(
@@ -302,10 +309,16 @@ async fn guarded_source_rejects_incomplete_replacement_and_retains_prior_value(
         store_status(&pool, source, source_status).await;
         replace_task_dependencies(&pool, source, &[complete]).await?;
         for candidate in [incomplete, canceled] {
-            assert!(matches!(
-                replace_task_dependencies(&pool, source, &[candidate]).await?,
-                TaskDependencyMutationOutcome::Blocked
-            ));
+            assert_eq!(
+                blocked_readiness(replace_task_dependencies(&pool, source, &[candidate]).await?),
+                TaskDependencyReadiness {
+                    task_id: source,
+                    readiness: TaskReadiness::Blocked,
+                    depends_on_task_ids: vec![candidate],
+                    blocking_task_ids: vec![candidate],
+                    has_unavailable_dependencies: false,
+                }
+            );
             assert_eq!(
                 depends(&pool, source).await,
                 Some(PropertyValue::EntityRef(vec![
@@ -400,17 +413,33 @@ async fn status_and_dependency_race_commits_only_one_side(
     let deps = deps.await??;
     assert_eq!(
         usize::from(matches!(
-            status_outcome,
+            &status_outcome,
             crate::domain::model::TaskStatusMutationOutcome::Updated(_)
-        )) + usize::from(matches!(deps, TaskDependencyMutationOutcome::Updated(_))),
+        )) + usize::from(matches!(&deps, TaskDependencyMutationOutcome::Updated(_))),
         1
     );
+    let blocked_readiness = match (status_outcome, deps) {
+        (
+            crate::domain::model::TaskStatusMutationOutcome::BlockedWithReadiness(readiness),
+            TaskDependencyMutationOutcome::Updated(_),
+        )
+        | (
+            crate::domain::model::TaskStatusMutationOutcome::Updated(_),
+            TaskDependencyMutationOutcome::BlockedWithReadiness(readiness),
+        ) => readiness,
+        (status, dependencies) => {
+            panic!("expected one structured blocker, got {status:?} and {dependencies:?}")
+        }
+    };
     assert_eq!(
-        usize::from(matches!(
-            status_outcome,
-            crate::domain::model::TaskStatusMutationOutcome::Blocked
-        )) + usize::from(matches!(deps, TaskDependencyMutationOutcome::Blocked)),
-        1
+        blocked_readiness,
+        TaskDependencyReadiness {
+            task_id: source,
+            readiness: TaskReadiness::Blocked,
+            depends_on_task_ids: vec![incomplete],
+            blocking_task_ids: vec![incomplete],
+            has_unavailable_dependencies: false,
+        }
     );
     let final_status = status(&pool, source).await;
     let final_dependencies = depends(&pool, source).await;

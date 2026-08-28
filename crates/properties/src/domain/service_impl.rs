@@ -731,6 +731,11 @@ where
                 TaskStatusMutationOutcome::Blocked => {
                     return Err(PropertiesErr::TaskTransitionBlocked);
                 }
+                TaskStatusMutationOutcome::BlockedWithReadiness(readiness) => {
+                    return Err(self
+                        .filter_task_transition_readiness(access, readiness)
+                        .await);
+                }
             };
             self.publish_property_event(Self::entity_property_updated_event(
                 &snapshot.property,

@@ -46,6 +46,10 @@ pub enum PropertiesErr {
     #[error("Task transition is blocked by dependencies")]
     TaskTransitionBlocked,
 
+    /// The rejected attempt after dependency ids have been filtered for this caller.
+    #[error("Task transition is blocked by dependencies")]
+    TaskTransitionBlockedWithReadiness(crate::domain::model::TaskTransitionBlockedDetails),
+
     /// Promoting a personal label would collide with an existing team label -
     /// maps to 409. Carries the team label so the caller can offer to merge
     /// into it instead.

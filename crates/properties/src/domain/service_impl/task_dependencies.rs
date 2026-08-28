@@ -107,7 +107,60 @@ where
             }
             TaskDependencyMutationOutcome::Cycle => Err(PropertiesErr::TaskDependencyCycle),
             TaskDependencyMutationOutcome::Blocked => Err(PropertiesErr::TaskTransitionBlocked),
+            TaskDependencyMutationOutcome::BlockedWithReadiness(readiness) => Err(self
+                .filter_task_transition_readiness(access, readiness)
+                .await),
         }
+    }
+
+    /// Drop every dependency id that cannot be independently viewed by this
+    /// caller. Permission failures are intentionally indistinguishable from a
+    /// malformed or unavailable dependency.
+    pub(crate) async fn filter_task_transition_readiness(
+        &self,
+        access: &EditReceipt,
+        mut readiness: TaskDependencyReadiness,
+    ) -> PropertiesErr {
+        let Some(user_id) = access.authenticated_user() else {
+            readiness.depends_on_task_ids.clear();
+            readiness.blocking_task_ids.clear();
+            readiness.has_unavailable_dependencies = true;
+            return PropertiesErr::TaskTransitionBlockedWithReadiness(
+                crate::domain::model::TaskTransitionBlockedDetails::new(readiness),
+            );
+        };
+        let Ok(permission_service) = self.permission_service() else {
+            readiness.depends_on_task_ids.clear();
+            readiness.blocking_task_ids.clear();
+            readiness.has_unavailable_dependencies = true;
+            return PropertiesErr::TaskTransitionBlockedWithReadiness(
+                crate::domain::model::TaskTransitionBlockedDetails::new(readiness),
+            );
+        };
+        let original_blockers = std::collections::HashSet::<Uuid>::from_iter(
+            readiness.blocking_task_ids.iter().copied(),
+        );
+        let mut depends_on_task_ids = Vec::with_capacity(readiness.depends_on_task_ids.len());
+        let mut blocking_task_ids = Vec::with_capacity(readiness.blocking_task_ids.len());
+        for id in readiness.depends_on_task_ids {
+            match permission_service
+                .mint_view_receipt(Some(user_id), &id.to_string(), AccessEntityType::Document)
+                .await
+            {
+                Ok(_) => {
+                    depends_on_task_ids.push(id);
+                    if original_blockers.contains(&id) {
+                        blocking_task_ids.push(id);
+                    }
+                }
+                Err(_) => readiness.has_unavailable_dependencies = true,
+            }
+        }
+        readiness.depends_on_task_ids = depends_on_task_ids;
+        readiness.blocking_task_ids = blocking_task_ids;
+        PropertiesErr::TaskTransitionBlockedWithReadiness(
+            crate::domain::model::TaskTransitionBlockedDetails::new(readiness),
+        )
     }
 }
 

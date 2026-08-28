@@ -1,5 +1,5 @@
 use super::transition_task_status;
-use crate::domain::model::TaskStatusMutationOutcome;
+use crate::domain::model::{TaskDependencyReadiness, TaskReadiness, TaskStatusMutationOutcome};
 use macro_db_migrator::MACRO_DB_MIGRATIONS;
 use models_properties::{EntityReference, EntityType};
 use sqlx::{Pool, Postgres};
@@ -57,6 +57,13 @@ async fn status_row(pool: &Pool<Postgres>, task: Uuid) -> (i64, Option<serde_jso
 }
 async fn depends(pool: &Pool<Postgres>, task: Uuid, refs: serde_json::Value) {
     raw(pool, task, SystemPropertyKey::DEPENDS_ON_UUID, Some(refs)).await
+}
+
+fn blocked_readiness(outcome: TaskStatusMutationOutcome) -> TaskDependencyReadiness {
+    let TaskStatusMutationOutcome::BlockedWithReadiness(readiness) = outcome else {
+        panic!("expected structured blocked outcome");
+    };
+    readiness
 }
 
 #[sqlx::test(
@@ -239,10 +246,18 @@ async fn guarded_status_blocks_every_unavailable_or_malformed_predecessor(
         )
         .await;
         depends(&pool, source, value).await;
-        assert!(matches!(
-            transition_task_status(&pool, source, Some(StatusOption::InProgress)).await?,
-            TaskStatusMutationOutcome::Blocked
-        ));
+        assert_eq!(
+            blocked_readiness(
+                transition_task_status(&pool, source, Some(StatusOption::InProgress)).await?,
+            ),
+            TaskDependencyReadiness {
+                task_id: source,
+                readiness: TaskReadiness::Blocked,
+                depends_on_task_ids: vec![],
+                blocking_task_ids: vec![],
+                has_unavailable_dependencies: true,
+            }
+        );
         assert_eq!(
             status_row(&pool, source).await,
             (1, Some(known_source_status.clone()))
@@ -257,10 +272,18 @@ async fn guarded_status_blocks_every_unavailable_or_malformed_predecessor(
     )
     .await;
     depends(&pool, source, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(live.to_string(),EntityType::Task)]})).await;
-    assert!(matches!(
-        transition_task_status(&pool, source, Some(StatusOption::InProgress)).await?,
-        TaskStatusMutationOutcome::Blocked
-    ));
+    assert_eq!(
+        blocked_readiness(
+            transition_task_status(&pool, source, Some(StatusOption::InProgress)).await?,
+        ),
+        TaskDependencyReadiness {
+            task_id: source,
+            readiness: TaskReadiness::Blocked,
+            depends_on_task_ids: vec![live],
+            blocking_task_ids: vec![live],
+            has_unavailable_dependencies: false,
+        }
+    );
     assert_eq!(
         status_row(&pool, source).await,
         (1, Some(known_source_status.clone()))
@@ -283,10 +306,18 @@ async fn guarded_status_blocks_every_unavailable_or_malformed_predecessor(
     )
     .await;
     depends(&pool, source, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(live.to_string(),EntityType::Task)]})).await;
-    assert!(matches!(
-        transition_task_status(&pool, source, Some(StatusOption::InProgress)).await?,
-        TaskStatusMutationOutcome::Blocked
-    ));
+    assert_eq!(
+        blocked_readiness(
+            transition_task_status(&pool, source, Some(StatusOption::InProgress)).await?,
+        ),
+        TaskDependencyReadiness {
+            task_id: source,
+            readiness: TaskReadiness::Blocked,
+            depends_on_task_ids: vec![live],
+            blocking_task_ids: vec![live],
+            has_unavailable_dependencies: false,
+        }
+    );
     assert_eq!(
         status_row(&pool, source).await,
         (1, Some(known_source_status.clone()))
@@ -315,14 +346,63 @@ async fn guarded_status_blocks_every_unavailable_or_malformed_predecessor(
             status(&pool, live, predecessor_status).await;
         }
         depends(&pool, source, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(live.to_string(),EntityType::Task)]})).await;
-        assert!(matches!(
-            transition_task_status(&pool, source, Some(StatusOption::InProgress)).await?,
-            TaskStatusMutationOutcome::Blocked
-        ));
+        assert_eq!(
+            blocked_readiness(
+                transition_task_status(&pool, source, Some(StatusOption::InProgress)).await?,
+            ),
+            TaskDependencyReadiness {
+                task_id: source,
+                readiness: TaskReadiness::Blocked,
+                depends_on_task_ids: vec![live],
+                blocking_task_ids: vec![live],
+                has_unavailable_dependencies: false,
+            }
+        );
         assert_eq!(
             status_row(&pool, source).await,
             (1, Some(known_source_status.clone()))
         );
     }
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("task_dependencies_seed"))
+)]
+async fn guarded_status_reports_mixed_live_dependencies_in_stored_order(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let source = Uuid::new_v4();
+    let completed = Uuid::new_v4();
+    let incomplete = Uuid::new_v4();
+    let unavailable = Uuid::new_v4();
+    for id in [source, completed, incomplete] {
+        task(&pool, id, None, true).await;
+    }
+    status(&pool, completed, Some(StatusOption::Completed)).await;
+    status(&pool, incomplete, Some(StatusOption::InProgress)).await;
+    depends(
+        &pool,
+        source,
+        serde_json::json!({"type":"EntityReference","value":[
+            EntityReference::new(completed.to_string(), EntityType::Task),
+            EntityReference::new(incomplete.to_string(), EntityType::Task),
+            EntityReference::new(unavailable.to_string(), EntityType::Task)
+        ]}),
+    )
+    .await;
+    assert_eq!(
+        blocked_readiness(
+            transition_task_status(&pool, source, Some(StatusOption::InProgress)).await?,
+        ),
+        TaskDependencyReadiness {
+            task_id: source,
+            readiness: TaskReadiness::Blocked,
+            depends_on_task_ids: vec![completed, incomplete],
+            blocking_task_ids: vec![incomplete],
+            has_unavailable_dependencies: true,
+        }
+    );
     Ok(())
 }

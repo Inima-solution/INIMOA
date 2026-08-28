@@ -601,6 +601,16 @@
           "404": {
             "description": "Entity or property not found"
           },
+          "409": {
+            "description": "Task transition blocked by dependencies",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDependencyReadiness"
+                }
+              }
+            }
+          },
           "500": {
             "description": "Internal server error"
           }
@@ -2322,6 +2332,53 @@
             "$ref": "#/components/schemas/TagScope"
           }
         }
+      },
+      "TaskDependencyReadiness": {
+        "type": "object",
+        "description": "Computed direct task-dependency state for one requested task.\n\nIDs of unavailable dependencies are deliberately omitted so this model can\nbe exposed by a later scoped API without leaking cross-project or deleted\ntask identifiers.",
+        "required": [
+          "taskId",
+          "readiness",
+          "dependsOnTaskIds",
+          "blockingTaskIds",
+          "hasUnavailableDependencies"
+        ],
+        "properties": {
+          "blockingTaskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Available direct dependencies whose Status is not exactly Completed."
+          },
+          "dependsOnTaskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Direct live same-project task dependencies, in stored reference order."
+          },
+          "hasUnavailableDependencies": {
+            "type": "boolean",
+            "description": "Whether at least one stored dependency was malformed or unavailable."
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/TaskReadiness",
+            "description": "Non-persisted readiness derived from canonical Depends On and Status."
+          },
+          "taskId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The scoped, live source task identifier."
+          }
+        }
+      },
+      "TaskReadiness": {
+        "type": "string",
+        "description": "Computed direct-dependency readiness for one task.\n\nThis is a read model only. Its value is intentionally never stored as a\nproperty or status option.",
+        "enum": ["ready", "blocked"]
       },
       "UpdatePropertyOptionRequest": {
         "type": "object",

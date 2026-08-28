@@ -57,6 +57,7 @@ use utoipa::OpenApi;
             api::PropertyDefinitionWithOptionsResponse,
             EntityPropertiesResponse,
             SetEntityPropertyRequest,
+            properties::domain::model::TaskDependencyReadiness,
             EntityQueryParams,
             BulkEntityPropertiesRequest,
             BulkUpdateEntityPropertyOptionsRequest,

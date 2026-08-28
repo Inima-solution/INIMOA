@@ -1,10 +1,80 @@
 //! Canonical task Status transition guard.
-use crate::domain::model::{EntityPropertyMutationSnapshot, TaskStatusMutationOutcome};
+use crate::domain::model::{
+    EntityPropertyMutationSnapshot, TaskDependencyReadiness, TaskReadiness,
+    TaskStatusMutationOutcome,
+};
 use models_properties::service::{entity_property::EntityProperty, property_value::PropertyValue};
 use models_properties::{EntityReference, EntityType};
 use sqlx::{Pool, Postgres, Transaction};
 use system_properties::{StatusOption, SystemPropertyKey};
 use uuid::Uuid;
+
+/// Capture the dependency facts visible to the guarded transaction. This is
+/// deliberately data-only: caller-specific document receipts are minted only
+/// after this transaction has ended.
+pub(crate) fn malformed_dependency_readiness(task_id: Uuid) -> TaskDependencyReadiness {
+    TaskDependencyReadiness {
+        task_id,
+        readiness: TaskReadiness::Blocked,
+        depends_on_task_ids: Vec::new(),
+        blocking_task_ids: Vec::new(),
+        has_unavailable_dependencies: true,
+    }
+}
+
+pub(crate) async fn task_dependency_readiness_snapshot(
+    tx: &mut Transaction<'_, Postgres>,
+    task_id: Uuid,
+    project_id: Option<&str>,
+    dependency_ids: &[Uuid],
+) -> anyhow::Result<TaskDependencyReadiness> {
+    if dependency_ids.is_empty() {
+        return Ok(TaskDependencyReadiness {
+            task_id,
+            readiness: TaskReadiness::Ready,
+            depends_on_task_ids: Vec::new(),
+            blocking_task_ids: Vec::new(),
+            has_unavailable_dependencies: false,
+        });
+    }
+    let ids = dependency_ids
+        .iter()
+        .map(Uuid::to_string)
+        .collect::<Vec<_>>();
+    let rows = sqlx::query!(r#"WITH candidate AS (SELECT id, ord FROM UNNEST($1::text[]) WITH ORDINALITY AS candidate(id, ord)) SELECT candidate.id AS candidate_id, live.id AS live_id, ep.values AS status_values FROM candidate LEFT JOIN (SELECT d.id FROM "Document" d JOIN document_sub_type dst ON dst.document_id=d.id AND dst.sub_type='task' WHERE d."deletedAt" IS NULL AND d."projectId" IS NOT DISTINCT FROM $2) live ON live.id=candidate.id LEFT JOIN entity_properties ep ON ep.entity_id=live.id AND ep.entity_type='TASK' AND ep.property_definition_id=$3 ORDER BY candidate.ord"#, &ids, project_id, SystemPropertyKey::STATUS_UUID).fetch_all(&mut **tx).await?;
+    let live = rows.into_iter().filter_map(|row| {
+            let id = Uuid::parse_str(row.live_id?.as_str()).ok()?;
+            let completed = row.status_values
+                .and_then(|value| serde_json::from_value::<PropertyValue>(value).ok())
+                .is_some_and(|value| matches!(value, PropertyValue::SelectOption(ids) if ids == vec![StatusOption::COMPLETED_UUID]));
+            Some((id, completed))
+        }).collect::<std::collections::HashMap<_, _>>();
+    let mut depends_on_task_ids = Vec::new();
+    let mut blocking_task_ids = Vec::new();
+    let mut has_unavailable_dependencies = false;
+    for id in dependency_ids {
+        match live.get(id) {
+            Some(completed) => {
+                depends_on_task_ids.push(*id);
+                if !completed {
+                    blocking_task_ids.push(*id);
+                }
+            }
+            None => has_unavailable_dependencies = true,
+        }
+    }
+    Ok(TaskDependencyReadiness {
+        task_id,
+        readiness: if blocking_task_ids.is_empty() && !has_unavailable_dependencies {
+            TaskReadiness::Ready
+        } else {
+            TaskReadiness::Blocked
+        },
+        depends_on_task_ids,
+        blocking_task_ids,
+        has_unavailable_dependencies,
+    })
+}
 
 pub(crate) struct TaskGuardState {
     pub project_id: Option<String>,
@@ -55,17 +125,6 @@ fn parse_reference(r: EntityReference, source: Uuid) -> Result<Uuid, ()> {
     let id = Uuid::parse_str(&r.entity_id).map_err(|_| ())?;
     if id == source { Err(()) } else { Ok(id) }
 }
-pub(crate) async fn all_dependencies_completed(
-    tx: &mut Transaction<'_, Postgres>,
-    project_id: Option<&str>,
-    ids: &[Uuid],
-) -> anyhow::Result<bool> {
-    if ids.is_empty() {
-        return Ok(true);
-    };
-    let ids = ids.iter().map(Uuid::to_string).collect::<Vec<_>>();
-    sqlx::query_scalar!(r#"SELECT COUNT(*)=$1::bigint AS "completed!" FROM UNNEST($2::text[]) candidate(id) JOIN "Document" d ON d.id=candidate.id AND d."deletedAt" IS NULL AND d."projectId" IS NOT DISTINCT FROM $3 JOIN document_sub_type dst ON dst.document_id=d.id AND dst.sub_type='task' JOIN entity_properties ep ON ep.entity_id=d.id AND ep.entity_type='TASK' AND ep.property_definition_id=$4 AND ep.values=jsonb_build_object('type','SelectOption','value',jsonb_build_array($5::text))"#, ids.len() as i64, &ids, project_id, SystemPropertyKey::STATUS_UUID, StatusOption::COMPLETED_UUID.to_string()).fetch_one(&mut **tx).await.map_err(Into::into)
-}
 pub async fn transition_task_status(
     pool: &Pool<Postgres>,
     task_id: Uuid,
@@ -81,16 +140,22 @@ pub async fn transition_task_status(
     let Some(state) = load_task_guard_state(&mut tx, task_id).await? else {
         return Ok(TaskStatusMutationOutcome::Blocked);
     };
-    if requires_readiness(status)
-        && (state.dependencies.is_err()
-            || !all_dependencies_completed(
-                &mut tx,
-                state.project_id.as_deref(),
-                state.dependencies.as_deref().unwrap_or_default(),
-            )
-            .await?)
-    {
-        return Ok(TaskStatusMutationOutcome::Blocked);
+    if requires_readiness(status) {
+        let readiness = match &state.dependencies {
+            Ok(ids) => {
+                task_dependency_readiness_snapshot(
+                    &mut tx,
+                    task_id,
+                    state.project_id.as_deref(),
+                    ids,
+                )
+                .await?
+            }
+            Err(()) => malformed_dependency_readiness(task_id),
+        };
+        if readiness.readiness == TaskReadiness::Blocked {
+            return Ok(TaskStatusMutationOutcome::BlockedWithReadiness(readiness));
+        }
     };
     let value = status
         .map(|s| serde_json::to_value(PropertyValue::SelectOption(vec![s.uuid()])))

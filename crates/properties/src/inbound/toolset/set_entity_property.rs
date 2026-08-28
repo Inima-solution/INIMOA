@@ -1,5 +1,7 @@
 //! SetEntityProperty tool for updating property values on entities.
 
+use crate::domain::error::PropertiesErr;
+use crate::domain::model::TaskDependencyReadiness;
 use crate::domain::service::PropertiesService;
 use ai_toolset::{AsyncTool, RequestContext, ServiceContext, ToolCallError, ToolResult};
 use ai_toolset::{ToolAnnotated, ToolAnnotations};
@@ -189,6 +191,26 @@ impl SetEntityProperty {
 pub struct SetEntityPropertyResponse {
     pub success: bool,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_dependency_readiness: Option<TaskDependencyReadiness>,
+}
+
+pub(super) fn map_set_entity_property_error(
+    error: PropertiesErr,
+) -> Result<SetEntityPropertyResponse, ToolCallError> {
+    match error {
+        PropertiesErr::TaskTransitionBlockedWithReadiness(readiness) => {
+            Ok(SetEntityPropertyResponse {
+                success: false,
+                message: "Task transition is blocked by dependencies".to_string(),
+                task_dependency_readiness: Some(readiness.into_inner()),
+            })
+        }
+        error => Err(ToolCallError {
+            description: format!("Failed to set property: {error}"),
+            internal_error: error.into(),
+        }),
+    }
 }
 
 impl ToolAnnotated for SetEntityProperty {
@@ -282,25 +304,26 @@ where
             return Ok(SetEntityPropertyResponse {
                 success: true,
                 message: "Property options updated successfully.".to_string(),
+                task_dependency_readiness: None,
             });
         }
 
-        service_context
+        let result = service_context
             .service
             .set_entity_property(
                 &entity_access_receipt,
                 self.property_definition_id,
                 set_value,
             )
-            .await
-            .map_err(|e| ToolCallError {
-                description: format!("Failed to set property: {e}"),
-                internal_error: e.into(),
-            })?;
+            .await;
+        if let Err(error) = result {
+            return map_set_entity_property_error(error);
+        }
 
         Ok(SetEntityPropertyResponse {
             success: true,
             message: "Property updated successfully.".to_string(),
+            task_dependency_readiness: None,
         })
     }
 }

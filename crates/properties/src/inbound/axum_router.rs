@@ -95,7 +95,8 @@ pub fn properties_err_status(e: &PropertiesErr) -> StatusCode {
         PropertiesErr::DuplicateOptionValue
         | PropertiesErr::ConflictingTeamLabel(_)
         | PropertiesErr::TaskDependencyCycle
-        | PropertiesErr::TaskTransitionBlocked => StatusCode::CONFLICT,
+        | PropertiesErr::TaskTransitionBlocked
+        | PropertiesErr::TaskTransitionBlockedWithReadiness(_) => StatusCode::CONFLICT,
         PropertiesErr::PermissionDenied
         | PropertiesErr::SystemPropertyNotModifiable
         | PropertiesErr::RequiredProperty

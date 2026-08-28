@@ -28,6 +28,7 @@ use super::extract::{mint_authenticated_receipt, mint_view_receipt, target_entit
 use super::{PropertiesRouterState, properties_err_status};
 use crate::domain::error::PropertiesErr;
 use crate::domain::model::PropertyAccessReceiptExt;
+use crate::domain::model::TaskDependencyReadiness;
 use crate::domain::model::{EditReceipt, EntityOptionUpdateOutcome, EntityPropertyOptionUpdate};
 use crate::domain::service::PropertiesService;
 
@@ -338,7 +339,12 @@ impl IntoResponse for SetEntityPropertyErr {
             );
         }
 
-        (status_code, self.to_string()).into_response()
+        match self {
+            Self::Properties(PropertiesErr::TaskTransitionBlockedWithReadiness(readiness)) => {
+                (status_code, Json(readiness.into_inner())).into_response()
+            }
+            other => (status_code, other.to_string()).into_response(),
+        }
     }
 }
 
@@ -357,6 +363,7 @@ impl IntoResponse for SetEntityPropertyErr {
         (status = 400, description = "Invalid request or entity type"),
         (status = 403, description = "No edit access to the entity"),
         (status = 404, description = "Entity or property not found"),
+        (status = 409, description = "Task transition blocked by dependencies", body = TaskDependencyReadiness),
         (status = 500, description = "Internal server error")
     ),
     tags = ["Properties"]

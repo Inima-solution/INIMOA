@@ -1,4 +1,4 @@
-use async_graphql::{Context, ID, Object};
+use async_graphql::{Context, ErrorExtensions, ID, Object};
 use entity_access::domain::models::{EditAccessLevel, ViewAccessLevel};
 use entity_access::domain::ports::EntityAccessService;
 use graphql_common::{GraphqlPropertyEntityType, parse_id};
@@ -406,7 +406,33 @@ where
                 value,
             )
             .await
-            .map_err(|err| async_graphql::Error::new(err.to_string()))?;
+            .map_err(|error| {
+                if let Some(properties::PropertiesErr::TaskTransitionBlockedWithReadiness(
+                    details,
+                )) = error.downcast_current_context::<properties::PropertiesErr>()
+                {
+                    let readiness = details.readiness();
+                    let readiness_state = match readiness.readiness {
+                        properties::domain::model::TaskReadiness::Ready => "ready",
+                        properties::domain::model::TaskReadiness::Blocked => "blocked",
+                    };
+                    let readiness = async_graphql::value!({
+                        "taskId": readiness.task_id.to_string(),
+                        "readiness": readiness_state,
+                        "dependsOnTaskIds": readiness.depends_on_task_ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                        "blockingTaskIds": readiness.blocking_task_ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                        "hasUnavailableDependencies": readiness.has_unavailable_dependencies,
+                    });
+                    return async_graphql::Error::new(
+                        "Task transition is blocked by dependencies",
+                    )
+                    .extend_with(|_, extensions| {
+                        extensions.set("code", "TASK_TRANSITION_BLOCKED");
+                        extensions.set("taskDependencyReadiness", readiness);
+                    });
+                }
+                async_graphql::Error::new(error.to_string())
+            })?;
 
         Ok(GraphqlProperty::new(property))
     }
@@ -510,6 +536,81 @@ mod tests {
             ));
             Ok(vec![self.property.clone()])
         }
+    }
+
+    struct BlockingWriter;
+
+    impl EntityPropertyWriter for BlockingWriter {
+        async fn set_entity_property(
+            &self,
+            _: model_entity::EntityType,
+            _: String,
+            _: Uuid,
+            _: Option<SetPropertyValue>,
+        ) -> Result<EntityPropertyWithDefinition, rootcause::Report> {
+            Err(rootcause::report!(
+                properties::PropertiesErr::TaskTransitionBlockedWithReadiness(
+                    properties::domain::model::TaskTransitionBlockedDetails::new(
+                        properties::domain::model::TaskDependencyReadiness {
+                            task_id: Uuid::from_u128(0xA01),
+                            readiness: properties::domain::model::TaskReadiness::Blocked,
+                            depends_on_task_ids: vec![Uuid::from_u128(0xA02)],
+                            blocking_task_ids: vec![Uuid::from_u128(0xA02)],
+                            has_unavailable_dependencies: true,
+                        },
+                    ),
+                )
+            )
+            .into())
+        }
+
+        async fn update_entity_property_options(
+            &self,
+            _: model_entity::EntityType,
+            _: String,
+            _: Vec<EntityPropertyOptionDelta>,
+        ) -> Result<Vec<EntityPropertyWithDefinition>, rootcause::Report> {
+            unreachable!("this test only invokes set_entity_property")
+        }
+    }
+
+    #[tokio::test]
+    async fn structured_task_transition_blocker_has_exact_graphql_extensions() {
+        let definition_id = Uuid::from_u128(0xA03);
+        let hidden_sentinel = Uuid::from_u128(0xA04);
+        let schema = Schema::build(
+            QueryRoot,
+            PropertiesMutationRoot::<BlockingWriter>::new(),
+            EmptySubscription,
+        )
+        .data(BlockingWriter)
+        .finish();
+        let response = schema
+            .execute(format!(
+                r#"mutation {{ setEntityProperty(input: {{ entityType: DOCUMENT, entityId: "task", propertyDefinitionId: "{definition_id}" }}) {{ id }} }}"#
+            ))
+            .await;
+
+        assert_eq!(response.errors.len(), 1);
+        let error = &response.errors[0];
+        assert_eq!(error.message, "Task transition is blocked by dependencies");
+        let extensions = error.extensions.as_ref().unwrap();
+        assert_eq!(
+            extensions.get("code"),
+            Some(&async_graphql::value!("TASK_TRANSITION_BLOCKED"))
+        );
+        assert_eq!(
+            extensions.get("taskDependencyReadiness"),
+            Some(&async_graphql::value!({
+                "taskId": Uuid::from_u128(0xA01).to_string(),
+                "readiness": "blocked",
+                "dependsOnTaskIds": [Uuid::from_u128(0xA02).to_string()],
+                "blockingTaskIds": [Uuid::from_u128(0xA02).to_string()],
+                "hasUnavailableDependencies": true,
+            }))
+        );
+        assert!(!format!("{extensions:?}").contains("redacted"));
+        assert!(!format!("{extensions:?}").contains(&hidden_sentinel.to_string()));
     }
 
     #[tokio::test]

@@ -97,6 +97,7 @@ impl ProjectTaskDependencyReadinessError {
             | PropertiesErr::ConflictingTeamLabel(_)
             | PropertiesErr::TaskDependencyCycle
             | PropertiesErr::TaskTransitionBlocked
+            | PropertiesErr::TaskTransitionBlockedWithReadiness(_)
             | PropertiesErr::Repo(_)
             | PropertiesErr::PermissionServiceNotConfigured
             | PropertiesErr::EntityPropertyNotFound => Self::Internal,

@@ -18,6 +18,7 @@ use uuid::Uuid;
 /// property or status option.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "inbound", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "ai_tools", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub enum TaskReadiness {
     /// Every direct, available dependency is completed (or there are none).
@@ -33,6 +34,7 @@ pub enum TaskReadiness {
 /// task identifiers.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "inbound", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "ai_tools", derive(schemars::JsonSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct TaskDependencyReadiness {
     /// The scoped, live source task identifier.
@@ -45,6 +47,27 @@ pub struct TaskDependencyReadiness {
     pub blocking_task_ids: Vec<Uuid>,
     /// Whether at least one stored dependency was malformed or unavailable.
     pub has_unavailable_dependencies: bool,
+}
+
+#[doc(hidden)]
+pub struct TaskTransitionBlockedDetails(Box<TaskDependencyReadiness>);
+
+impl TaskTransitionBlockedDetails {
+    pub fn new(readiness: TaskDependencyReadiness) -> Self {
+        Self(Box::new(readiness))
+    }
+    pub fn readiness(&self) -> &TaskDependencyReadiness {
+        &self.0
+    }
+    pub fn into_inner(self) -> TaskDependencyReadiness {
+        *self.0
+    }
+}
+
+impl std::fmt::Debug for TaskTransitionBlockedDetails {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("TaskTransitionBlockedDetails(<redacted>)")
+    }
 }
 
 /// Map an internal properties storage type to its canonical entity type.
@@ -284,6 +307,9 @@ pub enum TaskDependencyMutationOutcome {
     Unavailable,
     Cycle,
     Blocked,
+    /// The guarded write was rejected with the locked transaction snapshot.
+    /// This is internal-only until the domain has applied per-document access.
+    BlockedWithReadiness(TaskDependencyReadiness),
 }
 
 /// Result of an atomic canonical task Status mutation.
@@ -291,6 +317,9 @@ pub enum TaskDependencyMutationOutcome {
 pub enum TaskStatusMutationOutcome {
     Updated(EntityPropertyMutationSnapshot),
     Blocked,
+    /// The guarded write was rejected with the locked transaction snapshot.
+    /// This is internal-only until the domain has applied per-document access.
+    BlockedWithReadiness(TaskDependencyReadiness),
 }
 
 /// The reconciled final option ids for one property after a bulk update. The

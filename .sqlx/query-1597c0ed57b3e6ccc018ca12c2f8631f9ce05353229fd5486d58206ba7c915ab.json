@@ -1,0 +1,36 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "WITH candidate AS (SELECT id, ord FROM UNNEST($1::text[]) WITH ORDINALITY AS candidate(id, ord)) SELECT candidate.id AS candidate_id, live.id AS live_id, ep.values AS status_values FROM candidate LEFT JOIN (SELECT d.id FROM \"Document\" d JOIN document_sub_type dst ON dst.document_id=d.id AND dst.sub_type='task' WHERE d.\"deletedAt\" IS NULL AND d.\"projectId\" IS NOT DISTINCT FROM $2) live ON live.id=candidate.id LEFT JOIN entity_properties ep ON ep.entity_id=live.id AND ep.entity_type='TASK' AND ep.property_definition_id=$3 ORDER BY candidate.ord",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "candidate_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "live_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "status_values",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Text",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      true,
+      true
+    ]
+  },
+  "hash": "1597c0ed57b3e6ccc018ca12c2f8631f9ce05353229fd5486d58206ba7c915ab"
+}
