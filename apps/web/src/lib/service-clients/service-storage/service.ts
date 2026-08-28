@@ -158,6 +158,15 @@ const ProjectsSvc = new Svc('Projects Service')
     }).shape,
     throws: withFetchErrors(),
   })
+  .fn('getTaskDependencyReadiness', {
+    description: schemas.getProjectTaskDependencyReadinessParams.description!,
+    args: {
+      ...schemas.getProjectTaskDependencyReadinessParams.shape,
+      ...schemas.getProjectTaskDependencyReadinessBody.shape,
+    },
+    result: schemas.getProjectTaskDependencyReadinessResponse,
+    throws: withFetchErrors(),
+  })
   .fn('replaceOperations', {
     description: schemas.replaceProjectOperationsBody.description!,
     args: {

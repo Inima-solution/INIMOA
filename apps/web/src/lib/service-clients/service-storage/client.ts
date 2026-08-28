@@ -120,6 +120,7 @@ import type { GetProjectContentResponse } from './generated/schemas/getProjectCo
 import type { GetProjectOperations200 } from './generated/schemas/getProjectOperations200';
 import type { GetProjectOverview200 } from './generated/schemas/getProjectOverview200';
 import type { GetProjectResponse } from './generated/schemas/getProjectResponse';
+import type { GetProjectTaskDependencyReadiness200Item } from './generated/schemas/getProjectTaskDependencyReadiness200Item';
 import type { GetSystemSkillsHandler200 } from './generated/schemas/getSystemSkillsHandler200';
 import type { GithubPullRequestsResponse } from './generated/schemas/githubPullRequestsResponse';
 import type { GroupedSoupGroupPage } from './generated/schemas/groupedSoupGroupPage';
@@ -2277,6 +2278,22 @@ export const storageServiceClient = {
           method: 'GET',
         })
       ).map((result) => result.data);
+    },
+
+    async getTaskDependencyReadiness({
+      id,
+      taskIds,
+    }: {
+      id: string;
+      taskIds: string[];
+    }) {
+      return await dssFetch<GetProjectTaskDependencyReadiness200Item[]>(
+        `/v2/projects/${id}/task-dependency-readiness`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ taskIds }),
+        }
+      );
     },
 
     async replaceOperations({
