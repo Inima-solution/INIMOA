@@ -1544,6 +1544,79 @@ async fn task_status_transition_publishes_one_authoritative_snapshot() {
 }
 
 #[tokio::test]
+async fn task_status_transition_schedules_one_ready_event_per_committed_id() {
+    let task_id = Uuid::new_v4();
+    let ready_one = Uuid::new_v4();
+    let ready_two = Uuid::new_v4();
+    let snapshot = EntityPropertyMutationSnapshot {
+        property: entity_property_for_event(
+            Uuid::new_v4(),
+            &task_id.to_string(),
+            EntityType::Task,
+            SystemPropertyKey::STATUS_UUID,
+            event_timestamp(),
+        ),
+        value: Some(PropertyValue::SelectOption(vec![
+            StatusOption::COMPLETED_UUID,
+        ])),
+        previous_value: Some(PropertyValue::SelectOption(vec![
+            StatusOption::IN_PROGRESS_UUID,
+        ])),
+    };
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_document_sub_types().returning(move |_| {
+        Box::pin(async move { Ok(HashMap::from([(task_id, DocumentSubType::Task)])) })
+    });
+    repo.expect_get_property_definition()
+        .return_once(|_| Box::pin(async { Ok(Some(task_status_definition())) }));
+    repo.expect_count_valid_property_options()
+        .returning(|_, _| Box::pin(async { Ok(1) }));
+    repo.expect_transition_task_status()
+        .return_once(move |_, _| {
+            Box::pin(async move {
+                Ok(
+                    crate::domain::model::TaskStatusMutationOutcome::UpdatedWithReady {
+                        snapshot,
+                        ready_task_ids: vec![ready_one, ready_two],
+                    },
+                )
+            })
+        });
+    let broker = RecordingEventBroker::default();
+    let service = service_with_event_broker(repo, broker.clone());
+
+    service
+        .set_entity_property(
+            &edit_receipt(&task_id.to_string(), EntityType::Task),
+            SystemPropertyKey::STATUS_UUID,
+            Some(
+                models_properties::api::requests::SetPropertyValue::SelectOption {
+                    option_id: StatusOption::COMPLETED_UUID,
+                },
+            ),
+        )
+        .await
+        .unwrap();
+
+    let events = broker.events();
+    assert_eq!(events.len(), 3);
+    assert_eq!(events[0].envelope["event_type"], "entity_property.updated");
+    for (event, task_id) in events[1..].iter().zip([ready_one, ready_two]) {
+        assert_eq!(event.topic, "macro.properties");
+        assert_eq!(event.key, task_id.to_string());
+        assert_eq!(
+            event.envelope,
+            serde_json::json!({
+                "event_type": "task.ready",
+                "metadata": { "task_id": task_id },
+                "schema_version": 1,
+                "event_id": event.envelope["event_id"],
+            })
+        );
+    }
+}
+
+#[tokio::test]
 async fn task_status_transition_blocked_does_not_upsert_or_publish() {
     let task_id = Uuid::new_v4();
     let mut repo = MockPropertiesRepo::new();
@@ -1576,6 +1649,39 @@ async fn task_status_transition_blocked_does_not_upsert_or_publish() {
         .await;
 
     assert!(matches!(result, Err(PropertiesErr::TaskTransitionBlocked)));
+    assert!(broker.events().is_empty());
+}
+
+#[tokio::test]
+async fn task_status_repository_failure_publishes_no_event() {
+    let task_id = Uuid::new_v4();
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_document_sub_types().return_once(move |_| {
+        Box::pin(async move { Ok(HashMap::from([(task_id, DocumentSubType::Task)])) })
+    });
+    repo.expect_get_property_definition()
+        .return_once(|_| Box::pin(async { Ok(Some(task_status_definition())) }));
+    repo.expect_count_valid_property_options()
+        .return_once(|_, _| Box::pin(async { Ok(1) }));
+    repo.expect_transition_task_status()
+        .return_once(|_, _| Box::pin(async { Err(anyhow!("status transaction failed")) }));
+    let broker = RecordingEventBroker::default();
+    let service = service_with_event_broker(repo, broker.clone());
+
+    assert!(
+        service
+            .set_entity_property(
+                &edit_receipt(&task_id.to_string(), EntityType::Task),
+                SystemPropertyKey::STATUS_UUID,
+                Some(
+                    models_properties::api::requests::SetPropertyValue::SelectOption {
+                        option_id: StatusOption::COMPLETED_UUID,
+                    }
+                ),
+            )
+            .await
+            .is_err()
+    );
     assert!(broker.events().is_empty());
 }
 
@@ -2055,6 +2161,139 @@ async fn depends_on_updated_publishes_authoritative_snapshot_event() {
             "updated_at": updated_at,
         })
     );
+}
+
+#[tokio::test]
+async fn depends_on_ready_transition_schedules_property_then_task_ready() {
+    let task_id = Uuid::new_v4();
+    let dependency_id = Uuid::new_v4();
+    let entity_property_id = Uuid::new_v4();
+    let value = PropertyValue::EntityRef(vec![models_properties::EntityReference::new(
+        dependency_id.to_string(),
+        EntityType::Task,
+    )]);
+    let snapshot = EntityPropertyMutationSnapshot {
+        property: entity_property_for_event(
+            entity_property_id,
+            &task_id.to_string(),
+            EntityType::Task,
+            SystemPropertyKey::DEPENDS_ON_UUID,
+            event_timestamp(),
+        ),
+        value: Some(value.clone()),
+        previous_value: None,
+    };
+    let mut repo = MockPropertiesRepo::new();
+    expect_task_storage(&mut repo, task_id);
+    repo.expect_get_property_definition()
+        .return_once(|_| Box::pin(async { Ok(Some(depends_on_definition())) }));
+    repo.expect_replace_task_dependencies()
+        .return_once(move |_, _| {
+            Box::pin(async move {
+                Ok(
+                    crate::domain::model::TaskDependencyMutationOutcome::UpdatedWithReady {
+                        snapshot,
+                        ready_task_ids: vec![task_id],
+                    },
+                )
+            })
+        });
+    let broker = RecordingEventBroker::default();
+    let service = PropertiesServiceImpl::new(
+        repo,
+        Some(dependency_view_permission_service()),
+        None::<MockNotificationService>,
+    )
+    .with_event_broker(broker.clone());
+
+    service
+        .set_entity_property(
+            &edit_receipt(&task_id.to_string(), EntityType::Task),
+            SystemPropertyKey::DEPENDS_ON_UUID,
+            Some(
+                models_properties::api::requests::SetPropertyValue::MultiEntityReference {
+                    references: vec![models_properties::EntityReference::new(
+                        dependency_id.to_string(),
+                        EntityType::Task,
+                    )],
+                },
+            ),
+        )
+        .await
+        .unwrap();
+
+    let events = broker.events();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].topic, "macro.properties");
+    assert_eq!(events[0].key, task_id.to_string());
+    assert_eq!(events[0].envelope["event_type"], "entity_property.updated");
+    assert_eq!(events[0].envelope["schema_version"], 1);
+    assert_eq!(
+        events[0].envelope["metadata"],
+        serde_json::json!({
+            "entity_property_id": entity_property_id,
+            "entity_id": task_id,
+            "entity_type": "TASK",
+            "property_definition_id": SystemPropertyKey::DEPENDS_ON_UUID,
+            "actor_user_id": caller_user_id(),
+            "value": value,
+            "previous_value": null,
+            "updated_at": event_timestamp(),
+        })
+    );
+    assert_eq!(events[1].topic, "macro.properties");
+    assert_eq!(events[1].key, task_id.to_string());
+    assert_eq!(
+        events[1].envelope,
+        serde_json::json!({
+            "event_type": "task.ready",
+            "metadata": { "task_id": task_id },
+            "schema_version": 1,
+            "event_id": events[1].envelope["event_id"],
+        })
+    );
+}
+
+#[tokio::test]
+async fn depends_on_repository_failure_publishes_no_event() {
+    let task_id = Uuid::new_v4();
+    let dependency_id = Uuid::new_v4();
+    let mut repo = MockPropertiesRepo::new();
+    expect_task_storage(&mut repo, task_id);
+    repo.expect_get_property_definition()
+        .return_once(|_| Box::pin(async { Ok(Some(depends_on_definition())) }));
+    repo.expect_replace_task_dependencies()
+        .return_once(|_, _| Box::pin(async { Err(anyhow!("dependency transaction failed")) }));
+    let broker = RecordingEventBroker::default();
+    let service = PropertiesServiceImpl::new(
+        repo,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    )
+    .with_event_broker(broker.clone());
+    let internal = EditReceipt::dangerously_assert_internal_user(
+        &task_id.to_string(),
+        AccessEntityType::Document,
+    );
+
+    assert!(
+        service
+            .set_entity_property(
+                &internal,
+                SystemPropertyKey::DEPENDS_ON_UUID,
+                Some(
+                    models_properties::api::requests::SetPropertyValue::MultiEntityReference {
+                        references: vec![models_properties::EntityReference::new(
+                            dependency_id.to_string(),
+                            EntityType::Task,
+                        )],
+                    },
+                ),
+            )
+            .await
+            .is_err()
+    );
+    assert!(broker.events().is_empty());
 }
 
 #[tokio::test]

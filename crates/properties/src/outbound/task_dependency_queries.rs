@@ -28,6 +28,17 @@ pub async fn replace_task_dependencies(
     let Some(state) = load_task_guard_state(&mut tx, task_id).await? else {
         return Ok(TaskDependencyMutationOutcome::Unavailable);
     };
+    // Compare the persisted source against the fully validated replacement
+    // while the shared lock makes both snapshots one serializable decision.
+    let old_readiness = match &state.dependencies {
+        Ok(ids) => {
+            task_dependency_readiness_snapshot(&mut tx, task_id, state.project_id.as_deref(), ids)
+                .await?
+        }
+        Err(()) => {
+            crate::outbound::task_status_transition_queries::malformed_dependency_readiness(task_id)
+        }
+    };
     let mut locked_ids = dependency_ids
         .iter()
         .map(Uuid::to_string)
@@ -57,17 +68,17 @@ pub async fn replace_task_dependencies(
         return Ok(TaskDependencyMutationOutcome::Unavailable);
     }
 
+    let candidate_readiness = task_dependency_readiness_snapshot(
+        &mut tx,
+        task_id,
+        state.project_id.as_deref(),
+        dependency_ids,
+    )
+    .await?;
     if requires_readiness(state.status) {
-        let readiness = task_dependency_readiness_snapshot(
-            &mut tx,
-            task_id,
-            state.project_id.as_deref(),
-            dependency_ids,
-        )
-        .await?;
-        if readiness.readiness == crate::domain::model::TaskReadiness::Blocked {
+        if candidate_readiness.readiness == crate::domain::model::TaskReadiness::Blocked {
             return Ok(TaskDependencyMutationOutcome::BlockedWithReadiness(
-                readiness,
+                candidate_readiness,
             ));
         }
     }
@@ -170,7 +181,16 @@ pub async fn replace_task_dependencies(
         previous_value,
     };
     tx.commit().await?;
-    Ok(TaskDependencyMutationOutcome::Updated(snapshot))
+    if old_readiness.readiness == crate::domain::model::TaskReadiness::Blocked
+        && candidate_readiness.readiness == crate::domain::model::TaskReadiness::Ready
+    {
+        Ok(TaskDependencyMutationOutcome::UpdatedWithReady {
+            snapshot,
+            ready_task_ids: vec![task_id],
+        })
+    } else {
+        Ok(TaskDependencyMutationOutcome::Updated(snapshot))
+    }
 }
 
 #[cfg(test)]

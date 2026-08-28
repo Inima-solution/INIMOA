@@ -59,6 +59,7 @@ use properties::domain::events::{
     EntityPropertiesClearedMetadata, EntityPropertyDeletedMetadata, EntityPropertyUpdatedMetadata,
     PropertyCreatedMetadata, PropertyDeletedMetadata, PropertyOptionCreatedMetadata,
     PropertyOptionDeletedMetadata, PropertyOptionUpdatedMetadata, PropertyTopicEvent,
+    TaskReadyMetadata,
 };
 use uuid::Uuid;
 
@@ -1251,6 +1252,15 @@ fn property_event_cases() -> Vec<(PropertyTopicEvent, PropertyEventDescription<'
                 event_type: "entity_properties.cleared",
             },
         ),
+        (
+            PropertyTopicEvent::TaskReady(TaskReadyMetadata {
+                task_id: Uuid::now_v7(),
+            }),
+            PropertyEventDescription {
+                action: PropertyIndexAction::Ignore,
+                event_type: "task.ready",
+            },
+        ),
     ]
 }
 
@@ -1461,7 +1471,7 @@ fn maps_all_project_lifecycle_events_to_reconciliation_actions() {
 #[test]
 fn maps_all_property_lifecycle_events_to_index_actions() {
     let cases = property_event_cases();
-    assert_eq!(cases.len(), 8);
+    assert_eq!(cases.len(), 9);
 
     for (event, expected) in cases {
         let serialized = serde_json::to_value(&event).expect("serializable property event");

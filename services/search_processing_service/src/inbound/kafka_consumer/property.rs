@@ -67,6 +67,10 @@ pub(super) fn describe_property_event(event: &PropertyTopicEvent) -> PropertyEve
             },
             event_type: "entity_properties.cleared",
         },
+        PropertyTopicEvent::TaskReady(_) => PropertyEventDescription {
+            action: PropertyIndexAction::Ignore,
+            event_type: "task.ready",
+        },
     }
 }
 

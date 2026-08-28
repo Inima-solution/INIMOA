@@ -406,3 +406,96 @@ async fn guarded_status_reports_mixed_live_dependencies_in_stored_order(
     );
     Ok(())
 }
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("task_dependencies_seed"))
+)]
+async fn completion_signals_distinct_final_ready_live_dependents_once(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let predecessor = Uuid::new_v4();
+    let ready = Uuid::new_v4();
+    let explicit_null = Uuid::new_v4();
+    let blocked = Uuid::new_v4();
+    let incomplete = Uuid::new_v4();
+    let deleted_case = Uuid::new_v4();
+    let deleted_dependency = Uuid::new_v4();
+    let missing_case = Uuid::new_v4();
+    let non_task_case = Uuid::new_v4();
+    let non_task_dependency = Uuid::new_v4();
+    let cross_project_case = Uuid::new_v4();
+    let cross_project_dependency = Uuid::new_v4();
+    let malformed_top_level = Uuid::new_v4();
+    let self_reference = Uuid::new_v4();
+    let message_reference = Uuid::new_v4();
+    for id in [
+        predecessor,
+        ready,
+        explicit_null,
+        blocked,
+        incomplete,
+        deleted_case,
+        deleted_dependency,
+        missing_case,
+        non_task_case,
+        cross_project_case,
+        malformed_top_level,
+        self_reference,
+        message_reference,
+    ] {
+        task(&pool, id, Some("task-dependencies-project-a"), true).await;
+    }
+    task(
+        &pool,
+        non_task_dependency,
+        Some("task-dependencies-project-a"),
+        false,
+    )
+    .await;
+    task(
+        &pool,
+        cross_project_dependency,
+        Some("task-dependencies-project-b"),
+        true,
+    )
+    .await;
+    sqlx::query("UPDATE \"Document\" SET \"deletedAt\" = NOW() WHERE id = $1")
+        .bind(deleted_dependency.to_string())
+        .execute(&pool)
+        .await?;
+    status(&pool, predecessor, Some(StatusOption::NotStarted)).await;
+    status(&pool, incomplete, Some(StatusOption::InProgress)).await;
+    depends(&pool, ready, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(predecessor.to_string(), EntityType::Task)]})).await;
+    depends(&pool, explicit_null, serde_json::json!({"type":"EntityReference","value":[{"entity_id": predecessor, "entity_type":"TASK", "specific_message_id": null}]})).await;
+    depends(&pool, blocked, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(predecessor.to_string(), EntityType::Task), EntityReference::new(incomplete.to_string(), EntityType::Task)]})).await;
+    depends(&pool, deleted_case, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(predecessor.to_string(), EntityType::Task), EntityReference::new(deleted_dependency.to_string(), EntityType::Task)]})).await;
+    depends(&pool, missing_case, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(predecessor.to_string(), EntityType::Task), EntityReference::new(Uuid::new_v4().to_string(), EntityType::Task)]})).await;
+    depends(&pool, non_task_case, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(predecessor.to_string(), EntityType::Task), EntityReference::new(non_task_dependency.to_string(), EntityType::Task)]})).await;
+    depends(&pool, cross_project_case, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(predecessor.to_string(), EntityType::Task), EntityReference::new(cross_project_dependency.to_string(), EntityType::Task)]})).await;
+    sqlx::query("ALTER TABLE entity_properties DROP CONSTRAINT check_values_structure")
+        .execute(&pool)
+        .await?;
+    depends(&pool, malformed_top_level, serde_json::json!({"type":"String","value":[EntityReference::new(predecessor.to_string(), EntityType::Task)]})).await;
+    depends(&pool, self_reference, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(predecessor.to_string(), EntityType::Task), EntityReference::new(self_reference.to_string(), EntityType::Task)]})).await;
+    depends(&pool, message_reference, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(predecessor.to_string(), EntityType::Task), EntityReference::with_message_id(ready.to_string(), EntityType::Task, Uuid::new_v4())]})).await;
+
+    let TaskStatusMutationOutcome::UpdatedWithReady { ready_task_ids, .. } =
+        transition_task_status(&pool, predecessor, Some(StatusOption::Completed)).await?
+    else {
+        panic!("expected final-ready fanout");
+    };
+    let mut expected = vec![ready, explicit_null];
+    expected.sort_unstable();
+    assert_eq!(ready_task_ids, expected);
+    // Retry and leaving Completed are ordinary writes, never readiness signals.
+    assert!(matches!(
+        transition_task_status(&pool, predecessor, Some(StatusOption::Completed)).await?,
+        TaskStatusMutationOutcome::Updated(_)
+    ));
+    assert!(matches!(
+        transition_task_status(&pool, predecessor, Some(StatusOption::NotStarted)).await?,
+        TaskStatusMutationOutcome::Updated(_)
+    ));
+    Ok(())
+}

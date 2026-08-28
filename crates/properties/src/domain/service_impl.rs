@@ -37,6 +37,7 @@ use super::events::{
     EntityPropertiesClearedMetadata, EntityPropertyDeletedMetadata, EntityPropertyUpdatedMetadata,
     PropertyCreatedMetadata, PropertyDeletedMetadata, PropertyMacroEvent,
     PropertyOptionCreatedMetadata, PropertyOptionDeletedMetadata, PropertyOptionUpdatedMetadata,
+    TaskReadyMetadata,
 };
 use super::metadata;
 use super::model::{
@@ -151,6 +152,15 @@ where
         drop(self.event_broker.send_event(&event).inspect_err(|error| {
             tracing::error!(error = ?error, "failed to schedule property event");
         }));
+    }
+
+    /// Schedule one best-effort readiness notification after its mutation has committed.
+    fn publish_task_ready_events(&self, ready_task_ids: impl IntoIterator<Item = Uuid>) {
+        for task_id in ready_task_ids {
+            self.publish_property_event(PropertyMacroEvent::task_ready(TaskReadyMetadata {
+                task_id,
+            }));
+        }
     }
 
     /// Build a creation event from the authoritative persisted definition.
@@ -639,19 +649,20 @@ where
                     "This property cannot be attached to this entity type".to_string(),
                 ));
             }
-            let snapshot = self
+            let receipt = self
                 .handle_task_dependencies_property(access, value)
                 .await?;
             self.publish_property_event(Self::entity_property_updated_event(
-                &snapshot.property,
-                &snapshot.value,
-                &snapshot.previous_value,
+                &receipt.snapshot.property,
+                &receipt.snapshot.value,
+                &receipt.snapshot.previous_value,
                 access,
             ));
+            self.publish_task_ready_events(receipt.ready_task_ids);
             return Ok(EntityPropertyWithDefinition {
-                property: snapshot.property,
+                property: receipt.snapshot.property,
                 definition: property_definition,
-                value: snapshot.value,
+                value: receipt.snapshot.value,
                 options: None,
             });
         }
@@ -721,13 +732,17 @@ where
                     ));
                 }
             };
-            let snapshot = match self
+            let (snapshot, ready_task_ids) = match self
                 .repository
                 .transition_task_status(task_id, status)
                 .await
                 .map_err(anyhow::Error::from)?
             {
-                TaskStatusMutationOutcome::Updated(snapshot) => snapshot,
+                TaskStatusMutationOutcome::Updated(snapshot) => (snapshot, Vec::new()),
+                TaskStatusMutationOutcome::UpdatedWithReady {
+                    snapshot,
+                    ready_task_ids,
+                } => (snapshot, ready_task_ids),
                 TaskStatusMutationOutcome::Blocked => {
                     return Err(PropertiesErr::TaskTransitionBlocked);
                 }
@@ -743,6 +758,7 @@ where
                 &snapshot.previous_value,
                 access,
             ));
+            self.publish_task_ready_events(ready_task_ids);
             return Ok(EntityPropertyWithDefinition {
                 property: snapshot.property,
                 definition: property_definition,

@@ -132,7 +132,8 @@ impl ActivitySource for PropertyTopicEvent {
             | PropertyTopicEvent::Deleted(_)
             | PropertyTopicEvent::OptionCreated(_)
             | PropertyTopicEvent::OptionUpdated(_)
-            | PropertyTopicEvent::OptionDeleted(_) => Ingest::Ignore,
+            | PropertyTopicEvent::OptionDeleted(_)
+            | PropertyTopicEvent::TaskReady(_) => Ingest::Ignore,
         }
     }
 }

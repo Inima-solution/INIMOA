@@ -382,7 +382,8 @@ fn patches_from_property_event(event: &PropertyTopicEvent) -> Vec<SoupRealtimePa
         | PropertyTopicEvent::Deleted(_)
         | PropertyTopicEvent::OptionCreated(_)
         | PropertyTopicEvent::OptionUpdated(_)
-        | PropertyTopicEvent::OptionDeleted(_) => Vec::new(),
+        | PropertyTopicEvent::OptionDeleted(_)
+        | PropertyTopicEvent::TaskReady(_) => Vec::new(),
     }
 }
 

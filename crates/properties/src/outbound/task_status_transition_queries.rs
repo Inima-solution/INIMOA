@@ -125,6 +125,88 @@ fn parse_reference(r: EntityReference, source: Uuid) -> Result<Uuid, ()> {
     let id = Uuid::parse_str(&r.entity_id).map_err(|_| ())?;
     if id == source { Err(()) } else { Ok(id) }
 }
+
+/// Return live same-project tasks that directly depend on `predecessor_id` and
+/// are ready after the predecessor's Status upsert. The caller holds TASKDEPS,
+/// so this one reverse-fanout read observes the final dependency/status state.
+async fn ready_dependents_after_completion(
+    tx: &mut Transaction<'_, Postgres>,
+    predecessor_id: Uuid,
+    project_id: Option<&str>,
+) -> anyhow::Result<Vec<Uuid>> {
+    let ids = sqlx::query_scalar!(
+        r#"
+        WITH dependents AS (
+            SELECT DISTINCT d.id, depends_ep.values
+            FROM "Document" d
+            JOIN document_sub_type dst
+              ON dst.document_id = d.id AND dst.sub_type = 'task'
+            JOIN entity_properties depends_ep
+              ON depends_ep.entity_id = d.id
+             AND depends_ep.entity_type = 'TASK'
+             AND depends_ep.property_definition_id = $3
+            CROSS JOIN LATERAL jsonb_array_elements(
+                CASE WHEN jsonb_typeof(depends_ep.values->'value') = 'array'
+                    THEN depends_ep.values->'value' ELSE '[]'::jsonb END
+            ) predecessor_ref
+            WHERE d."deletedAt" IS NULL
+              AND d."projectId" IS NOT DISTINCT FROM $2
+              AND jsonb_typeof(depends_ep.values) = 'object'
+              AND depends_ep.values->>'type' = 'EntityReference'
+              AND jsonb_typeof(depends_ep.values->'value') = 'array'
+              AND depends_ep.values @> jsonb_build_object(
+                    'value', jsonb_build_array(jsonb_build_object(
+                        'entity_id', $1::text, 'entity_type', 'TASK'
+                    ))
+                  )
+              AND predecessor_ref->>'entity_type' = 'TASK'
+              AND predecessor_ref->>'entity_id' = $1
+        )
+        SELECT dependents.id
+        FROM dependents
+        WHERE NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements(
+                CASE WHEN jsonb_typeof(dependents.values->'value') = 'array'
+                    THEN dependents.values->'value' ELSE '[]'::jsonb END
+            ) dependency_ref
+            LEFT JOIN "Document" predecessor
+              ON dependency_ref->>'entity_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+             AND predecessor.id = dependency_ref->>'entity_id'
+             AND predecessor."deletedAt" IS NULL
+             AND predecessor."projectId" IS NOT DISTINCT FROM $2
+            LEFT JOIN document_sub_type predecessor_sub_type
+              ON predecessor_sub_type.document_id = predecessor.id
+             AND predecessor_sub_type.sub_type = 'task'
+            LEFT JOIN entity_properties predecessor_status
+              ON predecessor_status.entity_id = predecessor.id
+             AND predecessor_status.entity_type = 'TASK'
+             AND predecessor_status.property_definition_id = $4
+            WHERE jsonb_typeof(dependency_ref) <> 'object'
+               OR dependency_ref->>'entity_type' IS DISTINCT FROM 'TASK'
+               OR COALESCE(dependency_ref->'specific_message_id' <> 'null'::jsonb, false)
+               OR dependency_ref->>'entity_id' = dependents.id
+               OR predecessor.id IS NULL
+               OR predecessor_sub_type.document_id IS NULL
+               OR predecessor_status.values IS DISTINCT FROM jsonb_build_object(
+                    'type', 'SelectOption', 'value', jsonb_build_array($5::uuid)
+                  )
+        )
+        ORDER BY dependents.id
+        "#,
+        predecessor_id.to_string(),
+        project_id,
+        SystemPropertyKey::DEPENDS_ON_UUID,
+        SystemPropertyKey::STATUS_UUID,
+        StatusOption::COMPLETED_UUID,
+    )
+    .fetch_all(&mut **tx)
+    .await?;
+    ids.into_iter()
+        .map(|id| Uuid::parse_str(&id).map_err(anyhow::Error::from))
+        .collect()
+}
+
 pub async fn transition_task_status(
     pool: &Pool<Postgres>,
     task_id: Uuid,
@@ -182,8 +264,22 @@ pub async fn transition_task_status(
         value,
         previous_value,
     };
+    let ready_task_ids = if status == Some(StatusOption::Completed)
+        && state.status != Some(StatusOption::Completed)
+    {
+        ready_dependents_after_completion(&mut tx, task_id, state.project_id.as_deref()).await?
+    } else {
+        Vec::new()
+    };
     tx.commit().await?;
-    Ok(TaskStatusMutationOutcome::Updated(snapshot))
+    if ready_task_ids.is_empty() {
+        Ok(TaskStatusMutationOutcome::Updated(snapshot))
+    } else {
+        Ok(TaskStatusMutationOutcome::UpdatedWithReady {
+            snapshot,
+            ready_task_ids,
+        })
+    }
 }
 #[cfg(test)]
 mod test;

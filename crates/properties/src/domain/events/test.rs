@@ -9,6 +9,7 @@ const OPTION_ID: &str = "8a123d67-074f-4666-b3aa-214f99e7eb85";
 const ENTITY_PROPERTY_ID: &str = "bb672788-40c1-47d1-a2e1-565d20fe40ef";
 const TEAM_ID: &str = "94badb72-b7f7-46e4-89fb-497527836152";
 const ENTITY_ID: &str = "document-bare-id";
+const TASK_ID: &str = "ec85c8e0-3699-4f3a-a3d6-79895f7f5de0";
 const EVENT_ID: &str = "01998a30-1a2b-7c3d-9e4f-5a6b7c8d9e0f";
 const CREATED_AT: &str = "2026-07-27T18:30:00Z";
 const UPDATED_AT: &str = "2026-07-27T18:45:00Z";
@@ -221,6 +222,15 @@ fn topic_events(
                 }
             }),
         ),
+        (
+            PropertyTopicEvent::TaskReady(TaskReadyMetadata {
+                task_id: uuid(TASK_ID),
+            }),
+            json!({
+                "event_type": "task.ready",
+                "metadata": { "task_id": TASK_ID }
+            }),
+        ),
     ]
 }
 
@@ -260,6 +270,9 @@ fn macro_events() -> Vec<(PropertyMacroEvent, &'static str)> {
                 PropertyMacroEvent::entity_properties_cleared(metadata),
                 ENTITY_ID,
             ),
+            PropertyTopicEvent::TaskReady(metadata) => {
+                (PropertyMacroEvent::task_ready(metadata), TASK_ID)
+            }
         })
         .collect()
 }

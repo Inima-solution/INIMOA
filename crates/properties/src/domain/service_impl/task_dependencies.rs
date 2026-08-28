@@ -17,6 +17,12 @@ use crate::domain::service::ProjectWorkReadReceipt;
 use crate::domain::service_impl::PropertiesServiceImpl;
 use macro_event_broker::MacroEventBroker;
 
+#[derive(Debug)]
+pub(crate) struct TaskDependencyMutationReceipt {
+    pub(crate) snapshot: crate::domain::model::EntityPropertyMutationSnapshot,
+    pub(crate) ready_task_ids: Vec<Uuid>,
+}
+
 impl<R, P, N, B> PropertiesServiceImpl<R, P, N, B>
 where
     R: PropertiesRepo,
@@ -71,7 +77,7 @@ where
         &self,
         access: &EditReceipt,
         value: Option<SetPropertyValue>,
-    ) -> Result<crate::domain::model::EntityPropertyMutationSnapshot, PropertiesErr> {
+    ) -> Result<TaskDependencyMutationReceipt, PropertiesErr> {
         let task_id = Uuid::parse_str(access.entity_id()).map_err(|_| malformed_dependencies())?;
         let dependency_ids = parse_dependencies(task_id, value)?;
 
@@ -101,7 +107,17 @@ where
             .await
             .map_err(anyhow::Error::from)?
         {
-            TaskDependencyMutationOutcome::Updated(snapshot) => Ok(snapshot),
+            TaskDependencyMutationOutcome::Updated(snapshot) => Ok(TaskDependencyMutationReceipt {
+                snapshot,
+                ready_task_ids: Vec::new(),
+            }),
+            TaskDependencyMutationOutcome::UpdatedWithReady {
+                snapshot,
+                ready_task_ids,
+            } => Ok(TaskDependencyMutationReceipt {
+                snapshot,
+                ready_task_ids,
+            }),
             TaskDependencyMutationOutcome::Unavailable => {
                 Err(PropertiesErr::TaskDependenciesUnavailable)
             }

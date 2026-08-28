@@ -24,6 +24,7 @@ use macro_user_id::user_id::MacroUserIdStr;
 use projects::domain::events::{ProjectDeletedMetadata, ProjectTopicEvent};
 use properties::domain::events::{
     EntityPropertiesClearedMetadata, EntityPropertyDeletedMetadata, EntityPropertyUpdatedMetadata,
+    TaskReadyMetadata,
 };
 use uuid::Uuid;
 
@@ -307,6 +308,16 @@ fn task_property_updates_map_to_document_updates() {
     assert!(matches!(patches[0].patch, Patch::Updated(_)));
     assert_eq!(patch_entity(&patches[0]).entity_type, EntityType::Document);
     assert_eq!(patch_entity(&patches[0]).entity_id, DOCUMENT_ID);
+}
+
+#[test]
+fn task_ready_does_not_patch_soup() {
+    assert!(
+        patches_from_property_event(&PropertyTopicEvent::TaskReady(TaskReadyMetadata {
+            task_id: Uuid::now_v7(),
+        },))
+        .is_empty()
+    );
 }
 
 #[test]

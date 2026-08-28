@@ -177,6 +177,16 @@ pub struct EntityPropertiesClearedMetadata {
     pub on_behalf_of: Option<MacroUserIdStr<'static>>,
 }
 
+/// Metadata for [`PropertyTopicEvent::TaskReady`].
+///
+/// This deliberately identifies only the task whose readiness changed. Consumers
+/// must reread authoritative state instead of relying on event payload details.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskReadyMetadata {
+    /// Identifier of the task that is now ready.
+    pub task_id: Uuid,
+}
+
 /// Property mutation events published to [`MacroPropertiesTopic`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "event_type", content = "metadata")]
@@ -205,6 +215,9 @@ pub enum PropertyTopicEvent {
     /// All property values on an entity were cleared.
     #[serde(rename = "entity_properties.cleared")]
     EntityPropertiesCleared(EntityPropertiesClearedMetadata),
+    /// A task changed from blocked to ready according to canonical dependencies.
+    #[serde(rename = "task.ready")]
+    TaskReady(TaskReadyMetadata),
 }
 
 impl TopicEvent for PropertyTopicEvent {
@@ -281,6 +294,14 @@ impl PropertyMacroEvent {
         Self::new(
             metadata.entity_id.clone(),
             PropertyTopicEvent::EntityPropertiesCleared(metadata),
+        )
+    }
+
+    /// Build a task-ready event keyed by the bare task id.
+    pub fn task_ready(metadata: TaskReadyMetadata) -> Self {
+        Self::new(
+            metadata.task_id.to_string(),
+            PropertyTopicEvent::TaskReady(metadata),
         )
     }
 

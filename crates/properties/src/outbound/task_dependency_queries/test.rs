@@ -116,9 +116,54 @@ async fn replacement_is_canonical_ordered_and_clears(pool: Pool<Postgres>) -> an
         matches!(depends(&pool, source).await, Some(PropertyValue::EntityRef(refs)) if refs.iter().map(|r| r.entity_id.as_str()).collect::<Vec<_>>() == vec![first.to_string()])
     );
     assert!(
-        matches!(replace_task_dependencies(&pool, source, &[]).await?, TaskDependencyMutationOutcome::Updated(snapshot) if snapshot.value.is_none())
+        matches!(replace_task_dependencies(&pool, source, &[]).await?, TaskDependencyMutationOutcome::UpdatedWithReady { snapshot, ready_task_ids } if snapshot.value.is_none() && ready_task_ids == [source])
     );
     assert_eq!(depends(&pool, source).await, None);
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("task_dependencies_seed"))
+)]
+async fn replacement_signals_only_blocked_to_ready_from_candidate_dependencies(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let source = Uuid::new_v4();
+    let incomplete = Uuid::new_v4();
+    let completed = Uuid::new_v4();
+    for id in [source, incomplete, completed] {
+        task(&pool, id, None, true).await;
+    }
+    store_status(
+        &pool,
+        incomplete,
+        system_properties::StatusOption::InProgress,
+    )
+    .await;
+    store_status(&pool, completed, system_properties::StatusOption::Completed).await;
+    assert!(matches!(
+        replace_task_dependencies(&pool, source, &[incomplete]).await?,
+        TaskDependencyMutationOutcome::Updated(_)
+    ));
+    assert!(matches!(
+        replace_task_dependencies(&pool, source, &[completed]).await?,
+        TaskDependencyMutationOutcome::UpdatedWithReady { ref ready_task_ids, .. }
+            if ready_task_ids == &[source]
+    ));
+    // The candidate, rather than any stale predecessor id, controls the signal.
+    assert!(matches!(
+        replace_task_dependencies(&pool, source, &[completed]).await?,
+        TaskDependencyMutationOutcome::Updated(_)
+    ));
+    assert!(matches!(
+        replace_task_dependencies(&pool, source, &[incomplete]).await?,
+        TaskDependencyMutationOutcome::Updated(_)
+    ));
+    assert!(matches!(
+        replace_task_dependencies(&pool, source, &[incomplete]).await?,
+        TaskDependencyMutationOutcome::Updated(_)
+    ));
     Ok(())
 }
 
@@ -281,6 +326,72 @@ async fn null_projects_match_and_concurrent_reverse_edges_leave_a_dag(
             .filter(|outcome| matches!(outcome, TaskDependencyMutationOutcome::Cycle))
             .count(),
         1
+    );
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("task_dependencies_seed"))
+)]
+async fn completion_and_dependency_replacement_report_one_ready_outcome_under_taskdeps(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let predecessor = Uuid::new_v4();
+    let dependent = Uuid::new_v4();
+    for id in [predecessor, dependent] {
+        task(&pool, id, None, true).await;
+    }
+    store_status(
+        &pool,
+        predecessor,
+        system_properties::StatusOption::NotStarted,
+    )
+    .await;
+    replace_task_dependencies(&pool, dependent, &[predecessor]).await?;
+
+    let barrier = Arc::new(Barrier::new(2));
+    let completion = {
+        let barrier = barrier.clone();
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            barrier.wait().await;
+            transition_task_status(
+                &pool,
+                predecessor,
+                Some(system_properties::StatusOption::Completed),
+            )
+            .await
+        })
+    };
+    let replacement = {
+        let barrier = barrier.clone();
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            barrier.wait().await;
+            replace_task_dependencies(&pool, dependent, &[]).await
+        })
+    };
+    let completion = completion.await??;
+    let replacement = replacement.await??;
+    let status_ready = match completion {
+        crate::domain::model::TaskStatusMutationOutcome::UpdatedWithReady {
+            ready_task_ids,
+            ..
+        } => ready_task_ids,
+        _ => Vec::new(),
+    };
+    let dependency_ready = match replacement {
+        TaskDependencyMutationOutcome::UpdatedWithReady { ready_task_ids, .. } => ready_task_ids,
+        _ => Vec::new(),
+    };
+    assert_eq!(status_ready.len() + dependency_ready.len(), 1);
+    assert_eq!(
+        status_ready
+            .into_iter()
+            .chain(dependency_ready)
+            .collect::<Vec<_>>(),
+        vec![dependent]
     );
     Ok(())
 }

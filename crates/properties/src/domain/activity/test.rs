@@ -8,7 +8,7 @@ use macro_event_broker::Event;
 use models_properties::service::property_value::PropertyValue;
 
 use super::*;
-use crate::domain::events::EntityPropertyUpdatedMetadata;
+use crate::domain::events::{EntityPropertyUpdatedMetadata, TaskReadyMetadata};
 
 fn user(id: &str) -> MacroUserIdStr<'static> {
     MacroUserIdStr::try_from(id.to_string()).expect("valid user id")
@@ -102,4 +102,12 @@ fn delegated_property_update_keeps_the_user_as_subject() {
         "bot|00000000-0000-0000-0000-000000005759"
     );
     assert_eq!(activities[0].subject_id, "macro|owner@example.com");
+}
+
+#[test]
+fn task_ready_is_not_activity() {
+    let event = envelope(PropertyTopicEvent::TaskReady(TaskReadyMetadata {
+        task_id: Uuid::now_v7(),
+    }));
+    assert_eq!(event.event.ingest(event.event_id), Ingest::Ignore);
 }

@@ -304,6 +304,11 @@ pub struct EntityPropertyMutationSnapshot {
 #[derive(Debug, Clone)]
 pub enum TaskDependencyMutationOutcome {
     Updated(EntityPropertyMutationSnapshot),
+    /// The replacement committed and changed the source task from blocked to ready.
+    UpdatedWithReady {
+        snapshot: EntityPropertyMutationSnapshot,
+        ready_task_ids: Vec<Uuid>,
+    },
     Unavailable,
     Cycle,
     Blocked,
@@ -316,6 +321,11 @@ pub enum TaskDependencyMutationOutcome {
 #[derive(Debug, Clone)]
 pub enum TaskStatusMutationOutcome {
     Updated(EntityPropertyMutationSnapshot),
+    /// The status write committed and made these dependents ready.
+    UpdatedWithReady {
+        snapshot: EntityPropertyMutationSnapshot,
+        ready_task_ids: Vec<Uuid>,
+    },
     Blocked,
     /// The guarded write was rejected with the locked transaction snapshot.
     /// This is internal-only until the domain has applied per-document access.

@@ -1,0 +1,26 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH dependents AS (\n            SELECT DISTINCT d.id, depends_ep.values\n            FROM \"Document\" d\n            JOIN document_sub_type dst\n              ON dst.document_id = d.id AND dst.sub_type = 'task'\n            JOIN entity_properties depends_ep\n              ON depends_ep.entity_id = d.id\n             AND depends_ep.entity_type = 'TASK'\n             AND depends_ep.property_definition_id = $3\n            CROSS JOIN LATERAL jsonb_array_elements(\n                CASE WHEN jsonb_typeof(depends_ep.values->'value') = 'array'\n                    THEN depends_ep.values->'value' ELSE '[]'::jsonb END\n            ) predecessor_ref\n            WHERE d.\"deletedAt\" IS NULL\n              AND d.\"projectId\" IS NOT DISTINCT FROM $2\n              AND jsonb_typeof(depends_ep.values) = 'object'\n              AND depends_ep.values->>'type' = 'EntityReference'\n              AND jsonb_typeof(depends_ep.values->'value') = 'array'\n              AND depends_ep.values @> jsonb_build_object(\n                    'value', jsonb_build_array(jsonb_build_object(\n                        'entity_id', $1::text, 'entity_type', 'TASK'\n                    ))\n                  )\n              AND predecessor_ref->>'entity_type' = 'TASK'\n              AND predecessor_ref->>'entity_id' = $1\n        )\n        SELECT dependents.id\n        FROM dependents\n        WHERE NOT EXISTS (\n            SELECT 1\n            FROM jsonb_array_elements(\n                CASE WHEN jsonb_typeof(dependents.values->'value') = 'array'\n                    THEN dependents.values->'value' ELSE '[]'::jsonb END\n            ) dependency_ref\n            LEFT JOIN \"Document\" predecessor\n              ON dependency_ref->>'entity_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'\n             AND predecessor.id = dependency_ref->>'entity_id'\n             AND predecessor.\"deletedAt\" IS NULL\n             AND predecessor.\"projectId\" IS NOT DISTINCT FROM $2\n            LEFT JOIN document_sub_type predecessor_sub_type\n              ON predecessor_sub_type.document_id = predecessor.id\n             AND predecessor_sub_type.sub_type = 'task'\n            LEFT JOIN entity_properties predecessor_status\n              ON predecessor_status.entity_id = predecessor.id\n             AND predecessor_status.entity_type = 'TASK'\n             AND predecessor_status.property_definition_id = $4\n            WHERE jsonb_typeof(dependency_ref) <> 'object'\n               OR dependency_ref->>'entity_type' IS DISTINCT FROM 'TASK'\n               OR COALESCE(dependency_ref->'specific_message_id' <> 'null'::jsonb, false)\n               OR dependency_ref->>'entity_id' = dependents.id\n               OR predecessor.id IS NULL\n               OR predecessor_sub_type.document_id IS NULL\n               OR predecessor_status.values IS DISTINCT FROM jsonb_build_object(\n                    'type', 'SelectOption', 'value', jsonb_build_array($5::uuid)\n                  )\n        )\n        ORDER BY dependents.id\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "6ac75339da7bd2bb4f4a61e249c24987796f3053905a15317b93c0a30f3675c4"
+}
