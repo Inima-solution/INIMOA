@@ -36,7 +36,7 @@ fn non_subscription_roles_do_not_grant_paid_access() {
     }
 }
 
-const PERMISSION_STRINGS: [(PermissionId, &str); 32] = [
+const PERMISSION_STRINGS: [(PermissionId, &str); 33] = [
     (
         PermissionId::WriteStripeSubscription,
         "write:stripe_subscription",
@@ -94,6 +94,7 @@ const PERMISSION_STRINGS: [(PermissionId, &str); 32] = [
     (PermissionId::ReadPayslipAll, "read:payslip:all"),
     (PermissionId::WritePayroll, "write:payroll"),
     (PermissionId::ReadAuditBusiness, "read:audit:business"),
+    (PermissionId::ExportAuditBusiness, "export:audit:business"),
     (PermissionId::ReadAuditHr, "read:audit:hr"),
     (PermissionId::ReadAuditPayroll, "read:audit:payroll"),
     (PermissionId::WriteCompanyRoles, "write:company_roles"),
@@ -104,7 +105,7 @@ const PERMISSION_STRINGS: [(PermissionId, &str); 32] = [
     ),
 ];
 
-const INIMAOS_PERMISSIONS: [PermissionId; 21] = [
+const INIMAOS_PERMISSIONS: [PermissionId; 22] = [
     PermissionId::ReadProjectWorkScoped,
     PermissionId::ReadProjectWorkAll,
     PermissionId::WriteProjectWorkStatusScoped,
@@ -121,6 +122,7 @@ const INIMAOS_PERMISSIONS: [PermissionId; 21] = [
     PermissionId::ReadPayslipAll,
     PermissionId::WritePayroll,
     PermissionId::ReadAuditBusiness,
+    PermissionId::ExportAuditBusiness,
     PermissionId::ReadAuditHr,
     PermissionId::ReadAuditPayroll,
     PermissionId::WriteCompanyRoles,
@@ -186,6 +188,18 @@ fn role_sets_union_permissions_without_creating_hierarchy() {
 #[test]
 fn direct_business_permission_checks_match_bundle_boundaries() {
     let auditor = BusinessRoleSet::from_role(BusinessRole::Auditor);
+    assert!(has_business_permission(
+        BusinessRoleSet::from_role(BusinessRole::OrgAdmin),
+        PermissionId::ExportAuditBusiness
+    ));
+    assert!(has_business_permission(
+        auditor,
+        PermissionId::ReadAuditBusiness
+    ));
+    assert!(!has_business_permission(
+        auditor,
+        PermissionId::ExportAuditBusiness
+    ));
     assert!(has_business_permission(
         auditor,
         PermissionId::ReadProjectWorkAll
@@ -296,6 +310,7 @@ fn expected_permissions(role: BusinessRole) -> PermissionSet {
             ReadHrProfileOwn,
             ReadPayslipOwn,
             ReadAuditBusiness,
+            ExportAuditBusiness,
             ReadAuditHr,
             ReadAuditPayroll,
             WriteCompanyRoles,

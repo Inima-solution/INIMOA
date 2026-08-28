@@ -406,6 +406,7 @@ company_permission_markers!(
     ReadPayslipAll,
     WritePayroll,
     ReadAuditBusiness,
+    ExportAuditBusiness,
     ReadAuditHr,
     ReadAuditPayroll,
     WriteCompanyRoles,

@@ -186,6 +186,8 @@ pub enum PermissionId {
     WritePayroll,
     /// Read business audit records.
     ReadAuditBusiness,
+    /// Export business audit records.
+    ExportAuditBusiness,
     /// Read HR audit records.
     ReadAuditHr,
     /// Read payroll audit records.
@@ -230,6 +232,7 @@ impl FromStr for PermissionId {
             "read:payslip:all" => Ok(Self::ReadPayslipAll),
             "write:payroll" => Ok(Self::WritePayroll),
             "read:audit:business" => Ok(Self::ReadAuditBusiness),
+            "export:audit:business" => Ok(Self::ExportAuditBusiness),
             "read:audit:hr" => Ok(Self::ReadAuditHr),
             "read:audit:payroll" => Ok(Self::ReadAuditPayroll),
             "write:company_roles" => Ok(Self::WriteCompanyRoles),
@@ -282,6 +285,7 @@ impl Display for PermissionId {
             PermissionId::ReadPayslipAll => write!(f, "read:payslip:all"),
             PermissionId::WritePayroll => write!(f, "write:payroll"),
             PermissionId::ReadAuditBusiness => write!(f, "read:audit:business"),
+            PermissionId::ExportAuditBusiness => write!(f, "export:audit:business"),
             PermissionId::ReadAuditHr => write!(f, "read:audit:hr"),
             PermissionId::ReadAuditPayroll => write!(f, "read:audit:payroll"),
             PermissionId::WriteCompanyRoles => write!(f, "write:company_roles"),
@@ -396,6 +400,7 @@ fn role_permissions(role: BusinessRole) -> &'static [PermissionId] {
             ReadHrProfileOwn,
             ReadPayslipOwn,
             ReadAuditBusiness,
+            ExportAuditBusiness,
             ReadAuditHr,
             ReadAuditPayroll,
             WriteCompanyRoles,

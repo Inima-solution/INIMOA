@@ -10,6 +10,8 @@ use uuid::Uuid;
 pub const DEFAULT_AUDIT_PAGE_SIZE: usize = 50;
 /// Largest permitted number of ledger facts returned by a list request.
 pub const MAX_AUDIT_PAGE_SIZE: usize = 100;
+/// Largest number of facts a single privileged CSV export may emit.
+pub const MAX_AUDIT_EXPORT_ROWS: usize = 1000;
 #[cfg(feature = "outbound")]
 const MAX_CURSOR_BYTES: usize = 32_000;
 
@@ -66,6 +68,91 @@ pub struct AuditListPage {
     pub items: Vec<AuditListItem>,
     /// Opaque next-page position, when another page exists.
     pub next_cursor: Option<String>,
+}
+
+/// Privileged, team-scoped detail of one immutable ledger fact.
+///
+/// This projection is deliberately separate from `AuditListItem`: privileged
+/// callers may receive the reason, request correlation, and fixed metadata,
+/// while list callers never do.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AuditDetail {
+    /// Immutable event identity.
+    pub id: Uuid,
+    /// Mechanical actor principal.
+    pub actor: String,
+    /// Optional initiating human principal.
+    pub delegated_actor: Option<String>,
+    /// Stored action tag.
+    pub action: String,
+    /// Stored target kind.
+    pub target_type: String,
+    /// Canonical target identity.
+    pub target_id: String,
+    /// Stored outcome tag.
+    pub outcome: String,
+    /// Durable event time.
+    pub occurred_at: DateTime<Utc>,
+    /// Correlation identifier for this immutable fact.
+    pub request_id: String,
+    /// Optional human rationale.
+    pub reason: Option<String>,
+    /// Fixed, action-specific safe metadata.
+    pub metadata: serde_json::Value,
+    /// Retention class of this fact.
+    pub retention_class: AuditRetentionFilter,
+}
+
+/// Request for one privileged detail fact. The repository returns `None` for
+/// both missing identifiers and identifiers owned by another team.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditDetailRequest {
+    /// Team derived from the authorization receipt.
+    pub team_id: Uuid,
+    /// Immutable fact identifier supplied in the route path.
+    pub id: Uuid,
+}
+
+/// Database-independent bounded audit export query.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AuditExportRequest {
+    /// Team derived from the authorization receipt.
+    pub team_id: Uuid,
+    /// Inclusive UTC start.
+    pub from: DateTime<Utc>,
+    /// Exclusive UTC end.
+    pub until: DateTime<Utc>,
+    /// Optional closed retention class.
+    pub retention_class: Option<AuditRetentionFilter>,
+}
+
+/// One full immutable fact emitted by a privileged CSV export.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct AuditExportRow {
+    /// Immutable event identity.
+    pub id: Uuid,
+    /// Mechanical actor principal.
+    pub actor: String,
+    /// Optional initiating human principal.
+    pub delegated_actor: Option<String>,
+    /// Stored action tag.
+    pub action: String,
+    /// Stored target kind.
+    pub target_type: String,
+    /// Canonical target identity.
+    pub target_id: String,
+    /// Stored outcome tag.
+    pub outcome: String,
+    /// Durable event time.
+    pub occurred_at: DateTime<Utc>,
+    /// Correlation identifier for this immutable fact.
+    pub request_id: String,
+    /// Optional human rationale.
+    pub reason: Option<String>,
+    /// Fixed, action-specific safe metadata.
+    pub metadata: serde_json::Value,
+    /// Retention class of this fact.
+    pub retention_class: AuditRetentionFilter,
 }
 
 /// Database-independent request for one team-scoped ledger page.

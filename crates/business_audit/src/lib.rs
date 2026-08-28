@@ -8,12 +8,14 @@ pub mod domain;
 pub mod outbound;
 
 pub use domain::model::{
-    Actor, AuditAction, AuditEvent, AuditOutcome, AuditReason, AuditTarget, AuditTargetType,
-    AuditValidationError, RequestCorrelationId, RetentionClass, RoleChangeMetadata,
+    Actor, AuditAction, AuditDetailReadMetadata, AuditEvent, AuditExportedMetadata, AuditOutcome,
+    AuditReason, AuditTarget, AuditTargetType, AuditValidationError, RequestCorrelationId,
+    RetentionClass, RoleChangeMetadata,
 };
 pub use domain::query::{
-    AuditListError, AuditListItem, AuditListPage, AuditListRequest, AuditRetentionFilter,
-    DEFAULT_AUDIT_PAGE_SIZE, MAX_AUDIT_PAGE_SIZE,
+    AuditDetail, AuditDetailRequest, AuditExportRequest, AuditExportRow, AuditListError,
+    AuditListItem, AuditListPage, AuditListRequest, AuditRetentionFilter, DEFAULT_AUDIT_PAGE_SIZE,
+    MAX_AUDIT_EXPORT_ROWS, MAX_AUDIT_PAGE_SIZE,
 };
 #[cfg(feature = "outbound")]
-pub use outbound::{insert_with_tx, list};
+pub use outbound::{detail, export_with_tx, insert_with_tx, list};

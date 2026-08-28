@@ -18,7 +18,10 @@ use teams::inbound::axum_router::{
 use user_quota::UserQuota;
 use utoipa::OpenApi;
 
-use crate::api::business_audit::{BusinessAuditListItem, BusinessAuditListResponse};
+use crate::api::business_audit::{
+    BusinessAuditDetailResponse, BusinessAuditExportRequest, BusinessAuditListItem,
+    BusinessAuditListResponse,
+};
 use crate::api::business_role_change::{BusinessRoleChangeRequest, BusinessRoleChangeResponse};
 use crate::api::cursor_api_key::{CursorApiKeyStatus, put_cursor_api_key::PutCursorApiKeyRequest};
 use crate::api::email::generate_email_link::GenerateEmailLinkRequest;
@@ -163,6 +166,10 @@ use model::user::{
                 crate::api::business_role_change::grant_handler,
                 crate::api::business_role_change::revoke_handler,
                 crate::api::business_audit::handler,
+                crate::api::business_audit::detail_handler,
+                crate::api::business_audit::reauth_handler,
+                crate::api::business_audit::reauth_mfa_handler,
+                crate::api::business_audit::export_handler,
 
                 /// /referral
                 referral::inbound::axum_router::get_referral_code_handler::<crate::api::context::ReferralServiceType, crate::api::context::RateLimiter, crate::api::context::AuthorizationService>,
@@ -249,6 +256,8 @@ use model::user::{
                         BusinessRoleChangeResponse,
                         BusinessAuditListItem,
                         BusinessAuditListResponse,
+                        BusinessAuditDetailResponse,
+                        BusinessAuditExportRequest,
                         CreateTeamRequest,
                         InviteToTeamRequest,
                         PatchTeamRequest,
@@ -478,5 +487,55 @@ mod tests {
         ] {
             assert!(properties.get(forbidden).is_none());
         }
+    }
+
+    #[test]
+    fn team_business_audit_privileged_detail_and_export_contracts_are_documented() {
+        let openapi = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let detail = &openapi["paths"]["/team/business-audit/{id}"]["get"];
+        assert_eq!(detail["operationId"], "get_team_business_audit_detail");
+        for status in ["200", "401", "403", "404", "500"] {
+            assert!(detail["responses"][status].is_object(), "missing {status}");
+        }
+
+        for path in [
+            "/team/business-audit/reauth",
+            "/team/business-audit/reauth/mfa",
+        ] {
+            let operation = &openapi["paths"][path]["post"];
+            assert!(operation.is_object());
+            for status in ["200", "400", "401", "403", "429", "500", "502"] {
+                assert!(
+                    operation["responses"][status].is_object(),
+                    "missing {status}"
+                );
+            }
+        }
+
+        let export = &openapi["paths"]["/team/business-audit/export"]["post"];
+        assert_eq!(export["operationId"], "export_team_business_audit");
+        assert_eq!(
+            export["requestBody"]["content"]["application/json"]["schema"]["$ref"].as_str(),
+            Some("#/components/schemas/BusinessAuditExportRequest")
+        );
+        for status in ["200", "400", "401", "403", "409", "413", "500"] {
+            assert!(export["responses"][status].is_object(), "missing {status}");
+        }
+        assert!(export["responses"]["200"]["headers"]["Content-Disposition"].is_object());
+        assert!(export["responses"]["200"]["headers"]["Cache-Control"].is_object());
+
+        let export_properties =
+            &openapi["components"]["schemas"]["BusinessAuditExportRequest"]["properties"];
+        for field in [
+            "reauthentication_receipt",
+            "from",
+            "until",
+            "retention_class",
+            "reason",
+        ] {
+            assert!(export_properties.get(field).is_some(), "missing {field}");
+        }
+        assert!(export_properties.get("team_id").is_none());
+        assert!(export_properties.get("actor").is_none());
     }
 }

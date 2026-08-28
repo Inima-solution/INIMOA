@@ -148,3 +148,77 @@ async fn list_empty_team_has_no_rows_or_cursor(pool: PgPool) {
     assert!(page.items.is_empty());
     assert!(page.next_cursor.is_none());
 }
+
+#[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
+async fn detail_is_team_scoped_and_returns_only_the_exact_fact(pool: PgPool) {
+    let team = Uuid::from_u128(301);
+    let other_team = Uuid::from_u128(302);
+    let at = "2026-08-28T12:00:00Z".parse().unwrap();
+    let own = event(team, 1, at, RetentionClass::Confidential);
+    let other = event(other_team, 2, at, RetentionClass::Standard);
+    insert(&pool, &own).await;
+    insert(&pool, &other).await;
+
+    let found = detail(
+        &pool,
+        AuditDetailRequest {
+            team_id: team,
+            id: own.id,
+        },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(found.id, own.id);
+    assert_eq!(found.reason.as_deref(), Some("ledger read test"));
+    assert_eq!(found.request_id, "read-1");
+    assert_eq!(found.metadata["business_role"], "manager");
+
+    let other_team_result = detail(
+        &pool,
+        AuditDetailRequest {
+            team_id: team,
+            id: other.id,
+        },
+    )
+    .await
+    .unwrap();
+    let missing_result = detail(
+        &pool,
+        AuditDetailRequest {
+            team_id: team,
+            id: Uuid::from_u128(303),
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(other_team_result, None);
+    assert_eq!(missing_result, None);
+}
+
+#[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
+async fn export_is_team_scoped_half_open_and_retention_filtered(pool: PgPool) {
+    let team = Uuid::from_u128(401);
+    let other_team = Uuid::from_u128(402);
+    let from = "2026-08-28T13:00:00Z".parse().unwrap();
+    let until = "2026-08-28T14:00:00Z".parse().unwrap();
+    insert(&pool, &event(team, 1, from, RetentionClass::Standard)).await;
+    insert(&pool, &event(team, 2, until, RetentionClass::Standard)).await;
+    insert(&pool, &event(other_team, 3, from, RetentionClass::Standard)).await;
+
+    let mut tx = pool.begin().await.unwrap();
+    let rows = export_with_tx(
+        &mut tx,
+        &AuditExportRequest {
+            team_id: team,
+            from,
+            until,
+            retention_class: Some(AuditRetentionFilter::Standard),
+        },
+    )
+    .await
+    .unwrap();
+    tx.rollback().await.unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0].occurred_at, from);
+}

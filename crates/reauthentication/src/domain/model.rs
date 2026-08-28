@@ -50,6 +50,8 @@ impl AsRef<str> for RequestCorrelationId {
 pub enum ReceiptPurpose {
     /// Granting or revoking a company business role.
     CompanyRoleChange,
+    /// Exporting company business audit records.
+    BusinessAuditExport,
 }
 
 impl ReceiptPurpose {
@@ -57,6 +59,7 @@ impl ReceiptPurpose {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::CompanyRoleChange => "company_role_change",
+            Self::BusinessAuditExport => "business_audit_export",
         }
     }
 }

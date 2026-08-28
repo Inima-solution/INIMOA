@@ -173,6 +173,7 @@ fn every_company_marker_is_closed_and_separate_from_existing_permission_families
         ReadPayslipAll => BusinessRole::PayrollAdmin,
         WritePayroll => BusinessRole::PayrollAdmin,
         ReadAuditBusiness => BusinessRole::Auditor,
+        ExportAuditBusiness => BusinessRole::OrgAdmin,
         ReadAuditHr => BusinessRole::Auditor,
         ReadAuditPayroll => BusinessRole::Auditor,
         WriteCompanyRoles => BusinessRole::OrgAdmin,
@@ -192,6 +193,12 @@ fn every_company_marker_is_closed_and_separate_from_existing_permission_families
     assert!(!MemberTeamRole::is_company());
     assert!(!AdminTeamRole::is_company());
     assert!(!OwnerTeamRole::is_company());
+
+    let auditor = EntityPermission::TeamBusinessRoles {
+        roles: BusinessRoleSet::from_role(BusinessRole::Auditor),
+    };
+    assert!(auditor.satisfies::<ReadAuditBusiness>());
+    assert!(!auditor.satisfies::<ExportAuditBusiness>());
 }
 
 #[test]

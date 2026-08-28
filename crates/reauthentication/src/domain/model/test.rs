@@ -51,3 +51,15 @@ fn request_id_is_required_and_bounded() {
 fn password_mfa_is_a_closed_receipt_proof_method() {
     assert_eq!(ProofMethod::PasswordMfa.as_str(), "password_mfa");
 }
+
+#[test]
+fn receipt_purposes_have_closed_wire_values() {
+    assert_eq!(
+        ReceiptPurpose::CompanyRoleChange.as_str(),
+        "company_role_change"
+    );
+    assert_eq!(
+        ReceiptPurpose::BusinessAuditExport.as_str(),
+        "business_audit_export"
+    );
+}

@@ -118,3 +118,82 @@ fn closed_vocabulary_storage_tags_are_stable() {
     assert_eq!(AuditTargetType::Team.as_str(), "team");
     assert_eq!(AuditTargetType::Principal.as_str(), "principal");
 }
+
+#[test]
+fn privileged_action_metadata_is_fixed_and_target_bound() {
+    let event_id = Uuid::from_u128(9);
+    let detail = AuditAction::DetailRead(AuditDetailReadMetadata::new(event_id));
+    let detail_event = AuditEvent::new(
+        Uuid::from_u128(1),
+        actor("macro|admin@example.com"),
+        None,
+        detail,
+        AuditTarget::Team(Uuid::from_u128(1)),
+        AuditOutcome::Success,
+        Utc::now(),
+        RequestCorrelationId::try_new("detail-read").unwrap(),
+        None,
+        RetentionClass::Confidential,
+    )
+    .unwrap();
+    assert_eq!(
+        detail_event.action.metadata(),
+        json!({"audit_event_id": event_id})
+    );
+
+    let exported = AuditAction::Exported(AuditExportedMetadata::new(
+        "2026-08-01T00:00:00Z".parse().unwrap(),
+        "2026-08-02T00:00:00Z".parse().unwrap(),
+        Some(RetentionClass::Restricted),
+        7,
+    ));
+    let export_event = AuditEvent::new(
+        Uuid::from_u128(1),
+        actor("macro|admin@example.com"),
+        None,
+        exported,
+        AuditTarget::Team(Uuid::from_u128(1)),
+        AuditOutcome::Success,
+        Utc::now(),
+        RequestCorrelationId::try_new("export").unwrap(),
+        None,
+        RetentionClass::Confidential,
+    )
+    .unwrap();
+    assert_eq!(export_event.action.metadata()["row_count"], 7);
+    assert!(export_event.action.metadata().get("receipt").is_none());
+
+    let wrong_target = AuditEvent::new(
+        Uuid::from_u128(1),
+        actor("macro|admin@example.com"),
+        None,
+        AuditAction::DetailRead(AuditDetailReadMetadata::new(event_id)),
+        AuditTarget::Principal(actor("macro|other@example.com")),
+        AuditOutcome::Success,
+        Utc::now(),
+        RequestCorrelationId::try_new("wrong-target").unwrap(),
+        None,
+        RetentionClass::Confidential,
+    );
+    assert_eq!(
+        wrong_target.unwrap_err(),
+        AuditValidationError::PrivilegedAuditTeamTargetMismatch
+    );
+
+    let wrong_team = AuditEvent::new(
+        Uuid::from_u128(1),
+        actor("macro|admin@example.com"),
+        None,
+        AuditAction::DetailRead(AuditDetailReadMetadata::new(event_id)),
+        AuditTarget::Team(Uuid::from_u128(2)),
+        AuditOutcome::Success,
+        Utc::now(),
+        RequestCorrelationId::try_new("wrong-team").unwrap(),
+        None,
+        RetentionClass::Confidential,
+    );
+    assert_eq!(
+        wrong_team.unwrap_err(),
+        AuditValidationError::PrivilegedAuditTeamTargetMismatch
+    );
+}

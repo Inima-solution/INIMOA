@@ -260,6 +260,7 @@ async fn mint_receipt(
     request_id: RequestId,
     team_id: Uuid,
     principal: MacroUserIdStr<'static>,
+    purpose: ReceiptPurpose,
     proof_method: ProofMethod,
 ) -> Result<Json<ReauthenticateResponse>, ReauthenticateError> {
     let request_id = request_id
@@ -267,7 +268,7 @@ async fn mint_receipt(
         .to_str()
         .map_err(|_| ReauthenticateError::Internal)?;
     let receipt = ReauthenticationReceipt::issue(
-        ReceiptScope::new(team_id, principal, ReceiptPurpose::CompanyRoleChange),
+        ReceiptScope::new(team_id, principal, purpose),
         proof_method,
         chrono::Utc::now(),
         RequestCorrelationId::try_new(request_id).map_err(|_| ReauthenticateError::Internal)?,
@@ -283,6 +284,94 @@ async fn mint_receipt(
         reauthentication_receipt: receipt.id,
         expires_in: 300,
     }))
+}
+
+/// Verifies a password step-up proof and mints a receipt scoped to the explicit purpose.
+pub(crate) async fn reauthenticate_password_for_purpose(
+    ctx: &ApiContext,
+    request_id: RequestId,
+    team_id: Uuid,
+    principal: MacroUserIdStr<'static>,
+    request: &ReauthenticateRequest,
+    purpose: ReceiptPurpose,
+) -> Result<Json<ReauthenticateResponse>, ReauthenticateError> {
+    if request.password.is_empty() || request.password.len() > MAX_PASSWORD_BYTES {
+        return Err(ReauthenticateError::MalformedPassword);
+    }
+
+    check_rate_limit(ctx, &principal).await?;
+    match ctx
+        .auth_client
+        .verify_password(principal.email_part().email_str(), &request.password)
+        .await
+    {
+        Ok(PasswordVerification::Verified) => {}
+        Ok(PasswordVerification::MultiFactorRequired(challenge)) => {
+            return Err(ReauthenticateError::MultiFactorRequired(challenge));
+        }
+        Err(
+            FusionAuthClientError::IncorrectCredentials
+            | FusionAuthClientError::UserNotRegistered
+            | FusionAuthClientError::UserNotVerified
+            | FusionAuthClientError::UserRegistrationNotVerified
+            | FusionAuthClientError::PasswordChangeRequired
+            | FusionAuthClientError::LoginPrevented,
+        ) => return Err(ReauthenticateError::InvalidCredentials),
+        Err(error) => {
+            tracing::error!(?error, "fusionauth password verification failed");
+            return Err(ReauthenticateError::UpstreamUnavailable);
+        }
+    }
+
+    mint_receipt(
+        ctx,
+        request_id,
+        team_id,
+        principal,
+        purpose,
+        ProofMethod::Password,
+    )
+    .await
+}
+
+/// Verifies an MFA step-up proof and mints a receipt scoped to the explicit purpose.
+pub(crate) async fn reauthenticate_mfa_for_purpose(
+    ctx: &ApiContext,
+    request_id: RequestId,
+    team_id: Uuid,
+    principal: MacroUserIdStr<'static>,
+    request: &ReauthenticateMfaRequest,
+    purpose: ReceiptPurpose,
+) -> Result<Json<ReauthenticateResponse>, ReauthenticateError> {
+    if !valid_mfa_request_shape(request) {
+        return Err(ReauthenticateError::MalformedMfa);
+    }
+
+    check_rate_limit(ctx, &principal).await?;
+    let authenticated_email = ctx
+        .auth_client
+        .verify_multi_factor(&request.two_factor_id, &request.code)
+        .await
+        .map_err(|error| match error {
+            FusionAuthClientError::IncorrectCode => ReauthenticateError::InvalidMfa,
+            _ => {
+                tracing::error!(?error, "fusionauth MFA verification failed");
+                ReauthenticateError::UpstreamUnavailable
+            }
+        })?;
+    if !authenticated_email_matches_principal(&authenticated_email, &principal) {
+        return Err(ReauthenticateError::InvalidMfa);
+    }
+
+    mint_receipt(
+        ctx,
+        request_id,
+        team_id,
+        principal,
+        purpose,
+        ProofMethod::PasswordMfa,
+    )
+    .await
 }
 
 /// Verifies a directly authenticated team owner/admin and mints a five-minute receipt.
@@ -314,32 +403,15 @@ pub(crate) async fn handler(
     }
 
     let (team_id, principal) = team_scope(user, access)?;
-    check_rate_limit(&ctx, &principal).await?;
-
-    match ctx
-        .auth_client
-        .verify_password(principal.email_part().email_str(), &request.password)
-        .await
-    {
-        Ok(PasswordVerification::Verified) => {}
-        Ok(PasswordVerification::MultiFactorRequired(challenge)) => {
-            return Err(ReauthenticateError::MultiFactorRequired(challenge));
-        }
-        Err(
-            FusionAuthClientError::IncorrectCredentials
-            | FusionAuthClientError::UserNotRegistered
-            | FusionAuthClientError::UserNotVerified
-            | FusionAuthClientError::UserRegistrationNotVerified
-            | FusionAuthClientError::PasswordChangeRequired
-            | FusionAuthClientError::LoginPrevented,
-        ) => return Err(ReauthenticateError::InvalidCredentials),
-        Err(error) => {
-            tracing::error!(?error, "fusionauth password verification failed");
-            return Err(ReauthenticateError::UpstreamUnavailable);
-        }
-    }
-
-    mint_receipt(&ctx, request_id, team_id, principal, ProofMethod::Password).await
+    reauthenticate_password_for_purpose(
+        &ctx,
+        request_id,
+        team_id,
+        principal,
+        &request,
+        ReceiptPurpose::CompanyRoleChange,
+    )
+    .await
 }
 
 /// Completes an existing MFA challenge for the same directly authenticated team owner/admin.
@@ -371,28 +443,13 @@ pub(crate) async fn mfa_handler(
     }
 
     let (team_id, principal) = team_scope(user, access)?;
-    check_rate_limit(&ctx, &principal).await?;
-    let authenticated_email = ctx
-        .auth_client
-        .verify_multi_factor(&request.two_factor_id, &request.code)
-        .await
-        .map_err(|error| match error {
-            FusionAuthClientError::IncorrectCode => ReauthenticateError::InvalidMfa,
-            _ => {
-                tracing::error!(?error, "fusionauth MFA verification failed");
-                ReauthenticateError::UpstreamUnavailable
-            }
-        })?;
-    if !authenticated_email_matches_principal(&authenticated_email, &principal) {
-        return Err(ReauthenticateError::InvalidMfa);
-    }
-
-    mint_receipt(
+    reauthenticate_mfa_for_purpose(
         &ctx,
         request_id,
         team_id,
         principal,
-        ProofMethod::PasswordMfa,
+        &request,
+        ReceiptPurpose::CompanyRoleChange,
     )
     .await
 }

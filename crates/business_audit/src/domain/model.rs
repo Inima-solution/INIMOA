@@ -36,6 +36,9 @@ pub enum AuditValidationError {
     /// A role action did not target its grantee principal.
     #[error("role audit target must equal the grantee principal")]
     RoleTargetMismatch,
+    /// A privileged audit action did not target its own team.
+    #[error("privileged audit action target must equal the audit team")]
+    PrivilegedAuditTeamTargetMismatch,
 }
 
 fn validate_text(
@@ -109,7 +112,8 @@ impl AuditOutcome {
 }
 
 /// Sensitivity and retention classification of an audit event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RetentionClass {
     /// Internal operational event.
     Standard,
@@ -176,6 +180,52 @@ impl AuditTarget {
     }
 }
 
+/// Fixed safe metadata for a privileged immutable-fact detail read.
+#[readonly::make]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AuditDetailReadMetadata {
+    /// The immutable fact whose privileged detail was returned.
+    pub audit_event_id: Uuid,
+}
+
+impl AuditDetailReadMetadata {
+    /// Builds fixed metadata for a successfully returned detail fact.
+    pub fn new(audit_event_id: Uuid) -> Self {
+        Self { audit_event_id }
+    }
+}
+
+/// Fixed safe metadata for a completed bounded audit CSV export.
+#[readonly::make]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AuditExportedMetadata {
+    /// Inclusive UTC export start.
+    pub from: DateTime<Utc>,
+    /// Exclusive UTC export end.
+    pub until: DateTime<Utc>,
+    /// Optional closed retention filter used for the export.
+    pub retention_class: Option<RetentionClass>,
+    /// Number of facts emitted to the CSV, bounded by the export contract.
+    pub row_count: u16,
+}
+
+impl AuditExportedMetadata {
+    /// Builds fixed metadata for a completed bounded export.
+    pub fn new(
+        from: DateTime<Utc>,
+        until: DateTime<Utc>,
+        retention_class: Option<RetentionClass>,
+        row_count: u16,
+    ) -> Self {
+        Self {
+            from,
+            until,
+            retention_class,
+            row_count,
+        }
+    }
+}
+
 /// Fixed safe metadata for a company-role change.
 #[readonly::make]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -207,6 +257,10 @@ pub enum AuditAction {
     RoleGranted(RoleChangeMetadata),
     /// A company business role was revoked.
     RoleRevoked(RoleChangeMetadata),
+    /// Privileged detail of one immutable audit fact was read.
+    DetailRead(AuditDetailReadMetadata),
+    /// A bounded audit CSV export was successfully emitted.
+    Exported(AuditExportedMetadata),
 }
 
 impl AuditAction {
@@ -215,20 +269,44 @@ impl AuditAction {
         match self {
             Self::RoleGranted(_) => "role_granted",
             Self::RoleRevoked(_) => "role_revoked",
+            Self::DetailRead(_) => "audit_detail_read",
+            Self::Exported(_) => "audit_exported",
         }
     }
 
     #[cfg(any(feature = "outbound", test))]
     pub(crate) fn metadata(&self) -> serde_json::Value {
-        let metadata = match self {
-            Self::RoleGranted(metadata) | Self::RoleRevoked(metadata) => metadata,
-        };
-        serde_json::to_value(metadata).expect("fixed audit metadata serializes")
+        match self {
+            Self::RoleGranted(metadata) | Self::RoleRevoked(metadata) => {
+                serde_json::to_value(metadata)
+            }
+            Self::DetailRead(metadata) => serde_json::to_value(metadata),
+            Self::Exported(metadata) => serde_json::to_value(metadata),
+        }
+        .expect("fixed audit metadata serializes")
     }
 
-    fn role_metadata(&self) -> &RoleChangeMetadata {
-        match self {
-            Self::RoleGranted(metadata) | Self::RoleRevoked(metadata) => metadata,
+    fn validate_target(
+        &self,
+        target: &AuditTarget,
+        team_id: Uuid,
+    ) -> Result<(), AuditValidationError> {
+        match (self, target) {
+            (
+                Self::RoleGranted(metadata) | Self::RoleRevoked(metadata),
+                AuditTarget::Principal(target),
+            ) if target == &metadata.grantee_principal => Ok(()),
+            (Self::RoleGranted(_) | Self::RoleRevoked(_), _) => {
+                Err(AuditValidationError::RoleTargetMismatch)
+            }
+            (Self::DetailRead(_) | Self::Exported(_), AuditTarget::Team(target))
+                if target == &team_id =>
+            {
+                Ok(())
+            }
+            (Self::DetailRead(_) | Self::Exported(_), _) => {
+                Err(AuditValidationError::PrivilegedAuditTeamTargetMismatch)
+            }
         }
     }
 }
@@ -292,12 +370,7 @@ impl AuditEvent {
             )?;
         }
 
-        let AuditTarget::Principal(target_principal) = &target else {
-            return Err(AuditValidationError::RoleTargetMismatch);
-        };
-        if target_principal != &action.role_metadata().grantee_principal {
-            return Err(AuditValidationError::RoleTargetMismatch);
-        }
+        action.validate_target(&target, team_id)?;
 
         Ok(Self {
             id: macro_uuid::generate_uuid_v7(),

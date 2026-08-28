@@ -17,10 +17,11 @@ fn user(value: &str) -> MacroUserIdStr<'static> {
 fn receipt(
     team_id: Uuid,
     principal: &str,
+    purpose: ReceiptPurpose,
     issued_at: chrono::DateTime<Utc>,
 ) -> ReauthenticationReceipt {
     ReauthenticationReceipt::issue(
-        ReceiptScope::new(team_id, user(principal), ReceiptPurpose::CompanyRoleChange),
+        ReceiptScope::new(team_id, user(principal), purpose),
         ProofMethod::Password,
         issued_at,
         RequestCorrelationId::try_new("request-mint").unwrap(),
@@ -40,7 +41,12 @@ async fn consume(pool: &PgPool, receipt_id: Uuid, scope: &ReceiptScope) -> bool 
 #[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
 async fn mint_round_trips_scope_lifetime_and_correlation(pool: PgPool) {
     let repo = PgReauthenticationReceiptRepo::new(pool.clone());
-    let receipt = receipt(Uuid::from_u128(7), "macro|actor@example.com", Utc::now());
+    let receipt = receipt(
+        Uuid::from_u128(7),
+        "macro|actor@example.com",
+        ReceiptPurpose::BusinessAuditExport,
+        Utc::now(),
+    );
     repo.mint(&receipt).await.unwrap();
 
     let row: (
@@ -67,7 +73,7 @@ async fn mint_round_trips_scope_lifetime_and_correlation(pool: PgPool) {
 
     assert_eq!(row.0, receipt.scope.team_id);
     assert_eq!(row.1, "macro|actor@example.com");
-    assert_eq!(row.2, "company_role_change");
+    assert_eq!(row.2, "business_audit_export");
     assert_eq!(row.3, "password");
     assert_eq!(row.4, 300);
     assert_eq!(row.5, "request-mint");
@@ -77,21 +83,32 @@ async fn mint_round_trips_scope_lifetime_and_correlation(pool: PgPool) {
 #[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
 async fn receipt_is_one_time_and_scope_bound(pool: PgPool) {
     let repo = PgReauthenticationReceiptRepo::new(pool.clone());
-    let receipt = receipt(Uuid::from_u128(7), "macro|actor@example.com", Utc::now());
+    let receipt = receipt(
+        Uuid::from_u128(7),
+        "macro|actor@example.com",
+        ReceiptPurpose::BusinessAuditExport,
+        Utc::now(),
+    );
     repo.mint(&receipt).await.unwrap();
 
     let wrong_team = ReceiptScope::new(
         Uuid::from_u128(8),
         user("macro|actor@example.com"),
-        ReceiptPurpose::CompanyRoleChange,
+        ReceiptPurpose::BusinessAuditExport,
     );
     let wrong_user = ReceiptScope::new(
         receipt.scope.team_id,
         user("macro|other@example.com"),
+        ReceiptPurpose::BusinessAuditExport,
+    );
+    let wrong_purpose = ReceiptScope::new(
+        receipt.scope.team_id,
+        user("macro|actor@example.com"),
         ReceiptPurpose::CompanyRoleChange,
     );
     assert!(!consume(&pool, receipt.id, &wrong_team).await);
     assert!(!consume(&pool, receipt.id, &wrong_user).await);
+    assert!(!consume(&pool, receipt.id, &wrong_purpose).await);
     assert!(consume(&pool, receipt.id, &receipt.scope).await);
     assert!(!consume(&pool, receipt.id, &receipt.scope).await);
 }
@@ -102,6 +119,7 @@ async fn expired_receipt_cannot_be_consumed(pool: PgPool) {
     let receipt = receipt(
         Uuid::from_u128(7),
         "macro|actor@example.com",
+        ReceiptPurpose::CompanyRoleChange,
         Utc::now() - Duration::minutes(6),
     );
     repo.mint(&receipt).await.unwrap();
@@ -112,7 +130,12 @@ async fn expired_receipt_cannot_be_consumed(pool: PgPool) {
 #[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
 async fn concurrent_consumers_have_exactly_one_winner(pool: PgPool) {
     let repo = PgReauthenticationReceiptRepo::new(pool.clone());
-    let receipt = receipt(Uuid::from_u128(7), "macro|actor@example.com", Utc::now());
+    let receipt = receipt(
+        Uuid::from_u128(7),
+        "macro|actor@example.com",
+        ReceiptPurpose::CompanyRoleChange,
+        Utc::now(),
+    );
     repo.mint(&receipt).await.unwrap();
 
     let (first, second) = tokio::join!(
@@ -126,7 +149,12 @@ async fn concurrent_consumers_have_exactly_one_winner(pool: PgPool) {
 #[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
 async fn caller_transaction_rollback_restores_consumability(pool: PgPool) {
     let repo = PgReauthenticationReceiptRepo::new(pool.clone());
-    let receipt = receipt(Uuid::from_u128(7), "macro|actor@example.com", Utc::now());
+    let receipt = receipt(
+        Uuid::from_u128(7),
+        "macro|actor@example.com",
+        ReceiptPurpose::CompanyRoleChange,
+        Utc::now(),
+    );
     repo.mint(&receipt).await.unwrap();
 
     let mut transaction = pool.begin().await.unwrap();
