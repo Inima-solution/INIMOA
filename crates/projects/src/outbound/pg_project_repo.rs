@@ -4,6 +4,7 @@ mod content;
 mod create;
 mod delete;
 mod edit;
+mod operations;
 mod revert_delete;
 mod share;
 mod upload_folder;
@@ -21,8 +22,8 @@ use model::project::{
 use sqlx::PgPool;
 
 use crate::domain::models::{
-    CreateProjectArgs, EditProjectArgs, MarkedUploadedTree, PurgedProjectTree, RevertDeleteResult,
-    SoftDeleteResult, UploadFolderRepoArgs,
+    CreateProjectArgs, EditProjectArgs, MarkedUploadedTree, ProjectOperations, PurgedProjectTree,
+    RevertDeleteResult, SoftDeleteResult, UploadFolderRepoArgs,
 };
 use crate::domain::ports::ProjectRepo;
 
@@ -100,6 +101,14 @@ impl ProjectRepo for PgProjectRepo {
         )
         .fetch_optional(&self.pool)
         .await
+    }
+
+    #[tracing::instrument(err, skip(self))]
+    async fn get_project_operations(
+        &self,
+        project_id: &str,
+    ) -> Result<Option<ProjectOperations>, Self::Err> {
+        operations::get_project_operations(&self.pool, project_id).await
     }
 
     #[tracing::instrument(err, skip(self))]

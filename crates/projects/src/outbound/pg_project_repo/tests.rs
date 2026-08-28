@@ -9,7 +9,7 @@ use model::project::ProjectPreviewV2;
 use models_permissions::share_permission::{
     LinkShare, SharePermissionV2, UpdateSharePermissionRequestV2, access_level::AccessLevel,
 };
-use sqlx::{Pool, Postgres};
+use sqlx::{Pool, Postgres, Row};
 
 use super::PgProjectRepo;
 use crate::domain::models::{CreateProjectArgs, EditProjectArgs, UploadFolderRepoArgs};
@@ -106,6 +106,212 @@ async fn basic_lookup_includes_deleted_but_full_lookup_excludes_it(
     assert!(repo.get_project_by_id(DELETED_ID).await?.is_none());
     assert!(repo.get_project_by_id(ROOT_ID).await?.is_some());
     assert!(repo.get_basic_project("missing").await?.is_none());
+    assert!(repo.get_project_operations(DELETED_ID).await?.is_none());
+    assert!(repo.get_project_operations("missing").await?.is_none());
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn project_operations_backfill_and_insert_trigger_provision_defaults(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let canonical_project_name: String =
+        sqlx::query_scalar(r#"SELECT name FROM "Project" WHERE id = $1"#)
+            .bind(ROOT_ID)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(canonical_project_name, "Root");
+
+    sqlx::raw_sql(include_str!(
+        "../../../../macro_db_client/migrations/20260828210000_project_operations.down.sql"
+    ))
+    .execute(&pool)
+    .await?;
+
+    let operations_table: Option<String> =
+        sqlx::query_scalar("SELECT to_regclass('project_operations')::text")
+            .fetch_one(&pool)
+            .await?;
+    assert!(operations_table.is_none());
+
+    let preexisting_project_id = "10000000-0000-0000-0000-000000000010";
+    sqlx::query(
+        r#"
+        INSERT INTO "Project" (id, name, "userId", "createdAt", "updatedAt")
+        VALUES ($1, $2, $3, NOW(), NOW())
+        "#,
+    )
+    .bind(preexisting_project_id)
+    .bind("Backfill source")
+    .bind("macro|owner@test.com")
+    .execute(&pool)
+    .await?;
+
+    sqlx::raw_sql(include_str!(
+        "../../../../macro_db_client/migrations/20260828210000_project_operations.up.sql"
+    ))
+    .execute(&pool)
+    .await?;
+
+    let repo = PgProjectRepo::new(pool.clone());
+    let backfilled = repo
+        .get_project_operations(preexisting_project_id)
+        .await?
+        .expect("operations backfilled for the preexisting project");
+    assert_eq!(backfilled.status.to_string(), "planned");
+    assert_eq!(backfilled.priority.to_string(), "normal");
+    assert!(backfilled.lead_user_id.is_none());
+    assert!(backfilled.start_date.is_none());
+    assert!(backfilled.target_date.is_none());
+    assert!(backfilled.completed_at.is_none());
+    assert!(backfilled.policy.is_none());
+
+    let trigger_project_id = "10000000-0000-0000-0000-000000000011";
+    sqlx::query(
+        r#"
+        INSERT INTO "Project" (id, name, "userId", "createdAt", "updatedAt")
+        VALUES ($1, $2, $3, NOW(), NOW())
+        "#,
+    )
+    .bind(trigger_project_id)
+    .bind("Trigger source")
+    .bind("macro|owner@test.com")
+    .execute(&pool)
+    .await?;
+    let operations = repo
+        .get_project_operations(trigger_project_id)
+        .await?
+        .expect("operations provisioned by trigger");
+    assert_eq!(operations.status.to_string(), "planned");
+    assert_eq!(operations.priority.to_string(), "normal");
+    assert!(operations.lead_user_id.is_none());
+    assert!(operations.start_date.is_none());
+    assert!(operations.target_date.is_none());
+    assert!(operations.completed_at.is_none());
+    assert!(operations.policy.is_none());
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn project_operations_database_constraints_reject_invalid_values_and_null_deleted_leads(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    for statement in [
+        "UPDATE project_operations SET status = 'unknown' WHERE project_id = $1",
+        "UPDATE project_operations SET priority = 'rush' WHERE project_id = $1",
+        "UPDATE project_operations SET start_date = DATE '2026-02-02', target_date = DATE '2026-02-01' WHERE project_id = $1",
+        "UPDATE project_operations SET policy = '[]'::jsonb WHERE project_id = $1",
+        "UPDATE project_operations SET policy = jsonb_build_object('value', repeat('x', 4096)) WHERE project_id = $1",
+        "UPDATE project_operations SET lead_user_id = 'macro|missing@test.com' WHERE project_id = $1",
+    ] {
+        assert!(
+            sqlx::query(statement)
+                .bind(ROOT_ID)
+                .execute(&pool)
+                .await
+                .is_err()
+        );
+    }
+
+    let lead = "macro|operations-lead@test.com";
+    let macro_user_id = "f0000000-0000-0000-0000-000000000001";
+    sqlx::query(
+        "INSERT INTO macro_user (id, username, email, stripe_customer_id) VALUES ($1::uuid, $2, $3, $4)",
+    )
+    .bind(macro_user_id)
+    .bind("operations-lead")
+    .bind("operations-lead@test.com")
+    .bind("cus_operations_lead")
+    .execute(&pool)
+    .await?;
+    sqlx::query(r#"INSERT INTO "User" (id, email, macro_user_id) VALUES ($1, $2, $3::uuid)"#)
+        .bind(lead)
+        .bind("operations-lead@test.com")
+        .bind(macro_user_id)
+        .execute(&pool)
+        .await?;
+    sqlx::query("UPDATE project_operations SET lead_user_id = $1 WHERE project_id = $2")
+        .bind(lead)
+        .bind(ROOT_ID)
+        .execute(&pool)
+        .await?;
+    sqlx::query(r#"DELETE FROM "User" WHERE id = $1"#)
+        .bind(lead)
+        .execute(&pool)
+        .await?;
+    let row = sqlx::query("SELECT lead_user_id FROM project_operations WHERE project_id = $1")
+        .bind(ROOT_ID)
+        .fetch_one(&pool)
+        .await?;
+    assert!(row.try_get::<Option<String>, _>("lead_user_id")?.is_none());
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn project_operations_survive_parent_move_soft_delete_restore_and_project_deletion(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    let before_move = repo
+        .get_project_operations(CHILD_ID)
+        .await?
+        .expect("child operations");
+    repo.edit_project(EditProjectArgs {
+        project_id: CHILD_ID.to_owned(),
+        name: None,
+        update_parent: true,
+        parent_id: None,
+        share_permission: None,
+    })
+    .await?;
+    assert_eq!(
+        repo.get_project_operations(CHILD_ID).await?,
+        Some(before_move)
+    );
+
+    let before_delete = repo
+        .get_project_operations(CHILD_ID)
+        .await?
+        .expect("active child operations");
+    repo.soft_delete_project(CHILD_ID).await?;
+    assert!(repo.get_project_operations(CHILD_ID).await?.is_none());
+    let retained: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM project_operations WHERE project_id = $1")
+            .bind(CHILD_ID)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(retained, 1);
+    repo.revert_delete_project(CHILD_ID, None).await?;
+    assert_eq!(
+        repo.get_project_operations(CHILD_ID).await?,
+        Some(before_delete)
+    );
+
+    let transient = repo
+        .create_project(CreateProjectArgs {
+            user_id: "macro|owner@test.com".to_owned(),
+            name: "Compensation cascade".to_owned(),
+            parent_id: None,
+            share_permission: SharePermissionV2::new_project_share_permission(None),
+        })
+        .await?;
+    repo.delete_uploaded_tree(&[transient.id.clone()], &[])
+        .await?;
+    let cascaded: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM project_operations WHERE project_id = $1")
+            .bind(&transient.id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(cascaded, 0);
     Ok(())
 }
 
@@ -560,6 +766,12 @@ async fn purge_returns_outputs_and_removes_access_and_permissions(
     .fetch_one(&pool)
     .await?;
     assert_eq!(remaining_permissions, 0);
+    let remaining_operations: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM project_operations WHERE project_id = ANY($1)")
+            .bind(&result.project_ids)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(remaining_operations, 0);
     Ok(())
 }
 
@@ -591,6 +803,12 @@ async fn purge_rolls_back_all_deletions(pool: Pool<Postgres>) -> anyhow::Result<
     .fetch_one(&pool)
     .await?;
     assert_eq!(permission_count, 1);
+    let operation_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM project_operations WHERE project_id = $1")
+            .bind(ROOT_ID)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(operation_count, 1);
     Ok(())
 }
 

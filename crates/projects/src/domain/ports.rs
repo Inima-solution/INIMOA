@@ -29,7 +29,8 @@ use uuid::Uuid;
 
 use super::models::{
     CreateProjectArgs, EditProjectArgs, MarkedUploadedTree, MutatedProject, ProjectError,
-    PurgedProjectTree, RevertDeleteResult, SoftDeleteResult, UploadFolderRepoArgs,
+    ProjectOperations, PurgedProjectTree, RevertDeleteResult, SoftDeleteResult,
+    UploadFolderRepoArgs,
 };
 
 /// Repository for reading project data from persistent storage.
@@ -52,6 +53,12 @@ pub trait ProjectRepo: Send + Sync + 'static {
         &self,
         project_id: &str,
     ) -> impl Future<Output = Result<Option<Project>, Self::Err>> + Send;
+
+    /// Get operational metadata for a non-deleted project.
+    fn get_project_operations(
+        &self,
+        project_id: &str,
+    ) -> impl Future<Output = Result<Option<ProjectOperations>, Self::Err>> + Send;
 
     /// List non-deleted, uploaded projects in the user's view history.
     fn get_projects_for_user(

@@ -1,9 +1,147 @@
 //! Domain-owned project models.
 
+use std::{fmt::Display, str::FromStr};
+
+use chrono::{DateTime, NaiveDate, Utc};
 use macro_user_id::user_id::MacroUserIdStr;
 use model::folder::FileSystemNode;
 use model::project::Project;
 use models_permissions::share_permission::{SharePermissionV2, UpdateSharePermissionRequestV2};
+
+#[cfg(test)]
+mod test;
+
+/// The operational lifecycle state stored for a project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectOperationalStatus {
+    /// Work has not started.
+    Planned,
+    /// Work is underway.
+    Active,
+    /// Work is intentionally paused.
+    Paused,
+    /// Work is complete.
+    Completed,
+    /// The operational record is retained but no longer current.
+    Archived,
+}
+
+/// The relative operational urgency stored for a project.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ProjectPriority {
+    /// Low urgency.
+    Low,
+    /// Normal urgency.
+    Normal,
+    /// High urgency.
+    High,
+    /// Urgent work.
+    Urgent,
+}
+
+/// Error returned when a stored operational enum value is not recognized.
+#[derive(Debug, thiserror::Error)]
+#[error("invalid {kind} value: {value}")]
+pub struct ParseProjectOperationsEnumError {
+    kind: &'static str,
+    value: String,
+}
+
+impl ParseProjectOperationsEnumError {
+    fn new(kind: &'static str, value: &str) -> Self {
+        Self {
+            kind,
+            value: value.to_owned(),
+        }
+    }
+}
+
+impl Display for ProjectOperationalStatus {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Planned => "planned",
+            Self::Active => "active",
+            Self::Paused => "paused",
+            Self::Completed => "completed",
+            Self::Archived => "archived",
+        })
+    }
+}
+
+impl FromStr for ProjectOperationalStatus {
+    type Err = ParseProjectOperationsEnumError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "planned" => Ok(Self::Planned),
+            "active" => Ok(Self::Active),
+            "paused" => Ok(Self::Paused),
+            "completed" => Ok(Self::Completed),
+            "archived" => Ok(Self::Archived),
+            _ => Err(ParseProjectOperationsEnumError::new(
+                "ProjectOperationalStatus",
+                value,
+            )),
+        }
+    }
+}
+
+impl Display for ProjectPriority {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Low => "low",
+            Self::Normal => "normal",
+            Self::High => "high",
+            Self::Urgent => "urgent",
+        })
+    }
+}
+
+impl FromStr for ProjectPriority {
+    type Err = ParseProjectOperationsEnumError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "low" => Ok(Self::Low),
+            "normal" => Ok(Self::Normal),
+            "high" => Ok(Self::High),
+            "urgent" => Ok(Self::Urgent),
+            _ => Err(ParseProjectOperationsEnumError::new(
+                "ProjectPriority",
+                value,
+            )),
+        }
+    }
+}
+
+/// Operational metadata attached one-to-one to a canonical project.
+///
+/// This model deliberately excludes project content and generic project fields.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ProjectOperations {
+    /// Canonical project identifier.
+    pub project_id: String,
+    /// Operational lifecycle state.
+    pub status: ProjectOperationalStatus,
+    /// Relative operational urgency.
+    pub priority: ProjectPriority,
+    /// Optional operational lead.
+    pub lead_user_id: Option<MacroUserIdStr<'static>>,
+    /// Optional planned start date.
+    pub start_date: Option<NaiveDate>,
+    /// Optional planned target date.
+    pub target_date: Option<NaiveDate>,
+    /// When work was completed, if recorded.
+    pub completed_at: Option<DateTime<Utc>>,
+    /// When the operational record was created.
+    pub created_at: DateTime<Utc>,
+    /// When the operational record was last updated.
+    pub updated_at: DateTime<Utc>,
+    /// Optional bounded object-shaped operational policy.
+    pub policy: Option<serde_json::Value>,
+}
 
 /// Arguments for atomically creating a project and its access metadata.
 #[derive(Debug, Clone)]
