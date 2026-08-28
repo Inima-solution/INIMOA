@@ -40,6 +40,7 @@ import { Account } from './Account';
 import { Admin } from './Admin';
 import { Agent } from './Agent';
 import { Appearance } from './Appearance';
+import { Audit } from './Audit';
 import { ConnectedAccounts } from './ConnectedAccounts';
 import { Crm } from './Crm';
 import { MobileApp } from './MobileApp';
@@ -437,6 +438,11 @@ export function SettingsPanel(props: SettingsPanelProps) {
                 </Show>
                 <Show when={isCurrentTab('Admin')}>
                   <Admin />
+                </Show>
+                <Show when={isCurrentTab('Audit')}>
+                  <Suspense>
+                    <Audit />
+                  </Suspense>
                 </Show>
               </div>
             </div>

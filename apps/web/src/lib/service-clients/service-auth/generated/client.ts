@@ -6,6 +6,12 @@
  */
 import type {
   AppleLoginRequest,
+  BusinessAuditAccessResponse,
+  BusinessAuditDetailResponse,
+  BusinessAuditExportRequest,
+  BusinessAuditListResponse,
+  BusinessRoleChangeRequest,
+  BusinessRoleChangeResponse,
   CreateAccountMergeRequest,
   CreateCheckoutSessionV2Request,
   CreateInProgressLinkResponse,
@@ -34,6 +40,7 @@ import type {
   InitOutlookLinkParams,
   InitOutlookLinkResponse,
   InviteToTeamRequest,
+  ListTeamBusinessAuditParams,
   MacroApiTokenParams,
   MacroApiTokenResponse,
   PasswordlessCallbackParams,
@@ -53,6 +60,11 @@ import type {
   PutCursorDefaultModelRequest,
   PutProfilePictureParams,
   PutUserNameParams,
+  ReauthenticateMfaRequest,
+  ReauthenticateMfaUnauthorizedResponse,
+  ReauthenticateRequest,
+  ReauthenticateResponse,
+  ReauthenticateUnauthorizedResponse,
   ResendFusionauthVerifyUserEmailRequest,
   SendInviteBody,
   SendMobileWelcomeEmailRequest,
@@ -2747,6 +2759,624 @@ export const toggleTeamAutoJoinDomain = async (
 };
 
 /**
+ * @summary Lists immutable business-audit facts for the receipt's team.
+ */
+export type listTeamBusinessAuditResponse200 = {
+  data: BusinessAuditListResponse;
+  status: 200;
+};
+
+export type listTeamBusinessAuditResponse400 = {
+  data: ErrorResponse;
+  status: 400;
+};
+
+export type listTeamBusinessAuditResponse401 = {
+  data: ErrorResponse;
+  status: 401;
+};
+
+export type listTeamBusinessAuditResponse403 = {
+  data: ErrorResponse;
+  status: 403;
+};
+
+export type listTeamBusinessAuditResponse500 = {
+  data: ErrorResponse;
+  status: 500;
+};
+
+export type listTeamBusinessAuditResponseSuccess =
+  listTeamBusinessAuditResponse200 & {
+    headers: Headers;
+  };
+export type listTeamBusinessAuditResponseError = (
+  | listTeamBusinessAuditResponse400
+  | listTeamBusinessAuditResponse401
+  | listTeamBusinessAuditResponse403
+  | listTeamBusinessAuditResponse500
+) & {
+  headers: Headers;
+};
+
+export type listTeamBusinessAuditResponse =
+  | listTeamBusinessAuditResponseSuccess
+  | listTeamBusinessAuditResponseError;
+
+export const getListTeamBusinessAuditUrl = (
+  params?: ListTeamBusinessAuditParams
+) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : value.toString());
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0
+    ? `/team/business-audit?${stringifiedParams}`
+    : `/team/business-audit`;
+};
+
+export const listTeamBusinessAudit = async (
+  params?: ListTeamBusinessAuditParams,
+  options?: RequestInit
+): Promise<listTeamBusinessAuditResponse> => {
+  const res = await fetch(getListTeamBusinessAuditUrl(params), {
+    ...options,
+    method: 'GET',
+  });
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: listTeamBusinessAuditResponse['data'] = body
+    ? JSON.parse(body)
+    : {};
+  return {
+    data,
+    status: res.status,
+    headers: res.headers,
+  } as listTeamBusinessAuditResponse;
+};
+
+/**
+ * @summary Returns only the direct human's audit capabilities for their current team.
+ */
+export type getTeamBusinessAuditAccessResponse200 = {
+  data: BusinessAuditAccessResponse;
+  status: 200;
+};
+
+export type getTeamBusinessAuditAccessResponse401 = {
+  data: ErrorResponse;
+  status: 401;
+};
+
+export type getTeamBusinessAuditAccessResponse403 = {
+  data: ErrorResponse;
+  status: 403;
+};
+
+export type getTeamBusinessAuditAccessResponse500 = {
+  data: ErrorResponse;
+  status: 500;
+};
+
+export type getTeamBusinessAuditAccessResponseSuccess =
+  getTeamBusinessAuditAccessResponse200 & {
+    headers: Headers;
+  };
+export type getTeamBusinessAuditAccessResponseError = (
+  | getTeamBusinessAuditAccessResponse401
+  | getTeamBusinessAuditAccessResponse403
+  | getTeamBusinessAuditAccessResponse500
+) & {
+  headers: Headers;
+};
+
+export type getTeamBusinessAuditAccessResponse =
+  | getTeamBusinessAuditAccessResponseSuccess
+  | getTeamBusinessAuditAccessResponseError;
+
+export const getGetTeamBusinessAuditAccessUrl = () => {
+  return `/team/business-audit/access`;
+};
+
+export const getTeamBusinessAuditAccess = async (
+  options?: RequestInit
+): Promise<getTeamBusinessAuditAccessResponse> => {
+  const res = await fetch(getGetTeamBusinessAuditAccessUrl(), {
+    ...options,
+    method: 'GET',
+  });
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getTeamBusinessAuditAccessResponse['data'] = body
+    ? JSON.parse(body)
+    : {};
+  return {
+    data,
+    status: res.status,
+    headers: res.headers,
+  } as getTeamBusinessAuditAccessResponse;
+};
+
+/**
+ * @summary Consumes one exact export receipt, renders the bounded CSV, records the
+successful export fact, and commits all three effects atomically.
+ */
+export type exportTeamBusinessAuditResponse400 = {
+  data: ErrorResponse;
+  status: 400;
+};
+
+export type exportTeamBusinessAuditResponse401 = {
+  data: ErrorResponse;
+  status: 401;
+};
+
+export type exportTeamBusinessAuditResponse403 = {
+  data: ErrorResponse;
+  status: 403;
+};
+
+export type exportTeamBusinessAuditResponse409 = {
+  data: ErrorResponse;
+  status: 409;
+};
+
+export type exportTeamBusinessAuditResponse413 = {
+  data: ErrorResponse;
+  status: 413;
+};
+
+export type exportTeamBusinessAuditResponse500 = {
+  data: ErrorResponse;
+  status: 500;
+};
+export type exportTeamBusinessAuditResponseError = (
+  | exportTeamBusinessAuditResponse400
+  | exportTeamBusinessAuditResponse401
+  | exportTeamBusinessAuditResponse403
+  | exportTeamBusinessAuditResponse409
+  | exportTeamBusinessAuditResponse413
+  | exportTeamBusinessAuditResponse500
+) & {
+  headers: Headers;
+};
+
+export type exportTeamBusinessAuditResponse =
+  exportTeamBusinessAuditResponseError;
+
+export const getExportTeamBusinessAuditUrl = () => {
+  return `/team/business-audit/export`;
+};
+
+export const exportTeamBusinessAudit = async (
+  businessAuditExportRequest: BusinessAuditExportRequest,
+  options?: RequestInit
+): Promise<exportTeamBusinessAuditResponse> => {
+  const res = await fetch(getExportTeamBusinessAuditUrl(), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(businessAuditExportRequest),
+  });
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: exportTeamBusinessAuditResponse['data'] = body
+    ? JSON.parse(body)
+    : {};
+  return {
+    data,
+    status: res.status,
+    headers: res.headers,
+  } as exportTeamBusinessAuditResponse;
+};
+
+/**
+ * @summary Mints a purpose-scoped receipt for a bounded audit export.
+ */
+export type reauthenticateForTeamBusinessAuditExportResponse200 = {
+  data: ReauthenticateResponse;
+  status: 200;
+};
+
+export type reauthenticateForTeamBusinessAuditExportResponse400 = {
+  data: ErrorResponse;
+  status: 400;
+};
+
+export type reauthenticateForTeamBusinessAuditExportResponse401 = {
+  data: ReauthenticateUnauthorizedResponse;
+  status: 401;
+};
+
+export type reauthenticateForTeamBusinessAuditExportResponse403 = {
+  data: ErrorResponse;
+  status: 403;
+};
+
+export type reauthenticateForTeamBusinessAuditExportResponse429 = {
+  data: ErrorResponse;
+  status: 429;
+};
+
+export type reauthenticateForTeamBusinessAuditExportResponse500 = {
+  data: ErrorResponse;
+  status: 500;
+};
+
+export type reauthenticateForTeamBusinessAuditExportResponse502 = {
+  data: ErrorResponse;
+  status: 502;
+};
+
+export type reauthenticateForTeamBusinessAuditExportResponseSuccess =
+  reauthenticateForTeamBusinessAuditExportResponse200 & {
+    headers: Headers;
+  };
+export type reauthenticateForTeamBusinessAuditExportResponseError = (
+  | reauthenticateForTeamBusinessAuditExportResponse400
+  | reauthenticateForTeamBusinessAuditExportResponse401
+  | reauthenticateForTeamBusinessAuditExportResponse403
+  | reauthenticateForTeamBusinessAuditExportResponse429
+  | reauthenticateForTeamBusinessAuditExportResponse500
+  | reauthenticateForTeamBusinessAuditExportResponse502
+) & {
+  headers: Headers;
+};
+
+export type reauthenticateForTeamBusinessAuditExportResponse =
+  | reauthenticateForTeamBusinessAuditExportResponseSuccess
+  | reauthenticateForTeamBusinessAuditExportResponseError;
+
+export const getReauthenticateForTeamBusinessAuditExportUrl = () => {
+  return `/team/business-audit/reauth`;
+};
+
+export const reauthenticateForTeamBusinessAuditExport = async (
+  reauthenticateRequest: ReauthenticateRequest,
+  options?: RequestInit
+): Promise<reauthenticateForTeamBusinessAuditExportResponse> => {
+  const res = await fetch(getReauthenticateForTeamBusinessAuditExportUrl(), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(reauthenticateRequest),
+  });
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: reauthenticateForTeamBusinessAuditExportResponse['data'] = body
+    ? JSON.parse(body)
+    : {};
+  return {
+    data,
+    status: res.status,
+    headers: res.headers,
+  } as reauthenticateForTeamBusinessAuditExportResponse;
+};
+
+/**
+ * @summary Completes an MFA challenge for a purpose-scoped audit-export receipt.
+ */
+export type completeTeamBusinessAuditExportReauthenticationMfaResponse200 = {
+  data: ReauthenticateResponse;
+  status: 200;
+};
+
+export type completeTeamBusinessAuditExportReauthenticationMfaResponse400 = {
+  data: ErrorResponse;
+  status: 400;
+};
+
+export type completeTeamBusinessAuditExportReauthenticationMfaResponse401 = {
+  data: ReauthenticateMfaUnauthorizedResponse;
+  status: 401;
+};
+
+export type completeTeamBusinessAuditExportReauthenticationMfaResponse403 = {
+  data: ErrorResponse;
+  status: 403;
+};
+
+export type completeTeamBusinessAuditExportReauthenticationMfaResponse429 = {
+  data: ErrorResponse;
+  status: 429;
+};
+
+export type completeTeamBusinessAuditExportReauthenticationMfaResponse500 = {
+  data: ErrorResponse;
+  status: 500;
+};
+
+export type completeTeamBusinessAuditExportReauthenticationMfaResponse502 = {
+  data: ErrorResponse;
+  status: 502;
+};
+
+export type completeTeamBusinessAuditExportReauthenticationMfaResponseSuccess =
+  completeTeamBusinessAuditExportReauthenticationMfaResponse200 & {
+    headers: Headers;
+  };
+export type completeTeamBusinessAuditExportReauthenticationMfaResponseError = (
+  | completeTeamBusinessAuditExportReauthenticationMfaResponse400
+  | completeTeamBusinessAuditExportReauthenticationMfaResponse401
+  | completeTeamBusinessAuditExportReauthenticationMfaResponse403
+  | completeTeamBusinessAuditExportReauthenticationMfaResponse429
+  | completeTeamBusinessAuditExportReauthenticationMfaResponse500
+  | completeTeamBusinessAuditExportReauthenticationMfaResponse502
+) & {
+  headers: Headers;
+};
+
+export type completeTeamBusinessAuditExportReauthenticationMfaResponse =
+  | completeTeamBusinessAuditExportReauthenticationMfaResponseSuccess
+  | completeTeamBusinessAuditExportReauthenticationMfaResponseError;
+
+export const getCompleteTeamBusinessAuditExportReauthenticationMfaUrl = () => {
+  return `/team/business-audit/reauth/mfa`;
+};
+
+export const completeTeamBusinessAuditExportReauthenticationMfa = async (
+  reauthenticateMfaRequest: ReauthenticateMfaRequest,
+  options?: RequestInit
+): Promise<completeTeamBusinessAuditExportReauthenticationMfaResponse> => {
+  const res = await fetch(
+    getCompleteTeamBusinessAuditExportReauthenticationMfaUrl(),
+    {
+      ...options,
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...options?.headers },
+      body: JSON.stringify(reauthenticateMfaRequest),
+    }
+  );
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: completeTeamBusinessAuditExportReauthenticationMfaResponse['data'] =
+    body ? JSON.parse(body) : {};
+  return {
+    data,
+    status: res.status,
+    headers: res.headers,
+  } as completeTeamBusinessAuditExportReauthenticationMfaResponse;
+};
+
+/**
+ * @summary Returns privileged detail for one immutable fact and records the successful
+read in the same ledger without exposing the newly written fact.
+ */
+export type getTeamBusinessAuditDetailResponse200 = {
+  data: BusinessAuditDetailResponse;
+  status: 200;
+};
+
+export type getTeamBusinessAuditDetailResponse401 = {
+  data: ErrorResponse;
+  status: 401;
+};
+
+export type getTeamBusinessAuditDetailResponse403 = {
+  data: ErrorResponse;
+  status: 403;
+};
+
+export type getTeamBusinessAuditDetailResponse404 = {
+  data: ErrorResponse;
+  status: 404;
+};
+
+export type getTeamBusinessAuditDetailResponse500 = {
+  data: ErrorResponse;
+  status: 500;
+};
+
+export type getTeamBusinessAuditDetailResponseSuccess =
+  getTeamBusinessAuditDetailResponse200 & {
+    headers: Headers;
+  };
+export type getTeamBusinessAuditDetailResponseError = (
+  | getTeamBusinessAuditDetailResponse401
+  | getTeamBusinessAuditDetailResponse403
+  | getTeamBusinessAuditDetailResponse404
+  | getTeamBusinessAuditDetailResponse500
+) & {
+  headers: Headers;
+};
+
+export type getTeamBusinessAuditDetailResponse =
+  | getTeamBusinessAuditDetailResponseSuccess
+  | getTeamBusinessAuditDetailResponseError;
+
+export const getGetTeamBusinessAuditDetailUrl = (id: string) => {
+  return `/team/business-audit/${id}`;
+};
+
+export const getTeamBusinessAuditDetail = async (
+  id: string,
+  options?: RequestInit
+): Promise<getTeamBusinessAuditDetailResponse> => {
+  const res = await fetch(getGetTeamBusinessAuditDetailUrl(id), {
+    ...options,
+    method: 'GET',
+  });
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: getTeamBusinessAuditDetailResponse['data'] = body
+    ? JSON.parse(body)
+    : {};
+  return {
+    data,
+    status: res.status,
+    headers: res.headers,
+  } as getTeamBusinessAuditDetailResponse;
+};
+
+/**
+ * @summary Grants one company business role to a direct human teammate.
+ */
+export type grantTeamBusinessRoleResponse200 = {
+  data: BusinessRoleChangeResponse;
+  status: 200;
+};
+
+export type grantTeamBusinessRoleResponse400 = {
+  data: ErrorResponse;
+  status: 400;
+};
+
+export type grantTeamBusinessRoleResponse403 = {
+  data: ErrorResponse;
+  status: 403;
+};
+
+export type grantTeamBusinessRoleResponse404 = {
+  data: ErrorResponse;
+  status: 404;
+};
+
+export type grantTeamBusinessRoleResponse409 = {
+  data: ErrorResponse;
+  status: 409;
+};
+
+export type grantTeamBusinessRoleResponse500 = {
+  data: ErrorResponse;
+  status: 500;
+};
+
+export type grantTeamBusinessRoleResponseSuccess =
+  grantTeamBusinessRoleResponse200 & {
+    headers: Headers;
+  };
+export type grantTeamBusinessRoleResponseError = (
+  | grantTeamBusinessRoleResponse400
+  | grantTeamBusinessRoleResponse403
+  | grantTeamBusinessRoleResponse404
+  | grantTeamBusinessRoleResponse409
+  | grantTeamBusinessRoleResponse500
+) & {
+  headers: Headers;
+};
+
+export type grantTeamBusinessRoleResponse =
+  | grantTeamBusinessRoleResponseSuccess
+  | grantTeamBusinessRoleResponseError;
+
+export const getGrantTeamBusinessRoleUrl = () => {
+  return `/team/business-role/grant`;
+};
+
+export const grantTeamBusinessRole = async (
+  businessRoleChangeRequest: BusinessRoleChangeRequest,
+  options?: RequestInit
+): Promise<grantTeamBusinessRoleResponse> => {
+  const res = await fetch(getGrantTeamBusinessRoleUrl(), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(businessRoleChangeRequest),
+  });
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: grantTeamBusinessRoleResponse['data'] = body
+    ? JSON.parse(body)
+    : {};
+  return {
+    data,
+    status: res.status,
+    headers: res.headers,
+  } as grantTeamBusinessRoleResponse;
+};
+
+/**
+ * @summary Revokes one company business role from a direct human teammate.
+ */
+export type revokeTeamBusinessRoleResponse200 = {
+  data: BusinessRoleChangeResponse;
+  status: 200;
+};
+
+export type revokeTeamBusinessRoleResponse400 = {
+  data: ErrorResponse;
+  status: 400;
+};
+
+export type revokeTeamBusinessRoleResponse403 = {
+  data: ErrorResponse;
+  status: 403;
+};
+
+export type revokeTeamBusinessRoleResponse404 = {
+  data: ErrorResponse;
+  status: 404;
+};
+
+export type revokeTeamBusinessRoleResponse409 = {
+  data: ErrorResponse;
+  status: 409;
+};
+
+export type revokeTeamBusinessRoleResponse500 = {
+  data: ErrorResponse;
+  status: 500;
+};
+
+export type revokeTeamBusinessRoleResponseSuccess =
+  revokeTeamBusinessRoleResponse200 & {
+    headers: Headers;
+  };
+export type revokeTeamBusinessRoleResponseError = (
+  | revokeTeamBusinessRoleResponse400
+  | revokeTeamBusinessRoleResponse403
+  | revokeTeamBusinessRoleResponse404
+  | revokeTeamBusinessRoleResponse409
+  | revokeTeamBusinessRoleResponse500
+) & {
+  headers: Headers;
+};
+
+export type revokeTeamBusinessRoleResponse =
+  | revokeTeamBusinessRoleResponseSuccess
+  | revokeTeamBusinessRoleResponseError;
+
+export const getRevokeTeamBusinessRoleUrl = () => {
+  return `/team/business-role/revoke`;
+};
+
+export const revokeTeamBusinessRole = async (
+  businessRoleChangeRequest: BusinessRoleChangeRequest,
+  options?: RequestInit
+): Promise<revokeTeamBusinessRoleResponse> => {
+  const res = await fetch(getRevokeTeamBusinessRoleUrl(), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(businessRoleChangeRequest),
+  });
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: revokeTeamBusinessRoleResponse['data'] = body
+    ? JSON.parse(body)
+    : {};
+  return {
+    data,
+    status: res.status,
+    headers: res.headers,
+  } as revokeTeamBusinessRoleResponse;
+};
+
+/**
  * @summary Enables or disables CRM for the team. On enable with `backfill`
 (the default), kicks off a best-effort backfill that enqueues a
 `PopulateCrmForUser` message per team member (no-op if CRM is
@@ -3223,6 +3853,174 @@ export const toggleTeamNonAdminInvites = async (
     status: res.status,
     headers: res.headers,
   } as toggleTeamNonAdminInvitesResponse;
+};
+
+/**
+ * @summary Verifies a directly authenticated team owner/admin and mints a five-minute receipt.
+ */
+export type reauthenticateForTeamRoleChangeResponse200 = {
+  data: ReauthenticateResponse;
+  status: 200;
+};
+
+export type reauthenticateForTeamRoleChangeResponse400 = {
+  data: ErrorResponse;
+  status: 400;
+};
+
+export type reauthenticateForTeamRoleChangeResponse401 = {
+  data: ReauthenticateUnauthorizedResponse;
+  status: 401;
+};
+
+export type reauthenticateForTeamRoleChangeResponse403 = {
+  data: ErrorResponse;
+  status: 403;
+};
+
+export type reauthenticateForTeamRoleChangeResponse429 = {
+  data: ErrorResponse;
+  status: 429;
+};
+
+export type reauthenticateForTeamRoleChangeResponse500 = {
+  data: ErrorResponse;
+  status: 500;
+};
+
+export type reauthenticateForTeamRoleChangeResponse502 = {
+  data: ErrorResponse;
+  status: 502;
+};
+
+export type reauthenticateForTeamRoleChangeResponseSuccess =
+  reauthenticateForTeamRoleChangeResponse200 & {
+    headers: Headers;
+  };
+export type reauthenticateForTeamRoleChangeResponseError = (
+  | reauthenticateForTeamRoleChangeResponse400
+  | reauthenticateForTeamRoleChangeResponse401
+  | reauthenticateForTeamRoleChangeResponse403
+  | reauthenticateForTeamRoleChangeResponse429
+  | reauthenticateForTeamRoleChangeResponse500
+  | reauthenticateForTeamRoleChangeResponse502
+) & {
+  headers: Headers;
+};
+
+export type reauthenticateForTeamRoleChangeResponse =
+  | reauthenticateForTeamRoleChangeResponseSuccess
+  | reauthenticateForTeamRoleChangeResponseError;
+
+export const getReauthenticateForTeamRoleChangeUrl = () => {
+  return `/team/reauth`;
+};
+
+export const reauthenticateForTeamRoleChange = async (
+  reauthenticateRequest: ReauthenticateRequest,
+  options?: RequestInit
+): Promise<reauthenticateForTeamRoleChangeResponse> => {
+  const res = await fetch(getReauthenticateForTeamRoleChangeUrl(), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(reauthenticateRequest),
+  });
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: reauthenticateForTeamRoleChangeResponse['data'] = body
+    ? JSON.parse(body)
+    : {};
+  return {
+    data,
+    status: res.status,
+    headers: res.headers,
+  } as reauthenticateForTeamRoleChangeResponse;
+};
+
+/**
+ * @summary Completes an existing MFA challenge for the same directly authenticated team owner/admin.
+ */
+export type completeTeamReauthenticationMfaResponse200 = {
+  data: ReauthenticateResponse;
+  status: 200;
+};
+
+export type completeTeamReauthenticationMfaResponse400 = {
+  data: ErrorResponse;
+  status: 400;
+};
+
+export type completeTeamReauthenticationMfaResponse401 = {
+  data: ReauthenticateMfaUnauthorizedResponse;
+  status: 401;
+};
+
+export type completeTeamReauthenticationMfaResponse403 = {
+  data: ErrorResponse;
+  status: 403;
+};
+
+export type completeTeamReauthenticationMfaResponse429 = {
+  data: ErrorResponse;
+  status: 429;
+};
+
+export type completeTeamReauthenticationMfaResponse500 = {
+  data: ErrorResponse;
+  status: 500;
+};
+
+export type completeTeamReauthenticationMfaResponse502 = {
+  data: ErrorResponse;
+  status: 502;
+};
+
+export type completeTeamReauthenticationMfaResponseSuccess =
+  completeTeamReauthenticationMfaResponse200 & {
+    headers: Headers;
+  };
+export type completeTeamReauthenticationMfaResponseError = (
+  | completeTeamReauthenticationMfaResponse400
+  | completeTeamReauthenticationMfaResponse401
+  | completeTeamReauthenticationMfaResponse403
+  | completeTeamReauthenticationMfaResponse429
+  | completeTeamReauthenticationMfaResponse500
+  | completeTeamReauthenticationMfaResponse502
+) & {
+  headers: Headers;
+};
+
+export type completeTeamReauthenticationMfaResponse =
+  | completeTeamReauthenticationMfaResponseSuccess
+  | completeTeamReauthenticationMfaResponseError;
+
+export const getCompleteTeamReauthenticationMfaUrl = () => {
+  return `/team/reauth/mfa`;
+};
+
+export const completeTeamReauthenticationMfa = async (
+  reauthenticateMfaRequest: ReauthenticateMfaRequest,
+  options?: RequestInit
+): Promise<completeTeamReauthenticationMfaResponse> => {
+  const res = await fetch(getCompleteTeamReauthenticationMfaUrl(), {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(reauthenticateMfaRequest),
+  });
+
+  const body = [204, 205, 304].includes(res.status) ? null : await res.text();
+
+  const data: completeTeamReauthenticationMfaResponse['data'] = body
+    ? JSON.parse(body)
+    : {};
+  return {
+    data,
+    status: res.status,
+    headers: res.headers,
+  } as completeTeamReauthenticationMfaResponse;
 };
 
 /**

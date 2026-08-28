@@ -6,6 +6,7 @@ import BuildingsIcon from '@phosphor/buildings.svg';
 import CpuIcon from '@phosphor/cpu.svg';
 import CreditCardIcon from '@phosphor/credit-card.svg';
 import DeviceMobileIcon from '@phosphor/device-mobile-speaker.svg';
+import FileTextIcon from '@phosphor/file-text.svg';
 import KeyboardIcon from '@phosphor/keyboard.svg';
 import PlugIcon from '@phosphor/plug.svg';
 import SwatchesIcon from '@phosphor/swatches.svg';
@@ -77,7 +78,10 @@ export const SETTINGS_TAB_GROUPS: SettingsTabGroup[] = [
   },
   {
     label: 'Admin',
-    items: [{ tab: 'Admin', label: 'Debug', icon: BugIcon }],
+    items: [
+      { tab: 'Audit', label: 'Audit', icon: FileTextIcon },
+      { tab: 'Admin', label: 'Debug', icon: BugIcon },
+    ],
   },
 ];
 
@@ -111,6 +115,7 @@ const SETTINGS_TAB_SLUGS: Record<SettingsTab, string> = {
   Email: 'email',
   GitHub: 'github',
   Admin: 'admin',
+  Audit: 'audit',
 };
 
 const SETTINGS_SLUG_TO_TAB = new Map<string, SettingsTab>(
@@ -190,6 +195,10 @@ export const useSettingsTabAvailable = () => {
         return isNativeMobilePlatform() && DEV_MODE_ENV;
       case 'Admin':
         return hasAdminPanel();
+      // Audit performs its own server-authoritative access check so members
+      // can receive the explicit permission state rather than a hidden tab.
+      case 'Audit':
+        return true;
       default:
         return false;
     }

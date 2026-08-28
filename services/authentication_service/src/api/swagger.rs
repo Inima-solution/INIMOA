@@ -19,8 +19,8 @@ use user_quota::UserQuota;
 use utoipa::OpenApi;
 
 use crate::api::business_audit::{
-    BusinessAuditDetailResponse, BusinessAuditExportRequest, BusinessAuditListItem,
-    BusinessAuditListResponse,
+    BusinessAuditAccessResponse, BusinessAuditDetailResponse, BusinessAuditExportRequest,
+    BusinessAuditListItem, BusinessAuditListResponse,
 };
 use crate::api::business_role_change::{BusinessRoleChangeRequest, BusinessRoleChangeResponse};
 use crate::api::cursor_api_key::{CursorApiKeyStatus, put_cursor_api_key::PutCursorApiKeyRequest};
@@ -165,6 +165,7 @@ use model::user::{
                 crate::api::reauth::mfa_handler,
                 crate::api::business_role_change::grant_handler,
                 crate::api::business_role_change::revoke_handler,
+                crate::api::business_audit::access_handler,
                 crate::api::business_audit::handler,
                 crate::api::business_audit::detail_handler,
                 crate::api::business_audit::reauth_handler,
@@ -254,6 +255,7 @@ use model::user::{
                         ReauthenticateMfaUnauthorizedResponse,
                         BusinessRoleChangeRequest,
                         BusinessRoleChangeResponse,
+                        BusinessAuditAccessResponse,
                         BusinessAuditListItem,
                         BusinessAuditListResponse,
                         BusinessAuditDetailResponse,
@@ -486,6 +488,26 @@ mod tests {
             "metadata",
         ] {
             assert!(properties.get(forbidden).is_none());
+        }
+    }
+
+    #[test]
+    fn team_business_audit_access_openapi_exposes_only_capability_booleans() {
+        let openapi = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let operation = &openapi["paths"]["/team/business-audit/access"]["get"];
+        assert_eq!(operation["operationId"], "get_team_business_audit_access");
+        for status in ["200", "401", "403", "500"] {
+            assert!(
+                operation["responses"][status].is_object(),
+                "missing {status}"
+            );
+        }
+        let properties =
+            &openapi["components"]["schemas"]["BusinessAuditAccessResponse"]["properties"];
+        assert!(properties.get("can_read").is_some());
+        assert!(properties.get("can_export").is_some());
+        for forbidden in ["team_id", "role", "receipt", "items", "count"] {
+            assert!(properties.get(forbidden).is_none(), "leaked {forbidden}");
         }
     }
 

@@ -2297,6 +2297,657 @@
         }
       }
     },
+    "/team/business-audit": {
+      "get": {
+        "tags": ["crate::api::business_audit"],
+        "summary": "Lists immutable business-audit facts for the receipt's team.",
+        "operationId": "list_team_business_audit",
+        "parameters": [
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "Opaque keyset cursor returned by the previous page.",
+            "required": false,
+            "schema": {
+              "type": ["string", "null"]
+            }
+          },
+          {
+            "name": "retention_class",
+            "in": "query",
+            "description": "Optional closed retention-class filter.",
+            "required": false,
+            "schema": {
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "$ref": "#/components/schemas/BusinessAuditRetentionFilter"
+                }
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Requested page size, clamped into the service boundary.",
+            "required": false,
+            "schema": {
+              "type": ["integer", "null"],
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessAuditListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/team/business-audit/access": {
+      "get": {
+        "tags": ["crate::api::business_audit"],
+        "summary": "Returns only the direct human's audit capabilities for their current team.",
+        "operationId": "get_team_business_audit_access",
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessAuditAccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/team/business-audit/export": {
+      "post": {
+        "tags": ["crate::api::business_audit"],
+        "summary": "Consumes one exact export receipt, renders the bounded CSV, records the\nsuccessful export fact, and commits all three effects atomically.",
+        "operationId": "export_team_business_audit",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BusinessAuditExportRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "RFC4180 CSV download",
+            "headers": {
+              "Cache-Control": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "no-store"
+              },
+              "Content-Disposition": {
+                "schema": {
+                  "type": "string"
+                },
+                "description": "attachment; filename=business-audit.csv"
+              }
+            },
+            "content": {
+              "text/csv": {}
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/team/business-audit/reauth": {
+      "post": {
+        "tags": ["crate::api::business_audit"],
+        "summary": "Mints a purpose-scoped receipt for a bounded audit export.",
+        "operationId": "reauthenticate_for_team_business_audit_export",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthenticateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReauthenticateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReauthenticateUnauthorizedResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/team/business-audit/reauth/mfa": {
+      "post": {
+        "tags": ["crate::api::business_audit"],
+        "summary": "Completes an MFA challenge for a purpose-scoped audit-export receipt.",
+        "operationId": "complete_team_business_audit_export_reauthentication_mfa",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthenticateMfaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReauthenticateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReauthenticateMfaUnauthorizedResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/team/business-audit/{id}": {
+      "get": {
+        "tags": ["crate::api::business_audit"],
+        "summary": "Returns privileged detail for one immutable fact and records the successful\nread in the same ledger without exposing the newly written fact.",
+        "operationId": "get_team_business_audit_detail",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Immutable audit event identifier",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessAuditDetailResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/team/business-role/grant": {
+      "post": {
+        "tags": ["crate::api::business_role_change"],
+        "summary": "Grants one company business role to a direct human teammate.",
+        "operationId": "grant_team_business_role",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BusinessRoleChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessRoleChangeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/team/business-role/revoke": {
+      "post": {
+        "tags": ["crate::api::business_role_change"],
+        "summary": "Revokes one company business role from a direct human teammate.",
+        "operationId": "revoke_team_business_role",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BusinessRoleChangeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BusinessRoleChangeResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/team/crm": {
       "patch": {
         "tags": ["teams::inbound::axum_router::patch_team_crm_settings"],
@@ -2704,6 +3355,184 @@
             }
           },
           "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/team/reauth": {
+      "post": {
+        "tags": ["crate::api::reauth"],
+        "summary": "Verifies a directly authenticated team owner/admin and mints a five-minute receipt.",
+        "operationId": "reauthenticate_for_team_role_change",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthenticateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReauthenticateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReauthenticateUnauthorizedResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/team/reauth/mfa": {
+      "post": {
+        "tags": ["crate::api::reauth"],
+        "summary": "Completes an existing MFA challenge for the same directly authenticated team owner/admin.",
+        "operationId": "complete_team_reauthentication_mfa",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReauthenticateMfaRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReauthenticateResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReauthenticateMfaUnauthorizedResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "502": {
             "description": "",
             "content": {
               "application/json": {
@@ -3804,6 +4633,264 @@
           }
         }
       },
+      "BusinessAuditAccessResponse": {
+        "type": "object",
+        "description": "The caller's narrowly-scoped business-audit capabilities for their current\nteam. This endpoint intentionally does not disclose the team, role, or\naccess receipt used to derive these booleans.",
+        "required": ["can_read", "can_export"],
+        "properties": {
+          "can_export": {
+            "type": "boolean",
+            "description": "Whether the direct human may export the team's audit ledger."
+          },
+          "can_read": {
+            "type": "boolean",
+            "description": "Whether the direct human may read the team's audit ledger."
+          }
+        }
+      },
+      "BusinessAuditDetailResponse": {
+        "type": "object",
+        "description": "Privileged detail projection for one immutable audit fact.",
+        "required": [
+          "id",
+          "action",
+          "target_type",
+          "target_id",
+          "actor",
+          "outcome",
+          "occurred_at",
+          "request_id",
+          "metadata",
+          "retention_class"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Stored action tag."
+          },
+          "actor": {
+            "type": "string",
+            "description": "Mechanical actor principal."
+          },
+          "delegated_actor": {
+            "type": ["string", "null"],
+            "description": "Optional initiating human principal."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Immutable event identity."
+          },
+          "metadata": {
+            "description": "Fixed safe action metadata."
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Durable event time."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "Stored outcome tag."
+          },
+          "reason": {
+            "type": ["string", "null"],
+            "description": "Optional human rationale."
+          },
+          "request_id": {
+            "type": "string",
+            "description": "Correlation identifier for this immutable fact."
+          },
+          "retention_class": {
+            "type": "string",
+            "description": "Closed retention classification."
+          },
+          "target_id": {
+            "type": "string",
+            "description": "Canonical target identity."
+          },
+          "target_type": {
+            "type": "string",
+            "description": "Stored target kind."
+          }
+        }
+      },
+      "BusinessAuditExportRequest": {
+        "type": "object",
+        "description": "Input for a bounded, privileged audit CSV export.",
+        "required": ["reauthentication_receipt", "from", "until", "reason"],
+        "properties": {
+          "from": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Inclusive UTC export start."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Human rationale recorded on the successful export audit fact."
+          },
+          "reauthentication_receipt": {
+            "type": "string",
+            "format": "uuid",
+            "description": "One-time reauthentication receipt scoped to this export purpose."
+          },
+          "retention_class": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/BusinessAuditRetentionFilter",
+                "description": "Optional closed retention-class filter."
+              }
+            ]
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Exclusive UTC export end."
+          }
+        }
+      },
+      "BusinessAuditListItem": {
+        "type": "object",
+        "description": "One approved audit-list item. It intentionally excludes reason, request\ncorrelation, receipt material, metadata, and any count.",
+        "required": [
+          "id",
+          "action",
+          "target_type",
+          "target_id",
+          "actor",
+          "outcome",
+          "occurred_at",
+          "retention_class"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "description": "Stored action tag."
+          },
+          "actor": {
+            "type": "string",
+            "description": "Mechanical actor principal."
+          },
+          "delegated_actor": {
+            "type": ["string", "null"],
+            "description": "Optional initiating human principal."
+          },
+          "id": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Immutable event identity."
+          },
+          "occurred_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Durable event time."
+          },
+          "outcome": {
+            "type": "string",
+            "description": "Stored outcome tag."
+          },
+          "retention_class": {
+            "type": "string",
+            "description": "Closed retention classification."
+          },
+          "target_id": {
+            "type": "string",
+            "description": "Canonical target identity."
+          },
+          "target_type": {
+            "type": "string",
+            "description": "Stored target kind."
+          }
+        }
+      },
+      "BusinessAuditListResponse": {
+        "type": "object",
+        "description": "Cursor page of approved immutable audit-list items.",
+        "required": ["items"],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BusinessAuditListItem"
+            },
+            "description": "Audit rows for this page."
+          },
+          "next_cursor": {
+            "type": ["string", "null"],
+            "description": "Opaque next page cursor, absent on the final page."
+          }
+        }
+      },
+      "BusinessAuditRetentionFilter": {
+        "type": "string",
+        "description": "Closed retention-class query vocabulary.",
+        "enum": ["standard", "confidential", "restricted"]
+      },
+      "BusinessRole": {
+        "type": "string",
+        "description": "A company-scoped, non-hierarchical business role bundle.",
+        "enum": [
+          "member",
+          "manager",
+          "approver",
+          "hr_admin",
+          "payroll_admin",
+          "org_admin",
+          "auditor",
+          "agent"
+        ]
+      },
+      "BusinessRoleChangeRequest": {
+        "type": "object",
+        "description": "Request body for a company business role change.\n\nThe acting team and actor come from the authenticated extractor receipts;\nthey must never be supplied in the body.",
+        "required": [
+          "target",
+          "business_role",
+          "reauthentication_receipt",
+          "reason"
+        ],
+        "properties": {
+          "business_role": {
+            "$ref": "#/components/schemas/BusinessRole",
+            "description": "Company business role to grant or revoke."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Human rationale recorded on the success audit event."
+          },
+          "reauthentication_receipt": {
+            "type": "string",
+            "format": "uuid",
+            "description": "One-time reauthentication receipt authorizing the change."
+          },
+          "target": {
+            "type": "string",
+            "description": "Canonical principal of the direct human target."
+          }
+        }
+      },
+      "BusinessRoleChangeResponse": {
+        "type": "object",
+        "description": "Minimal confirmation of an applied company business role change.",
+        "required": ["result", "business_role", "target"],
+        "properties": {
+          "business_role": {
+            "$ref": "#/components/schemas/BusinessRole",
+            "description": "Business role that changed."
+          },
+          "result": {
+            "type": "string",
+            "description": "Whether the role was granted or revoked."
+          },
+          "target": {
+            "type": "string",
+            "description": "Principal that changed."
+          }
+        }
+      },
       "CheckoutSessionMetadata": {
         "type": "object",
         "description": "Tracking metadata for conversion attribution",
@@ -4763,6 +5850,126 @@
             "description": "Last Name of user"
           }
         }
+      },
+      "ReauthenticateMfaMethod": {
+        "type": "object",
+        "description": "A safe MFA method projection exposed by the reauthentication API.",
+        "required": ["id", "method"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "FusionAuth method identifier."
+          },
+          "method": {
+            "type": "string",
+            "description": "Method kind, such as `authenticator`, `email`, or `sms`."
+          }
+        }
+      },
+      "ReauthenticateMfaRequest": {
+        "type": "object",
+        "description": "Request body for completing an existing MFA step-up challenge.",
+        "required": ["two_factor_id", "code"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "MFA code. It is zeroed when the request is dropped."
+          },
+          "two_factor_id": {
+            "type": "string",
+            "description": "The short-lived FusionAuth challenge identifier."
+          }
+        }
+      },
+      "ReauthenticateMfaUnauthorizedResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The submitted MFA challenge or proof was not accepted.",
+            "required": ["message", "code"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": ["invalid_mfa"]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "Typed unauthorized outcome from the MFA completion step."
+      },
+      "ReauthenticateRequest": {
+        "type": "object",
+        "description": "Request body for password step-up authentication.",
+        "required": ["password"],
+        "properties": {
+          "password": {
+            "type": "string",
+            "description": "Current FusionAuth password. It is zeroed when the request is dropped."
+          }
+        }
+      },
+      "ReauthenticateResponse": {
+        "type": "object",
+        "description": "Opaque one-time receipt returned after successful step-up authentication.",
+        "required": ["reauthentication_receipt", "expires_in"],
+        "properties": {
+          "expires_in": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Seconds until the receipt expires.",
+            "minimum": 0
+          },
+          "reauthentication_receipt": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Random bearer receipt identifier."
+          }
+        }
+      },
+      "ReauthenticateUnauthorizedResponse": {
+        "oneOf": [
+          {
+            "type": "object",
+            "description": "The supplied password was not accepted.",
+            "required": ["message", "code"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": ["invalid_credentials"]
+              },
+              "message": {
+                "type": "string"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A challenge must be completed before a receipt can be minted.",
+            "required": ["message", "two_factor_id", "methods", "code"],
+            "properties": {
+              "code": {
+                "type": "string",
+                "enum": ["mfa_required"]
+              },
+              "message": {
+                "type": "string"
+              },
+              "methods": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/components/schemas/ReauthenticateMfaMethod"
+                }
+              },
+              "two_factor_id": {
+                "type": "string"
+              }
+            }
+          }
+        ],
+        "description": "Typed unauthorized outcomes from the password step."
       },
       "ResendFusionauthVerifyUserEmailRequest": {
         "type": "object",

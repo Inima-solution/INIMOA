@@ -16,7 +16,7 @@ use business_audit::{
 use chrono::{DateTime, Duration, Utc};
 use entity_access::{
     domain::models::{ExportAuditBusiness, ReadAuditBusiness},
-    inbound::axum_extractors::MacroUserTeamExtractorV2,
+    inbound::axum_extractors::{MacroUserTeamExtractorV2, OptionalMacroUserTeamExtractorV2},
 };
 use macro_authorization::{MacroAuthorizationExtractor, UserOnly};
 use macro_user_id::user_id::MacroUserIdStr;
@@ -100,6 +100,17 @@ pub struct BusinessAuditListResponse {
     pub items: Vec<BusinessAuditListItem>,
     /// Opaque next page cursor, absent on the final page.
     pub next_cursor: Option<String>,
+}
+
+/// The caller's narrowly-scoped business-audit capabilities for their current
+/// team. This endpoint intentionally does not disclose the team, role, or
+/// access receipt used to derive these booleans.
+#[derive(Debug, serde::Serialize, utoipa::ToSchema)]
+pub struct BusinessAuditAccessResponse {
+    /// Whether the direct human may read the team's audit ledger.
+    pub can_read: bool,
+    /// Whether the direct human may export the team's audit ledger.
+    pub can_export: bool,
 }
 
 /// Privileged detail projection for one immutable audit fact.
@@ -201,11 +212,97 @@ impl IntoResponse for BusinessAuditError {
 /// Builds the team-scoped business-audit read route.
 pub fn router() -> Router<ApiContext> {
     Router::new()
+        .route("/business-audit/access", get(access_handler))
         .route("/business-audit", get(handler))
         .route("/business-audit/{id}", get(detail_handler))
         .route("/business-audit/reauth", post(reauth_handler))
         .route("/business-audit/reauth/mfa", post(reauth_mfa_handler))
         .route("/business-audit/export", post(export_handler))
+}
+
+fn matching_team_receipt<T>(
+    receipt: Option<entity_access::domain::models::EntityAccessReceipt<T>>,
+    principal: &MacroUserIdStr<'_>,
+    team_id: Option<Uuid>,
+) -> Result<Option<Uuid>, BusinessAuditError>
+where
+    T: entity_access::inbound::axum_extractors::RequiredPermission,
+{
+    let Some(receipt) = receipt else {
+        return Ok(None);
+    };
+    let receipt_principal = receipt
+        .get_authenticated_user()
+        .map_err(|_| BusinessAuditError::PrincipalMismatch)?;
+    if receipt_principal != principal {
+        return Err(BusinessAuditError::PrincipalMismatch);
+    }
+    let receipt_team_id = receipt
+        .entity()
+        .entity_id
+        .parse::<Uuid>()
+        .map_err(|_| BusinessAuditError::Internal)?;
+    if team_id.is_some_and(|expected| expected != receipt_team_id) {
+        return Err(BusinessAuditError::PrincipalMismatch);
+    }
+    Ok(Some(receipt_team_id))
+}
+
+fn business_audit_access_response(
+    read_team_id: Option<Uuid>,
+    export_team_id: Option<Uuid>,
+) -> Result<BusinessAuditAccessResponse, BusinessAuditError> {
+    if export_team_id.is_some() && read_team_id.is_none() {
+        return Err(BusinessAuditError::PrincipalMismatch);
+    }
+    if let (Some(read_team_id), Some(export_team_id)) = (read_team_id, export_team_id)
+        && read_team_id != export_team_id
+    {
+        return Err(BusinessAuditError::PrincipalMismatch);
+    }
+    Ok(BusinessAuditAccessResponse {
+        can_read: read_team_id.is_some(),
+        can_export: export_team_id.is_some(),
+    })
+}
+
+/// Returns only the direct human's audit capabilities for their current team.
+#[utoipa::path(
+    get,
+    operation_id = "get_team_business_audit_access",
+    path = "/team/business-audit/access",
+    responses(
+        (status = 200, body = BusinessAuditAccessResponse),
+        (status = 401, body = ErrorResponse),
+        (status = 403, body = ErrorResponse),
+        (status = 500, body = ErrorResponse),
+    )
+)]
+#[tracing::instrument(skip_all, err)]
+pub(crate) async fn access_handler(
+    user: MacroAuthorizationExtractor<AuthorizationService, UserOnly>,
+    read_access: OptionalMacroUserTeamExtractorV2<
+        ReadAuditBusiness,
+        EntityAccessServiceType,
+        AuthorizationService,
+    >,
+    export_access: OptionalMacroUserTeamExtractorV2<
+        ExportAuditBusiness,
+        EntityAccessServiceType,
+        AuthorizationService,
+    >,
+) -> Result<Json<BusinessAuditAccessResponse>, BusinessAuditError> {
+    let principal = user.authorization.macro_user_id;
+    let read_team_id = matching_team_receipt(read_access.entity_access_receipt, &principal, None)?;
+    let export_team_id = matching_team_receipt(
+        export_access.entity_access_receipt,
+        &principal,
+        read_team_id,
+    )?;
+    Ok(Json(business_audit_access_response(
+        read_team_id,
+        export_team_id,
+    )?))
 }
 
 fn export_scope(
@@ -791,6 +888,72 @@ mod test {
             let permission = body.find("ExportAuditBusiness").unwrap();
             assert!(user < permission, "{handler} must extract UserOnly first");
         }
+    }
+
+    #[test]
+    fn access_capability_truth_table_is_team_scoped_and_receipt_free() {
+        use models_team::{BusinessRole, BusinessRoleSet};
+        use roles_and_permissions::domain::model::{PermissionId, has_business_permission};
+
+        let team_id = Uuid::new_v4();
+        for (role, can_read, can_export) in [
+            (BusinessRole::Member, false, false),
+            (BusinessRole::Auditor, true, false),
+            (BusinessRole::OrgAdmin, true, true),
+        ] {
+            let roles = BusinessRoleSet::from_role(role);
+            assert_eq!(
+                has_business_permission(roles, PermissionId::ReadAuditBusiness),
+                can_read,
+            );
+            assert_eq!(
+                has_business_permission(roles, PermissionId::ExportAuditBusiness),
+                can_export,
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(business_audit_access_response(None, None).unwrap()).unwrap(),
+            serde_json::json!({ "can_read": false, "can_export": false }),
+        );
+        assert_eq!(
+            serde_json::to_value(business_audit_access_response(Some(team_id), None).unwrap())
+                .unwrap(),
+            serde_json::json!({ "can_read": true, "can_export": false }),
+        );
+        assert_eq!(
+            serde_json::to_value(
+                business_audit_access_response(Some(team_id), Some(team_id)).unwrap()
+            )
+            .unwrap(),
+            serde_json::json!({ "can_read": true, "can_export": true }),
+        );
+        assert!(matches!(
+            business_audit_access_response(Some(team_id), Some(Uuid::new_v4())),
+            Err(BusinessAuditError::PrincipalMismatch),
+        ));
+        assert!(matches!(
+            business_audit_access_response(None, Some(team_id)),
+            Err(BusinessAuditError::PrincipalMismatch),
+        ));
+    }
+
+    #[test]
+    fn access_handler_requires_direct_human_before_optional_company_receipts() {
+        let source = include_str!("business_audit.rs");
+        let start = source.find("pub(crate) async fn access_handler(").unwrap();
+        let body = &source[start..];
+        let user = body
+            .find("MacroAuthorizationExtractor<AuthorizationService, UserOnly>")
+            .unwrap();
+        let read = body
+            .find("OptionalMacroUserTeamExtractorV2<\n        ReadAuditBusiness")
+            .unwrap();
+        let export = body
+            .find("OptionalMacroUserTeamExtractorV2<\n        ExportAuditBusiness")
+            .unwrap();
+        assert!(user < read && read < export);
+        assert!(body.contains("matching_team_receipt"));
+        assert!(body.contains("business_audit_access_response"));
     }
 
     #[test]

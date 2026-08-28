@@ -33,7 +33,8 @@ export type SettingsTab =
   | 'Connected'
   | 'Email'
   | 'GitHub'
-  | 'Admin';
+  | 'Admin'
+  | 'Audit';
 
 // Where "Back to app" (and move-to-split) should return to: the layout the user
 // was on when they opened settings. A full base-relative URL — path plus query
