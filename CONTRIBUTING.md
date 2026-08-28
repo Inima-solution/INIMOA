@@ -1,80 +1,40 @@
-# Contributing to Macro
+# Contributing to INIMOA
 
-Thanks for your interest in contributing! Macro is fully open source under the
-[AGPLv3](LICENSE.txt), and we welcome outside contributions. This guide covers
-how to get a change from idea to merged PR.
+Thank you for helping build INIMOA. Contributions are licensed under the [GNU Affero General Public License v3.0](LICENSE.txt).
 
-## Start with an issue
+## Before coding
 
-Open an issue before putting up a PR. This applies to both features and fixes. It lets us confirm the change is wanted and agree on an approach before you invest time into it. PRs that show up without a linked issue may be closed.
+1. Open or confirm an issue describing the problem and expected behavior.
+2. Identify whether the change belongs to Macro upstream, INIMOA, or both.
+3. Keep the change within the existing domain/port/adapter architecture and Macro-native UI patterns.
+4. Do not include private planning documents, local AI-agent configuration, credentials, or generated build output.
 
-## AI-assisted contributions
+## Pull requests
 
-Useful contributions require human effort. You may use whatever tools best
-serve you including AI tools, but if you don't understand the work you're
-doing it's probably not useful.
+Use a concise Conventional Commit-style title:
 
-You should:
-
-- Understand the changes and decisions you made well enough to answer questions in review.
-- See your change working in a local development environment
-
-Unreviewed AI output submitted as-is wastes reviewer time and will be closed.
-
-## Conventions
-
-We use semantic (Conventional Commits) naming for branches and PR titles:
-
-```
-feat(chat): add dev observability
-fix(email): handle empty thread subjects
+```text
+feat(projects): enforce dependency readiness
+fix(teams): prevent role restoration after rejoin
 ```
 
-- **PR title:** `type(scope): short description` this becomes the commit
-  message on merge, so make it accurate.
-- **Branch name:** same idea, slash-separated, e.g. `feat/chat-dev-observability`.
+The pull request should explain what changed, why it belongs in INIMOA, how it was verified, and what remains unverified. Link the issue and include migration or rollback notes when persistence changes.
 
-Common types: `feat`, `fix`, `chore`
+## Development checks
 
-## PR bodies
+- Follow [docs/STYLE_GUIDE.md](docs/STYLE_GUIDE.md).
+- Use [docs/RUNNING_LOCALLY.md](docs/RUNNING_LOCALLY.md) for setup.
+- Format and lint the affected Rust or TypeScript code.
+- Run focused tests for every changed crate or package.
+- Refresh checked-in SQLx metadata when static queries change.
+- Verify permission-denied, failure, and rollback behavior for sensitive operations.
 
-Keep PR bodies concise and write them yourself. A few sentences covering what
-changed and why, a link to the issue, and anything a reviewer needs to know.
-No generated boilerplate, no exhaustive file-by-file change lists.
+Do not claim completion from a build alone. Report the exact test and runtime boundary that was verified.
 
-## Development setup
+## AI-assisted work
 
-You do not need the local stack if you only change the frontend.
-
-If you only change the frontend, run the [frontend against hosted services](docs/RUNNING_LOCALLY.md#run-the-frontend-against-hosted-services).
-
-If you change a backend service, the database, or behavior that must stay on your machine, [run the local stack](docs/RUNNING_LOCALLY.md#run-the-local-stack).
-
-## Before you push
-
-- Follow the [style guide](docs/STYLE_GUIDE.md).
-- Format and lint: `cargo fmt` and `just clippy` for Rust changes.
-- Run the tests for the crates you touched: `cargo test -p <crate>`.
-- If you changed SQL queries or migrations, run `just prepare_db` from the
-  repository root to refresh the sqlx cache.
-
-## Contributor License Agreement
-
-Before we can merge a PR from outside the macro-inc GitHub org, you need to
-have signed the Macro CLA. It's a one-time signature that covers all your
-future contributions:
-
-1. Every PR runs a required check named `cla`. If you haven't signed, it
-   shows red — that's expected and doesn't block review.
-2. Sign at **<https://macro-cla.macroverse.workers.dev/cla>** ("Sign with
-   GitHub"; we request no OAuth scopes, only your public identity).
-3. Comment `/macro-cla check` on your PR and the check re-runs and goes
-   green.
-
-macro-inc org members are exempt (employee agreements already cover their
-contributions), as are bot accounts like Dependabot.
+AI tools are allowed, but contributors remain responsible for every submitted line. Do not commit assistant instructions, session transcripts, prompts, private development plans, or output that has not been reviewed and tested.
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the
-[AGPLv3](LICENSE.txt), the same license that covers the project.
+By submitting a contribution, you agree that it may be distributed under the [AGPL-3.0](LICENSE.txt) with the rest of the project.

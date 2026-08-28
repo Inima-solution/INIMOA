@@ -37,6 +37,29 @@ infra/local/generated/
 **/.webhook.json
 /artifacts
 
+# Local AI assistants, agent runtimes, and generated instructions.
+**/.claude/
+**/.codex/
+**/.agents/
+**/.gemini/
+**/.cursor/
+**/.windsurf/
+**/.aider*
+**/CLAUDE.md
+**/AGENTS.md
+**/CODEX.md
+**/codex.md
+**/GEMINI.md
+
+# Private implementation and design planning documents.
+**/DESIGN.md
+**/PLAN.md
+**/*_PLAN.md
+**/*-plan.md
+**/*_plan.md
+docs/INIMOA*.md
+docs/INIMAOS*.md
+
 # Raw SSE captures from CURSOR_ACP_RECORD_DIR; sanitize into
 # crates/cursor_acp/fixtures/real/ before committing one.
 /recordings/
