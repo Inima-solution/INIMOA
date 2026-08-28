@@ -11,5 +11,9 @@ pub use domain::model::{
     Actor, AuditAction, AuditEvent, AuditOutcome, AuditReason, AuditTarget, AuditTargetType,
     AuditValidationError, RequestCorrelationId, RetentionClass, RoleChangeMetadata,
 };
+pub use domain::query::{
+    AuditListError, AuditListItem, AuditListPage, AuditListRequest, AuditRetentionFilter,
+    DEFAULT_AUDIT_PAGE_SIZE, MAX_AUDIT_PAGE_SIZE,
+};
 #[cfg(feature = "outbound")]
-pub use outbound::insert_with_tx;
+pub use outbound::{insert_with_tx, list};

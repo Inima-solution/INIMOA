@@ -1,0 +1,74 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT id, actor, delegated_actor, action, target_type, target_id, outcome,\n               occurred_at, retention_class\n        FROM business_audit_events\n        WHERE team_id = $1\n          AND ($2::text IS NULL OR retention_class = $2)\n          AND ($3::timestamptz IS NULL OR occurred_at < $3\n               OR (occurred_at = $3 AND id < $4))\n        ORDER BY occurred_at DESC, id DESC\n        LIMIT $5\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "actor",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "delegated_actor",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "target_type",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "target_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "outcome",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "occurred_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "retention_class",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Timestamptz",
+        "Uuid",
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "cb9df9ea9040c3e819b1f409b2e412ff082dc5f0019c596f4dd96f131f265f6a"
+}

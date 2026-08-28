@@ -15,6 +15,7 @@ use utoipa_swagger_ui::SwaggerUi;
 pub(crate) mod context;
 
 // Routes
+mod business_audit;
 mod business_role_change;
 mod cursor_api_key;
 #[allow(unused_imports)]
@@ -105,7 +106,8 @@ fn api_router(state: ApiContext) -> Router<ApiContext> {
                 },
             )
             .merge(reauth::router())
-            .merge(business_role_change::router()),
+            .merge(business_role_change::router())
+            .merge(business_audit::router()),
         )
         .nest(
             "/referral",

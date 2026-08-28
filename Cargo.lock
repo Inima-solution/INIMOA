@@ -2808,6 +2808,7 @@ dependencies = [
  "macro_db_migrator",
  "macro_user_id",
  "macro_uuid",
+ "models_pagination",
  "models_team",
  "readonly",
  "serde",
@@ -2815,6 +2816,7 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
  "uuid",
  "workspace-hack",
 ]

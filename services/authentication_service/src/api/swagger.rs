@@ -18,6 +18,7 @@ use teams::inbound::axum_router::{
 use user_quota::UserQuota;
 use utoipa::OpenApi;
 
+use crate::api::business_audit::{BusinessAuditListItem, BusinessAuditListResponse};
 use crate::api::business_role_change::{BusinessRoleChangeRequest, BusinessRoleChangeResponse};
 use crate::api::cursor_api_key::{CursorApiKeyStatus, put_cursor_api_key::PutCursorApiKeyRequest};
 use crate::api::email::generate_email_link::GenerateEmailLinkRequest;
@@ -157,6 +158,7 @@ use model::user::{
                 crate::api::reauth::handler,
                 crate::api::business_role_change::grant_handler,
                 crate::api::business_role_change::revoke_handler,
+                crate::api::business_audit::handler,
 
                 /// /referral
                 referral::inbound::axum_router::get_referral_code_handler::<crate::api::context::ReferralServiceType, crate::api::context::RateLimiter, crate::api::context::AuthorizationService>,
@@ -237,6 +239,8 @@ use model::user::{
                         ReauthenticateResponse,
                         BusinessRoleChangeRequest,
                         BusinessRoleChangeResponse,
+                        BusinessAuditListItem,
+                        BusinessAuditListResponse,
                         CreateTeamRequest,
                         InviteToTeamRequest,
                         PatchTeamRequest,
@@ -399,5 +403,45 @@ mod tests {
 
         // The existing reauthentication route stays registered.
         assert!(openapi["paths"]["/team/reauth"]["post"].is_object());
+    }
+
+    #[test]
+    fn team_business_audit_openapi_exposes_only_bounded_page_contract() {
+        let openapi = serde_json::to_value(ApiDoc::openapi()).unwrap();
+        let operation = &openapi["paths"]["/team/business-audit"]["get"];
+        assert!(operation.is_object());
+        for status in ["200", "400", "401", "403", "500"] {
+            assert!(operation["responses"][status].is_object());
+        }
+        let parameters = operation["parameters"].as_array().unwrap();
+        assert!(
+            parameters
+                .iter()
+                .any(|parameter| parameter["name"] == "cursor")
+        );
+        assert!(
+            parameters
+                .iter()
+                .any(|parameter| parameter["name"] == "retention_class")
+        );
+        assert!(
+            parameters
+                .iter()
+                .any(|parameter| parameter["name"] == "limit")
+        );
+        let properties =
+            &openapi["components"]["schemas"]["BusinessAuditListResponse"]["properties"];
+        assert!(properties.get("items").is_some());
+        assert!(properties.get("next_cursor").is_some());
+        for forbidden in [
+            "count",
+            "total",
+            "receipt",
+            "reason",
+            "request_id",
+            "metadata",
+        ] {
+            assert!(properties.get(forbidden).is_none());
+        }
     }
 }

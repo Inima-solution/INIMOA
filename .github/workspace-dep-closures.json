@@ -1217,6 +1217,8 @@
       "crates/cowlike",
       "crates/macro_user_id",
       "crates/macro_uuid",
+      "crates/model-error-response",
+      "crates/models_pagination",
       "crates/models_team",
       "crates/workspace-hack"
     ],
