@@ -242,6 +242,14 @@ pub struct EntityPropertyMutationSnapshot {
     pub previous_value: Option<PropertyValue>,
 }
 
+/// Result of atomically replacing a task's Depends On value.
+#[derive(Debug, Clone)]
+pub enum TaskDependencyMutationOutcome {
+    Updated(EntityPropertyMutationSnapshot),
+    Unavailable,
+    Cycle,
+}
+
 /// The reconciled final option ids for one property after a bulk update. The
 /// caller uses these to reconcile its cache with the value the server actually
 /// persisted (which may differ from the requested delta if a concurrent edit

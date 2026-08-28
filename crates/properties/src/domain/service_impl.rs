@@ -1,6 +1,7 @@
 //! Service implementation for properties.
 
 mod helpers;
+mod task_dependencies;
 mod task_properties;
 
 use std::collections::{HashMap, HashSet};
@@ -616,7 +617,32 @@ where
                 ))
             })?;
 
-        // Determine the value to set (if any) and validate
+        // Depends On owns its request-shape validation so generic conversion
+        // cannot silently deduplicate a malformed dependency replacement.
+        if property_definition_id == SystemPropertyKey::DEPENDS_ON_UUID {
+            if entity_type != EntityType::Task {
+                return Err(PropertiesErr::Validation(
+                    "This property cannot be attached to this entity type".to_string(),
+                ));
+            }
+            let snapshot = self
+                .handle_task_dependencies_property(access, value)
+                .await?;
+            self.publish_property_event(Self::entity_property_updated_event(
+                &snapshot.property,
+                &snapshot.value,
+                &snapshot.previous_value,
+                access,
+            ));
+            return Ok(EntityPropertyWithDefinition {
+                property: snapshot.property,
+                definition: property_definition,
+                value: snapshot.value,
+                options: None,
+            });
+        }
+
+        // Determine the value to set (if any) and validate.
         let property_value = match &value {
             Some(set_value) => {
                 // Validate that the request value is compatible with the property definition
@@ -648,7 +674,7 @@ where
                 .await?;
         }
 
-        // Check if this property can be attached to the given entity type
+        // Check if this property can be attached to the given entity type.
         if !is_property_applicable_to(property_definition_id, entity_type) {
             return Err(PropertiesErr::Validation(
                 "This property cannot be attached to this entity type".to_string(),

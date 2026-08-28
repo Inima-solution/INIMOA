@@ -24,7 +24,7 @@ use super::model::{
     EditReceipt, EntityPropertiesKey, EntityPropertyInfo, EntityPropertyMutationSnapshot,
     EntityPropertyOptionSelection, EntityPropertyOptionUpdate, GetOrCreateTagDefinitionResult,
     PropertyDefinitionOwner, TagPromotionOutcome, TagRemapOutcome, TaskAssignedNotification,
-    UpdatePropertyOptionOutcome, ViewReceipt,
+    TaskDependencyMutationOutcome, UpdatePropertyOptionOutcome, ViewReceipt,
 };
 
 /// Repository trait for property operations.
@@ -204,6 +204,13 @@ pub trait PropertiesRepo: Send + Sync + 'static {
         property_definition_id: Uuid,
         value: Option<PropertyValue>,
     ) -> impl Future<Output = Result<EntityPropertyMutationSnapshot, Self::Err>> + Send;
+
+    /// Replace a task's Depends On references as one validated transaction.
+    fn replace_task_dependencies(
+        &self,
+        task_id: Uuid,
+        dependency_ids: &[Uuid],
+    ) -> impl Future<Output = Result<TaskDependencyMutationOutcome, Self::Err>> + Send;
 
     /// Atomically add one option to a multi-select entity property value,
     /// attaching the property if needed. Re-adding a present option is deduped.

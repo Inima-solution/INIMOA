@@ -89,10 +89,11 @@ pub fn properties_err_status(e: &PropertiesErr) -> StatusCode {
         PropertiesErr::Validation(_) => StatusCode::BAD_REQUEST,
         PropertiesErr::NotFound
         | PropertiesErr::OptionNotFound
-        | PropertiesErr::EntityPropertyNotFound => StatusCode::NOT_FOUND,
-        PropertiesErr::DuplicateOptionValue | PropertiesErr::ConflictingTeamLabel(_) => {
-            StatusCode::CONFLICT
-        }
+        | PropertiesErr::EntityPropertyNotFound
+        | PropertiesErr::TaskDependenciesUnavailable => StatusCode::NOT_FOUND,
+        PropertiesErr::DuplicateOptionValue
+        | PropertiesErr::ConflictingTeamLabel(_)
+        | PropertiesErr::TaskDependencyCycle => StatusCode::CONFLICT,
         PropertiesErr::PermissionDenied
         | PropertiesErr::SystemPropertyNotModifiable
         | PropertiesErr::RequiredProperty

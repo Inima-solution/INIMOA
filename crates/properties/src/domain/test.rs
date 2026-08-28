@@ -1465,6 +1465,222 @@ fn expect_task_storage(repo: &mut MockPropertiesRepo, task_id: Uuid) {
         });
 }
 
+fn depends_on_definition() -> PropertyDefinition {
+    PropertyDefinition {
+        id: SystemPropertyKey::DEPENDS_ON_UUID,
+        owner: PropertyOwner::System,
+        display_name: "Depends On".to_string(),
+        data_type: DataType::Entity,
+        is_multi_select: true,
+        specific_entity_type: Some(EntityType::Task),
+        created_at: event_timestamp(),
+        updated_at: event_timestamp(),
+        is_system: true,
+        is_metadata: false,
+    }
+}
+
+fn dependency_view_permission_service() -> MockPermissionService {
+    let mut permission = MockPermissionService::new();
+    permission
+        .expect_mint_view_receipt()
+        .returning(|_, entity_id, entity_type| {
+            let receipt = ViewReceipt::dangerously_assert_authenticated_user(
+                caller_user_id(),
+                entity_id,
+                entity_type,
+            );
+            Box::pin(async move { Ok(receipt) })
+        });
+    permission
+}
+
+#[tokio::test]
+async fn depends_on_updated_publishes_authoritative_snapshot_event() {
+    let task_id = Uuid::new_v4();
+    let dependency_id = Uuid::new_v4();
+    let previous_dependency_id = Uuid::new_v4();
+    let entity_property_id = Uuid::new_v4();
+    let updated_at = event_timestamp();
+    let value = PropertyValue::EntityRef(vec![models_properties::EntityReference::new(
+        dependency_id.to_string(),
+        EntityType::Task,
+    )]);
+    let previous_value = PropertyValue::EntityRef(vec![models_properties::EntityReference::new(
+        previous_dependency_id.to_string(),
+        EntityType::Task,
+    )]);
+    let snapshot = EntityPropertyMutationSnapshot {
+        property: entity_property_for_event(
+            entity_property_id,
+            &task_id.to_string(),
+            EntityType::Task,
+            SystemPropertyKey::DEPENDS_ON_UUID,
+            updated_at,
+        ),
+        value: Some(value.clone()),
+        previous_value: Some(previous_value.clone()),
+    };
+
+    let mut repo = MockPropertiesRepo::new();
+    expect_task_storage(&mut repo, task_id);
+    repo.expect_get_property_definition()
+        .withf(|id| *id == SystemPropertyKey::DEPENDS_ON_UUID)
+        .return_once(|_| Box::pin(async { Ok(Some(depends_on_definition())) }));
+    repo.expect_replace_task_dependencies()
+        .withf(move |source_id, dependency_ids| {
+            *source_id == task_id && dependency_ids == [dependency_id]
+        })
+        .return_once(move |_, _| {
+            Box::pin(async move {
+                Ok(crate::domain::model::TaskDependencyMutationOutcome::Updated(snapshot))
+            })
+        });
+    repo.expect_upsert_entity_property().never();
+
+    let broker = RecordingEventBroker::default();
+    let service = PropertiesServiceImpl::new(
+        repo,
+        Some(dependency_view_permission_service()),
+        None::<MockNotificationService>,
+    )
+    .with_event_broker(broker.clone());
+
+    let result = service
+        .set_entity_property(
+            &edit_receipt(&task_id.to_string(), EntityType::Task),
+            SystemPropertyKey::DEPENDS_ON_UUID,
+            Some(
+                models_properties::api::requests::SetPropertyValue::MultiEntityReference {
+                    references: vec![models_properties::EntityReference::new(
+                        dependency_id.to_string(),
+                        EntityType::Task,
+                    )],
+                },
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.value, Some(value));
+
+    let published = only_published_property_event(&broker);
+    assert_eq!(published.key, task_id.to_string());
+    assert_eq!(published.envelope["event_type"], "entity_property.updated");
+    assert_eq!(
+        published.envelope["metadata"],
+        serde_json::json!({
+            "entity_property_id": entity_property_id,
+            "entity_id": task_id,
+            "entity_type": "TASK",
+            "property_definition_id": SystemPropertyKey::DEPENDS_ON_UUID,
+            "actor_user_id": caller_user_id(),
+            "previous_value": previous_value,
+            "value": result.value,
+            "updated_at": updated_at,
+        })
+    );
+}
+
+#[tokio::test]
+async fn depends_on_cycle_publishes_no_event() {
+    let task_id = Uuid::new_v4();
+    let dependency_id = Uuid::new_v4();
+    let mut repo = MockPropertiesRepo::new();
+    expect_task_storage(&mut repo, task_id);
+    repo.expect_get_property_definition()
+        .withf(|id| *id == SystemPropertyKey::DEPENDS_ON_UUID)
+        .return_once(|_| Box::pin(async { Ok(Some(depends_on_definition())) }));
+    repo.expect_replace_task_dependencies()
+        .withf(move |source_id, dependency_ids| {
+            *source_id == task_id && dependency_ids == [dependency_id]
+        })
+        .return_once(move |_, _| {
+            Box::pin(async move { Ok(crate::domain::model::TaskDependencyMutationOutcome::Cycle) })
+        });
+    repo.expect_upsert_entity_property().never();
+    let broker = RecordingEventBroker::default();
+    let service = PropertiesServiceImpl::new(
+        repo,
+        Some(dependency_view_permission_service()),
+        None::<MockNotificationService>,
+    )
+    .with_event_broker(broker.clone());
+    let result = service
+        .set_entity_property(
+            &edit_receipt(&task_id.to_string(), EntityType::Task),
+            SystemPropertyKey::DEPENDS_ON_UUID,
+            Some(
+                models_properties::api::requests::SetPropertyValue::MultiEntityReference {
+                    references: vec![models_properties::EntityReference::new(
+                        dependency_id.to_string(),
+                        EntityType::Task,
+                    )],
+                },
+            ),
+        )
+        .await;
+    assert!(matches!(result, Err(PropertiesErr::TaskDependencyCycle)));
+    assert!(broker.events().is_empty());
+}
+
+#[tokio::test]
+async fn non_dependency_property_keeps_generic_upsert_routing() {
+    let document_id = Uuid::new_v4();
+    let property_definition_id = Uuid::new_v4();
+    let requested_value = PropertyValue::Str("kept on generic path".to_string());
+    let snapshot = entity_property_mutation(
+        &document_id.to_string(),
+        EntityType::Document,
+        property_definition_id,
+        Some(requested_value.clone()),
+    );
+
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_document_sub_types()
+        .withf(move |ids| ids == [document_id])
+        .return_once(|_| Box::pin(async { Ok(HashMap::new()) }));
+    repo.expect_get_property_definition()
+        .withf(move |id| *id == property_definition_id)
+        .return_once(move |_| {
+            Box::pin(async move {
+                Ok(Some(property_definition_for_event(
+                    property_definition_id,
+                    "Notes",
+                    DataType::String,
+                    false,
+                )))
+            })
+        });
+    repo.expect_replace_task_dependencies().never();
+    repo.expect_upsert_entity_property()
+        .withf(move |entity_id, entity_type, definition_id, value| {
+            entity_id == document_id.to_string()
+                && *entity_type == EntityType::Document
+                && *definition_id == property_definition_id
+                && *value == Some(requested_value.clone())
+        })
+        .return_once(move |_, _, _, _| Box::pin(async move { Ok(snapshot) }));
+
+    let broker = RecordingEventBroker::default();
+    let service = service_with_event_broker(repo, broker.clone());
+    let result = service
+        .set_entity_property(
+            &edit_receipt(&document_id.to_string(), EntityType::Document),
+            property_definition_id,
+            Some(models_properties::api::requests::SetPropertyValue::String {
+                value: "kept on generic path".to_string(),
+            }),
+        )
+        .await
+        .unwrap();
+
+    assert_eq!(
+        result.value,
+        Some(PropertyValue::Str("kept on generic path".to_string()))
+    );
+    assert_eq!(broker.events().len(), 1);
+}
+
 #[tokio::test]
 async fn entity_property_event_parent_task_uses_primary_task_snapshot_only() {
     let task_id = Uuid::from_u128(0xE710);

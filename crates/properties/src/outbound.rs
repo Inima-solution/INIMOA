@@ -19,6 +19,7 @@ pub mod property_option_queries;
 pub mod tag_promotion_queries;
 #[cfg(test)]
 mod tag_promotion_test;
+pub mod task_dependency_queries;
 pub mod task_property_queries;
 #[cfg(test)]
 pub mod test;

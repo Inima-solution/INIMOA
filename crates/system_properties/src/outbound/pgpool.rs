@@ -165,8 +165,10 @@ impl SystemPropertiesRepository for PgSystemPropertiesRepository {
             FROM entity_properties
             WHERE entity_id = $1
               AND entity_type = 'TASK'
+              AND property_definition_id <> $2
             "#,
-            from_task_id
+            from_task_id,
+            SystemPropertyKey::DependsOn.uuid()
         )
         .fetch_all(&self.pool)
         .await?;

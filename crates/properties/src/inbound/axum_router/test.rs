@@ -1,10 +1,12 @@
 use entity_access::domain::models::TeamRole;
 use std::sync::{Arc, Mutex};
 
+use super::entities::SetEntityPropertyErr;
 use axum::{
     Router,
     body::{Body, to_bytes},
     http::{Request, StatusCode, header},
+    response::IntoResponse,
     routing::get,
 };
 use entity_access::domain::{
@@ -33,9 +35,73 @@ use super::{
     extract::{EditReceiptExtractor, ViewReceiptExtractor},
 };
 use crate::{
-    PropertiesServiceImpl,
+    PropertiesErr, PropertiesServiceImpl,
     domain::ports::{MockNotificationService, MockPermissionService, MockPropertiesRepo},
 };
+
+#[test]
+fn task_dependency_errors_keep_the_frozen_statuses_and_bodies() {
+    let cases = [
+        (
+            PropertiesErr::Validation("Depends On requires task references".to_string()),
+            StatusCode::BAD_REQUEST,
+            "Depends On requires task references",
+        ),
+        (
+            PropertiesErr::PermissionDenied,
+            StatusCode::FORBIDDEN,
+            "Access denied",
+        ),
+        (
+            PropertiesErr::TaskDependenciesUnavailable,
+            StatusCode::NOT_FOUND,
+            "One or more task dependencies are unavailable",
+        ),
+        (
+            PropertiesErr::TaskDependencyCycle,
+            StatusCode::CONFLICT,
+            "Task dependencies cannot contain a cycle",
+        ),
+    ];
+    for (error, status, body) in cases {
+        assert_eq!(super::properties_err_status(&error), status);
+        assert_eq!(error.to_string(), body);
+    }
+}
+
+#[tokio::test]
+async fn task_dependency_set_handler_errors_render_frozen_bodies() {
+    let cases = [
+        (
+            PropertiesErr::Validation("Depends On requires task references".to_string()),
+            StatusCode::BAD_REQUEST,
+            "Depends On requires task references",
+        ),
+        (
+            PropertiesErr::PermissionDenied,
+            StatusCode::FORBIDDEN,
+            "Access denied",
+        ),
+        (
+            PropertiesErr::TaskDependenciesUnavailable,
+            StatusCode::NOT_FOUND,
+            "One or more task dependencies are unavailable",
+        ),
+        (
+            PropertiesErr::TaskDependencyCycle,
+            StatusCode::CONFLICT,
+            "Task dependencies cannot contain a cycle",
+        ),
+    ];
+    for (error, status, body) in cases {
+        let response = SetEntityPropertyErr::from(error).into_response();
+        assert_eq!(response.status(), status);
+        assert_eq!(
+            to_bytes(response.into_body(), usize::MAX).await.unwrap(),
+            body
+        );
+    }
+}
 
 const DEFAULT_INTERNAL_USER_ID: &str = "macro|internal@macro.com";
 const INTERNAL_API_KEY: &str = "test-internal-key";

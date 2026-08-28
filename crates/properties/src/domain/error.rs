@@ -34,6 +34,14 @@ pub enum PropertiesErr {
     #[error("An option with that value already exists")]
     DuplicateOptionValue,
 
+    /// A dependency target was missing, deleted, not a task, or outside the task's project.
+    #[error("One or more task dependencies are unavailable")]
+    TaskDependenciesUnavailable,
+
+    /// Replacing dependencies would introduce a cycle.
+    #[error("Task dependencies cannot contain a cycle")]
+    TaskDependencyCycle,
+
     /// Promoting a personal label would collide with an existing team label -
     /// maps to 409. Carries the team label so the caller can offer to merge
     /// into it instead.

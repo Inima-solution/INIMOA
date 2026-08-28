@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT d.id\n        FROM \"Document\" d\n        JOIN document_sub_type dst ON dst.document_id = d.id AND dst.sub_type = 'task'\n        WHERE d.id = ANY($1)\n          AND d.\"deletedAt\" IS NULL\n          AND d.\"projectId\" IS NOT DISTINCT FROM (\n              SELECT \"projectId\" FROM \"Document\" WHERE id = $2\n          )\n        ORDER BY d.id\n        FOR UPDATE\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7aa5d3b238b0092933dae3ac1e4a8ca1bceccae4bee85367bcaa1da17fd54fbb"
+}

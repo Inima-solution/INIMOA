@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            WITH RECURSIVE reachable(id) AS (\n                SELECT edge->>'entity_id'\n                FROM entity_properties ep\n                CROSS JOIN LATERAL jsonb_array_elements(\n                    CASE WHEN jsonb_typeof(ep.values->'value') = 'array'\n                        THEN ep.values->'value' ELSE '[]'::jsonb END\n                ) edge\n                WHERE ep.entity_id = ANY($1)\n                  AND ep.entity_type = 'TASK'\n                  AND ep.property_definition_id = $2\n                  AND edge->>'entity_type' = 'TASK'\n                UNION\n                SELECT edge->>'entity_id'\n                FROM entity_properties ep\n                JOIN reachable r ON ep.entity_id = r.id\n                CROSS JOIN LATERAL jsonb_array_elements(\n                    CASE WHEN jsonb_typeof(ep.values->'value') = 'array'\n                        THEN ep.values->'value' ELSE '[]'::jsonb END\n                ) edge\n                WHERE ep.entity_type = 'TASK'\n                  AND ep.property_definition_id = $2\n                  AND edge->>'entity_type' = 'TASK'\n            )\n            SELECT EXISTS(SELECT 1 FROM reachable WHERE id = $3) AS \"has_cycle!\"\n            ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "has_cycle!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "450ca83efb39d28b3261f585bcec8c5c4ef531ffc9cad772fab0d2e549608c02"
+}

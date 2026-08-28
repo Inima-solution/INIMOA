@@ -339,3 +339,82 @@ async fn test_copy_task_properties_idempotent(pool: Pool<Postgres>) -> anyhow::R
 
     Ok(())
 }
+
+#[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
+async fn test_copy_task_properties_does_not_copy_depends_on(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgSystemPropertiesRepository::new(pool.clone());
+    let source = "source-task-dependencies";
+    let absent_destination = "destination-task-dependencies-absent";
+    let existing_destination = "destination-task-dependencies-existing";
+    let source_value = serde_json::json!({
+        "type": "EntityReference",
+        "value": [{"entity_id": "other-task", "entity_type": "TASK"}]
+    });
+    let destination_value = serde_json::json!({
+        "type": "EntityReference",
+        "value": [{"entity_id": "retained-task", "entity_type": "TASK"}]
+    });
+
+    for (task_id, value) in [
+        (source, source_value),
+        (existing_destination, destination_value),
+    ] {
+        sqlx::query(
+            "INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(task_id)
+        .bind(SystemPropertyKey::DependsOn.uuid())
+        .bind(value)
+        .execute(&pool)
+        .await?;
+    }
+    let status_value = serde_json::json!({"type": "SelectOption", "value": []});
+    sqlx::query(
+        "INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(source)
+    .bind(SystemPropertyKey::Status.uuid())
+    .bind(status_value.clone())
+    .execute(&pool)
+    .await?;
+
+    repo.copy_task_properties(source, absent_destination)
+        .await?;
+    repo.copy_task_properties(source, existing_destination)
+        .await?;
+
+    let absent_value = get_task_property_values(&pool, absent_destination)
+        .await
+        .into_iter()
+        .find(|(id, _)| *id == SystemPropertyKey::DependsOn.uuid())
+        .unwrap()
+        .1;
+    assert!(absent_value.is_none());
+    let retained_value = get_task_property_values(&pool, existing_destination)
+        .await
+        .into_iter()
+        .find(|(id, _)| *id == SystemPropertyKey::DependsOn.uuid())
+        .unwrap()
+        .1;
+    assert_eq!(
+        retained_value,
+        Some(serde_json::json!({
+            "type": "EntityReference",
+            "value": [{"entity_id": "retained-task", "entity_type": "TASK"}]
+        }))
+    );
+    assert_eq!(
+        get_task_property_values(&pool, absent_destination)
+            .await
+            .into_iter()
+            .find(|(id, _)| *id == SystemPropertyKey::Status.uuid())
+            .unwrap()
+            .1,
+        Some(status_value)
+    );
+    Ok(())
+}

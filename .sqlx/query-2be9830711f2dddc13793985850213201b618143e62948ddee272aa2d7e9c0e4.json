@@ -1,0 +1,61 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH previous AS (\n            SELECT values FROM entity_properties\n            WHERE entity_id = $2 AND entity_type = 'TASK' AND property_definition_id = $3\n        )\n        INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values)\n        VALUES ($1, $2, 'TASK', $3, $4)\n        ON CONFLICT (entity_id, entity_type, property_definition_id)\n        DO UPDATE SET values = EXCLUDED.values, updated_at = NOW()\n        RETURNING id, entity_id, property_definition_id, values,\n            (SELECT values FROM previous) AS previous, created_at, updated_at\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "entity_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "property_definition_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 3,
+        "name": "values",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "previous",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 5,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 6,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        "Uuid",
+        "Jsonb"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      true,
+      null,
+      false,
+      false
+    ]
+  },
+  "hash": "2be9830711f2dddc13793985850213201b618143e62948ddee272aa2d7e9c0e4"
+}
