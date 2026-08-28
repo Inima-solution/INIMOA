@@ -135,6 +135,10 @@ use projects_hex::{
     },
     inbound::axum_router::project_overview::GetProjectOverviewResponse,
 };
+use properties::inbound::axum_router::project_dependency_readiness::{
+    GetProjectTaskDependencyReadinessResponse, TaskDependencyReadinessBatchRequest,
+    TaskDependencyReadinessErrorResponse,
+};
 use reminders::domain::models::{Reminder, ReminderSchedule, RemindersList};
 use reminders::inbound::axum_router::{CreateReminderRequest, UpdateReminderRequest};
 use soup::domain::models::{SoupItemWithProperties, SoupPropertiesField};
@@ -313,6 +317,7 @@ use utoipa::OpenApi;
         projects_hex::inbound::axum_router::project_operations::get_project_operations_handler,
         projects_hex::inbound::axum_router::project_operations::replace_project_operations_handler,
         projects_hex::inbound::axum_router::project_overview::get_project_overview_handler,
+        properties::inbound::axum_router::project_dependency_readiness::get_project_task_dependency_readiness,
 
         entity::get_entity_permission::handler,
 
@@ -646,6 +651,9 @@ use utoipa::OpenApi;
             ReplaceProjectOperationsRequest,
             ProjectOverview,
             GetProjectOverviewResponse,
+            TaskDependencyReadinessBatchRequest,
+            GetProjectTaskDependencyReadinessResponse,
+            TaskDependencyReadinessErrorResponse,
 
             // Preview
             GetDocumentPermissionsResponseDataV2,

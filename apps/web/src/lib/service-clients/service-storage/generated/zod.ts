@@ -27354,6 +27354,57 @@ export const replaceProjectOperationsResponse = zod.object({
 });
 
 /**
+ * @summary Return direct dependency readiness for project-scoped source tasks.
+ */
+export const getProjectTaskDependencyReadinessParams = zod.object({
+  id: zod.string().describe('ID of the project'),
+});
+
+export const getProjectTaskDependencyReadinessBodyTaskIdsMax = 200;
+
+export const getProjectTaskDependencyReadinessBody = zod
+  .object({
+    taskIds: zod
+      .array(zod.uuid())
+      .max(getProjectTaskDependencyReadinessBodyTaskIdsMax)
+      .describe(
+        'Source task IDs to evaluate. An empty valid request returns `[]`.'
+      ),
+  })
+  .describe('Request body for the bounded task-dependency readiness read.');
+
+export const getProjectTaskDependencyReadinessResponseItem = zod
+  .object({
+    blockingTaskIds: zod
+      .array(zod.uuid())
+      .describe(
+        'Available direct dependencies whose Status is not exactly Completed.'
+      ),
+    dependsOnTaskIds: zod
+      .array(zod.uuid())
+      .describe(
+        'Direct live same-project task dependencies, in stored reference order.'
+      ),
+    hasUnavailableDependencies: zod
+      .boolean()
+      .describe(
+        'Whether at least one stored dependency was malformed or unavailable.'
+      ),
+    readiness: zod
+      .enum(['ready', 'blocked'])
+      .describe(
+        'Computed direct-dependency readiness for one task.\n\nThis is a read model only. Its value is intentionally never stored as a\nproperty or status option.'
+      ),
+    taskId: zod.uuid().describe('The scoped, live source task identifier.'),
+  })
+  .describe(
+    'Computed direct task-dependency state for one requested task.\n\nIDs of unavailable dependencies are deliberately omitted so this model can\nbe exposed by a later scoped API without leaking cross-project or deleted\ntask identifiers.'
+  );
+export const getProjectTaskDependencyReadinessResponse = zod.array(
+  getProjectTaskDependencyReadinessResponseItem
+);
+
+/**
  * @summary List the caller's webhooks.
  */
 export const listWebhooksResponse = zod

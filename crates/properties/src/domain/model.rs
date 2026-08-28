@@ -17,6 +17,7 @@ use uuid::Uuid;
 /// This is a read model only. Its value is intentionally never stored as a
 /// property or status option.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "inbound", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub enum TaskReadiness {
     /// Every direct, available dependency is completed (or there are none).
@@ -31,6 +32,7 @@ pub enum TaskReadiness {
 /// be exposed by a later scoped API without leaking cross-project or deleted
 /// task identifiers.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "inbound", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct TaskDependencyReadiness {
     /// The scoped, live source task identifier.

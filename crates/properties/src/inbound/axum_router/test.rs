@@ -134,6 +134,7 @@ enum AccessCall {
 struct FakeEntityAccessService {
     calls: Arc<Mutex<Vec<AccessCall>>>,
     team: Option<UserTeamInfo>,
+    deny_team_receipt: bool,
 }
 
 impl FakeEntityAccessService {
@@ -147,6 +148,14 @@ impl FakeEntityAccessService {
                 role: TeamRole::Member,
                 business_roles: Default::default(),
             }),
+            deny_team_receipt: false,
+        }
+    }
+
+    fn on_team_with_denied_work_receipt(team_id: Uuid) -> Self {
+        Self {
+            deny_team_receipt: true,
+            ..Self::on_team(team_id)
         }
     }
 
@@ -177,6 +186,9 @@ impl EntityAccessService for FakeEntityAccessService {
         // Entities whose id contains "denied" model the caller lacking access,
         // so receipt-minting fails for them (used by the bulk skip test).
         if entity_id.contains("denied") {
+            return Err(AccessError::Unauthorized);
+        }
+        if self.deny_team_receipt && entity_type == EntityType::Team {
             return Err(AccessError::Unauthorized);
         }
 
@@ -919,4 +931,335 @@ async fn promote_tag_without_a_team_is_forbidden() {
         .await
         .expect("request should complete");
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+}
+
+fn dependency_readiness_router(
+    service: TestPropertiesService,
+    entity_access_service: FakeEntityAccessService,
+) -> Router {
+    let state = PropertiesRouterState::new(
+        Arc::new(service),
+        Arc::new(entity_access_service),
+        authorization_state(),
+    );
+    super::project_dependency_readiness::project_dependency_readiness_router::<
+        TestPropertiesService,
+        FakeEntityAccessService,
+        TestAuthorizationService,
+    >()
+    .with_state(state)
+}
+
+fn dependency_readiness_request(
+    project_id: &str,
+    authorization: Option<&str>,
+    body: impl Into<Body>,
+) -> Request<Body> {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(format!("/{project_id}/task-dependency-readiness"))
+        .header(header::CONTENT_TYPE, "application/json");
+    if let Some(authorization) = authorization {
+        request = request.header(header::AUTHORIZATION, authorization);
+    }
+    request.body(body.into()).expect("request should be valid")
+}
+
+async fn assert_readiness_error(response: axum::response::Response, status: StatusCode) {
+    assert_eq!(response.status(), status);
+    let expected_message = match status {
+        StatusCode::BAD_REQUEST => "invalid request",
+        StatusCode::UNAUTHORIZED => "unauthorized",
+        StatusCode::FORBIDDEN => "forbidden",
+        StatusCode::NOT_FOUND => "not found",
+        StatusCode::INTERNAL_SERVER_ERROR => "internal server error",
+        _ => panic!("unexpected readiness status"),
+    };
+    let body: serde_json::Value =
+        serde_json::from_str(&response_body(response).await).expect("readiness error must be JSON");
+    let object = body.as_object().expect("readiness error must be an object");
+    assert_eq!(
+        object
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        ["error", "message"].into_iter().collect()
+    );
+    assert_eq!(object["error"], true);
+    assert_eq!(object["message"], expected_message);
+}
+
+#[tokio::test]
+async fn task_dependency_readiness_forwards_duplicates_in_order_and_returns_exact_raw_shape() {
+    use crate::domain::model::{TaskDependencyReadiness, TaskReadiness};
+
+    let team_id = Uuid::from_u128(0xD355);
+    let first = Uuid::from_u128(1);
+    let second = Uuid::from_u128(2);
+    let requested = vec![first, first, second];
+    let expected_requested = requested.clone();
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_task_dependency_readiness()
+        .times(1)
+        .withf(move |project_id, actual_team_id, task_ids| {
+            project_id == "project-readiness"
+                && *actual_team_id == team_id
+                && task_ids == expected_requested.as_slice()
+        })
+        .returning(move |_, _, _| {
+            Box::pin(async move {
+                Ok(Some(vec![TaskDependencyReadiness {
+                    task_id: first,
+                    readiness: TaskReadiness::Ready,
+                    depends_on_task_ids: vec![second],
+                    blocking_task_ids: vec![],
+                    has_unavailable_dependencies: false,
+                }]))
+            })
+        });
+    let entity_access_service = FakeEntityAccessService::on_team(team_id);
+    let service = PropertiesServiceImpl::new(
+        repo,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+    let response = dependency_readiness_router(service, entity_access_service.clone())
+        .oneshot(dependency_readiness_request(
+            "project-readiness",
+            Some("Bearer valid"),
+            serde_json::json!({ "taskIds": requested }).to_string(),
+        ))
+        .await
+        .expect("router should respond");
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&response_body(response).await).unwrap();
+    let items = body.as_array().expect("raw array response");
+    let item = items
+        .first()
+        .expect("one readiness item")
+        .as_object()
+        .unwrap();
+    assert_eq!(
+        item.keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        [
+            "blockingTaskIds",
+            "dependsOnTaskIds",
+            "hasUnavailableDependencies",
+            "readiness",
+            "taskId",
+        ]
+        .into_iter()
+        .collect()
+    );
+    assert_eq!(item["readiness"], "ready");
+    assert_eq!(
+        entity_access_service.calls(),
+        [
+            AccessCall::GenerateReceipt {
+                user_id: VALID_USER_ID.to_owned(),
+                organization_id: None,
+                entity_id: "project-readiness".to_owned(),
+                entity_type: EntityType::Project,
+            },
+            AccessCall::UserTeam {
+                user_id: VALID_USER_ID.to_owned(),
+            },
+            AccessCall::GenerateReceipt {
+                user_id: VALID_USER_ID.to_owned(),
+                organization_id: None,
+                entity_id: team_id.to_string(),
+                entity_type: EntityType::Team,
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn task_dependency_readiness_empty_and_invalid_requests_never_reach_the_repository() {
+    let team_id = Uuid::from_u128(0xD356);
+    for body in [
+        r#"{"taskIds":["not-a-uuid"]}"#.to_owned(),
+        r#"{"taskIds":[],"unknown":true}"#.to_owned(),
+        "{".to_owned(),
+        serde_json::json!({ "taskIds": vec![Uuid::nil(); 201] }).to_string(),
+    ] {
+        let mut repo = MockPropertiesRepo::new();
+        repo.expect_get_task_dependency_readiness().never();
+        let service = PropertiesServiceImpl::new(
+            repo,
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        );
+        let response =
+            dependency_readiness_router(service, FakeEntityAccessService::on_team(team_id))
+                .oneshot(dependency_readiness_request(
+                    "project-readiness",
+                    Some("Bearer valid"),
+                    body,
+                ))
+                .await
+                .expect("router should respond");
+        assert_readiness_error(response, StatusCode::BAD_REQUEST).await;
+    }
+
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_task_dependency_readiness().never();
+    let service = PropertiesServiceImpl::new(
+        repo,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+    let response = dependency_readiness_router(service, FakeEntityAccessService::on_team(team_id))
+        .oneshot(dependency_readiness_request(
+            "project-readiness",
+            Some("Bearer valid"),
+            r#"{"taskIds":[]}"#,
+        ))
+        .await
+        .expect("router should respond");
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response_body(response).await, "[]");
+}
+
+#[tokio::test]
+async fn task_dependency_readiness_rejects_auth_and_receipt_denials_without_repository_calls() {
+    for (project_id, authorization, access, status) in [
+        (
+            "project-readiness",
+            None,
+            FakeEntityAccessService::on_team(Uuid::new_v4()),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            "project-readiness",
+            Some("Bearer invalid"),
+            FakeEntityAccessService::on_team(Uuid::new_v4()),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            "project-denied",
+            Some("Bearer valid"),
+            FakeEntityAccessService::on_team(Uuid::new_v4()),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "project-readiness",
+            Some("Bearer valid"),
+            FakeEntityAccessService::default(),
+            StatusCode::FORBIDDEN,
+        ),
+        (
+            "project-readiness",
+            Some("Bearer valid"),
+            FakeEntityAccessService::on_team_with_denied_work_receipt(Uuid::new_v4()),
+            StatusCode::FORBIDDEN,
+        ),
+    ] {
+        let mut repo = MockPropertiesRepo::new();
+        repo.expect_get_task_dependency_readiness().never();
+        let service = PropertiesServiceImpl::new(
+            repo,
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        );
+        let observed_access = access.clone();
+        let response = dependency_readiness_router(service, access)
+            .oneshot(dependency_readiness_request(
+                project_id,
+                authorization,
+                r#"{"taskIds":[]}"#,
+            ))
+            .await
+            .expect("router should respond");
+        assert_readiness_error(response, status).await;
+        if status == StatusCode::UNAUTHORIZED {
+            assert!(
+                observed_access.calls().is_empty(),
+                "UserOnly must reject missing/invalid credentials before entity access"
+            );
+        }
+    }
+
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_task_dependency_readiness().never();
+    let service = PropertiesServiceImpl::new(
+        repo,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+    let request = Request::builder()
+        .method("POST")
+        .uri("/project-readiness/task-dependency-readiness")
+        .header(INTERNAL_API_KEY_HEADER, INTERNAL_API_KEY)
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(r#"{"taskIds":[]}"#))
+        .expect("request should be valid");
+    let internal_access = FakeEntityAccessService::on_team(Uuid::new_v4());
+    let response = dependency_readiness_router(service, internal_access.clone())
+        .oneshot(request)
+        .await
+        .expect("router should respond");
+    assert_readiness_error(response, StatusCode::FORBIDDEN).await;
+    assert!(
+        internal_access.calls().is_empty(),
+        "UserOnly must reject internal callers before entity access"
+    );
+}
+
+#[tokio::test]
+async fn task_dependency_readiness_maps_unavailable_and_repo_failures_without_leaking_sentinel() {
+    let team_id = Uuid::from_u128(0xD357);
+    let mut unavailable = MockPropertiesRepo::new();
+    unavailable
+        .expect_get_task_dependency_readiness()
+        .returning(|_, _, _| Box::pin(async { Ok(None) }));
+    let service = PropertiesServiceImpl::new(
+        unavailable,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+    let response = dependency_readiness_router(service, FakeEntityAccessService::on_team(team_id))
+        .oneshot(dependency_readiness_request(
+            "project-readiness",
+            Some("Bearer valid"),
+            serde_json::json!({ "taskIds": [Uuid::nil()] }).to_string(),
+        ))
+        .await
+        .expect("router should respond");
+    assert_readiness_error(response, StatusCode::NOT_FOUND).await;
+
+    let mut failing = MockPropertiesRepo::new();
+    failing
+        .expect_get_task_dependency_readiness()
+        .returning(|_, _, _| Box::pin(async { Err(anyhow::anyhow!("readiness-secret-sentinel")) }));
+    let service = PropertiesServiceImpl::new(
+        failing,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+    let response = dependency_readiness_router(service, FakeEntityAccessService::on_team(team_id))
+        .oneshot(dependency_readiness_request(
+            "project-readiness",
+            Some("Bearer valid"),
+            serde_json::json!({ "taskIds": [Uuid::nil()] }).to_string(),
+        ))
+        .await
+        .expect("router should respond");
+    assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let body = response_body(response).await;
+    let value: serde_json::Value = serde_json::from_str(&body).expect("redacted JSON error");
+    let object = value.as_object().expect("redacted error object");
+    assert_eq!(
+        object
+            .keys()
+            .map(String::as_str)
+            .collect::<std::collections::BTreeSet<_>>(),
+        ["error", "message"].into_iter().collect()
+    );
+    assert_eq!(value["error"], true);
+    assert_eq!(value["message"], "internal server error");
+    assert!(!body.contains("readiness-secret-sentinel"));
 }

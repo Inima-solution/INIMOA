@@ -159,6 +159,14 @@ fn api_router(state: ApiContext) -> Router {
         .nest(
             "/projects",
             projects_hex::inbound::axum_router::projects_router(state.projects_state.clone())
+                .merge(
+                    properties::inbound::axum_router::project_dependency_readiness::project_dependency_readiness_router()
+                        .with_state(PropertiesHandlerState::from_ref(&state))
+                        .layer(axum::middleware::from_fn_with_state(
+                            state.projects_state.clone(),
+                            projects_hex::inbound::axum_router::ensure_project_exists,
+                        )),
+                )
                 .layer(ServiceBuilder::new().layer(axum::middleware::from_fn(
                     |req: Request, next: Next| async move {
                         match req.method() {

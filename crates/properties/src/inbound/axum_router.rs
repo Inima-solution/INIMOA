@@ -14,6 +14,7 @@ pub mod definitions;
 pub mod entities;
 pub mod extract;
 pub mod options;
+pub mod project_dependency_readiness;
 pub mod tags;
 
 use std::sync::Arc;

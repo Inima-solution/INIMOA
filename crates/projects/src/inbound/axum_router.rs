@@ -194,7 +194,12 @@ where
 
 /// Load project context required by project access extractors.
 #[tracing::instrument(skip(state, request, next), err)]
-async fn ensure_project_exists<T, Svc, Auth>(
+/// Apply the canonical project-context lookup to an additional project-scoped route.
+///
+/// DSS uses this for properties-owned routes that must preserve the same missing
+/// and deleted-project behavior without adding unrelated dependencies to the
+/// project router state.
+pub async fn ensure_project_exists<T, Svc, Auth>(
     State(state): State<ProjectRouterState<T, Svc, Auth>>,
     Path(Params { id }): Path<Params>,
     mut request: Request<Body>,
