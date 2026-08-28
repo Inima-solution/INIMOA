@@ -170,3 +170,71 @@ async fn verify_password_distinguishes_registration_mfa_and_bad_credentials() {
         assert_eq!(error.to_string(), expected.to_string());
     }
 }
+
+#[tokio::test]
+async fn verify_multi_factor_suppresses_sessions_and_returns_only_authenticated_email() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/two-factor/login"))
+        .and(header("authorization", "api-key"))
+        .and(body_json(json!({
+            "applicationId": "application-id",
+            "twoFactorId": "challenge-id",
+            "code": "123456",
+            "noJWT": true,
+            "trustComputer": false
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "user": { "email": "actor@example.com", "token": "must-not-be-exposed" }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    assert_eq!(
+        client(&server)
+            .verify_multi_factor("challenge-id", "123456")
+            .await
+            .unwrap(),
+        "actor@example.com"
+    );
+}
+
+#[tokio::test]
+async fn verify_multi_factor_fails_closed_without_provider_body() {
+    for status in [202, 203, 212, 213, 404, 409, 410, 421] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/two-factor/login"))
+            .respond_with(ResponseTemplate::new(status).set_body_string("sensitive-provider-body"))
+            .mount(&server)
+            .await;
+
+        let error = client(&server)
+            .verify_multi_factor("challenge-id", "123456")
+            .await
+            .unwrap_err();
+        assert!(matches!(error, FusionAuthClientError::IncorrectCode));
+        assert!(!error.to_string().contains("sensitive-provider-body"));
+    }
+}
+
+#[tokio::test]
+async fn verify_multi_factor_rejects_unexpected_status_without_provider_body() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/api/two-factor/login"))
+        .respond_with(ResponseTemplate::new(500).set_body_string("sensitive-provider-body"))
+        .mount(&server)
+        .await;
+
+    let error = client(&server)
+        .verify_multi_factor("challenge-id", "123456")
+        .await
+        .unwrap_err();
+    let FusionAuthClientError::Generic(error) = error else {
+        panic!("expected generic upstream error");
+    };
+    assert!(!error.message.contains("sensitive-provider-body"));
+    assert!(error.message.contains("500"));
+}

@@ -46,3 +46,8 @@ fn request_id_is_required_and_bounded() {
         Err(ReauthenticationValidationError::RequestIdTooLong)
     );
 }
+
+#[test]
+fn password_mfa_is_a_closed_receipt_proof_method() {
+    assert_eq!(ProofMethod::PasswordMfa.as_str(), "password_mfa");
+}

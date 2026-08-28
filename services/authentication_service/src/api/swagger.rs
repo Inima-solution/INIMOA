@@ -29,7 +29,10 @@ use crate::api::link::github::{GithubLinkStatusResponse, InitGithubLinkResponse}
 use crate::api::link::gmail::{GmailLinkStatusResponse, InitGmailLinkResponse};
 use crate::api::link::outlook::InitOutlookLinkResponse;
 use crate::api::merge::create_merge_request::CreateAccountMergeRequest;
-use crate::api::reauth::{ReauthenticateRequest, ReauthenticateResponse};
+use crate::api::reauth::{
+    ReauthenticateMfaMethod, ReauthenticateMfaRequest, ReauthenticateMfaUnauthorizedResponse,
+    ReauthenticateRequest, ReauthenticateResponse, ReauthenticateUnauthorizedResponse,
+};
 use crate::api::user::create_user::CreateUserRequest;
 use crate::api::user::get_legacy_user_permissions::GetLegacyUserPermissionsResponse;
 use crate::api::user::get_user_link_exists::UserLinkResponse;
@@ -156,6 +159,7 @@ use model::user::{
                 teams::inbound::axum_router::remove_user_from_team::handler::<crate::api::context::TeamsServiceType, crate::api::context::EntityAccessServiceType, crate::api::context::AuthorizationService>,
                 teams::inbound::axum_router::delete_team_invite::handler::<crate::api::context::TeamsServiceType, crate::api::context::EntityAccessServiceType, crate::api::context::AuthorizationService>,
                 crate::api::reauth::handler,
+                crate::api::reauth::mfa_handler,
                 crate::api::business_role_change::grant_handler,
                 crate::api::business_role_change::revoke_handler,
                 crate::api::business_audit::handler,
@@ -236,7 +240,11 @@ use model::user::{
                         TeamWithMembers,
                         TeamInviteDetails,
                         ReauthenticateRequest,
+                        ReauthenticateMfaRequest,
+                        ReauthenticateMfaMethod,
                         ReauthenticateResponse,
+                        ReauthenticateUnauthorizedResponse,
+                        ReauthenticateMfaUnauthorizedResponse,
                         BusinessRoleChangeRequest,
                         BusinessRoleChangeResponse,
                         BusinessAuditListItem,
@@ -356,7 +364,34 @@ mod tests {
             operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"].as_str(),
             Some("#/components/schemas/ReauthenticateResponse")
         );
+        assert_eq!(
+            operation["responses"]["401"]["content"]["application/json"]["schema"]["$ref"].as_str(),
+            Some("#/components/schemas/ReauthenticateUnauthorizedResponse")
+        );
+        let initial_unauthorized =
+            &openapi["components"]["schemas"]["ReauthenticateUnauthorizedResponse"];
+        let initial_unauthorized = initial_unauthorized.to_string();
+        assert!(initial_unauthorized.contains("invalid_credentials"));
+        assert!(initial_unauthorized.contains("mfa_required"));
         assert!(operation["responses"].get("429").is_some());
+
+        let mfa_operation = &openapi["paths"]["/team/reauth/mfa"]["post"];
+        assert_eq!(
+            mfa_operation["operationId"],
+            "complete_team_reauthentication_mfa"
+        );
+        assert_eq!(
+            mfa_operation["requestBody"]["content"]["application/json"]["schema"]["$ref"].as_str(),
+            Some("#/components/schemas/ReauthenticateMfaRequest")
+        );
+        assert_eq!(
+            mfa_operation["responses"]["401"]["content"]["application/json"]["schema"]["$ref"]
+                .as_str(),
+            Some("#/components/schemas/ReauthenticateMfaUnauthorizedResponse")
+        );
+        let mfa_unauthorized =
+            &openapi["components"]["schemas"]["ReauthenticateMfaUnauthorizedResponse"];
+        assert!(mfa_unauthorized.to_string().contains("invalid_mfa"));
     }
 
     #[test]

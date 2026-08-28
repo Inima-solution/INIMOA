@@ -66,6 +66,8 @@ impl ReceiptPurpose {
 pub enum ProofMethod {
     /// The authenticated user supplied their password to FusionAuth.
     Password,
+    /// The authenticated user completed a FusionAuth MFA challenge after password verification.
+    PasswordMfa,
 }
 
 impl ProofMethod {
@@ -73,6 +75,7 @@ impl ProofMethod {
     pub(crate) const fn as_str(self) -> &'static str {
         match self {
             Self::Password => "password",
+            Self::PasswordMfa => "password_mfa",
         }
     }
 }

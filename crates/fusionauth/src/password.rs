@@ -31,6 +31,32 @@ struct PasswordLoginResponse<'a> {
     pub refresh_token: Cow<'a, str>,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct MultiFactorLoginRequest<'a> {
+    /// The application id.
+    pub application_id: Cow<'a, str>,
+    /// The short-lived MFA challenge identifier.
+    pub two_factor_id: Cow<'a, str>,
+    /// The proof supplied for the selected MFA method.
+    pub code: Cow<'a, str>,
+    /// Suppress access and refresh token generation for step-up verification.
+    #[serde(rename = "noJWT")]
+    pub no_jwt: bool,
+    /// Never establish a trusted-device relationship while reauthenticating.
+    pub trust_computer: bool,
+}
+
+#[derive(serde::Deserialize)]
+struct MultiFactorLoginResponse<'a> {
+    pub user: MultiFactorAuthenticatedUser<'a>,
+}
+
+#[derive(serde::Deserialize)]
+struct MultiFactorAuthenticatedUser<'a> {
+    pub email: Cow<'a, str>,
+}
+
 /// One available multi-factor method for completing reauthentication.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -158,6 +184,45 @@ async fn verify(
     }
 }
 
+/// Completes a FusionAuth MFA challenge without generating a session or tokens.
+async fn verify_multi_factor(
+    client: &AuthedClient,
+    base_url: &str,
+    request: MultiFactorLoginRequest<'_>,
+) -> Result<String> {
+    let res = client
+        .client()
+        .post(format!("{}/api/two-factor/login", base_url))
+        .json(&request)
+        .send()
+        .await
+        .map_err(|error| {
+            FusionAuthClientError::Generic(GenericErrorResponse {
+                message: error.to_string(),
+            })
+        })?;
+    let status = res.status();
+
+    match status.as_u16() {
+        200 => res
+            .json::<MultiFactorLoginResponse>()
+            .await
+            .map(|response| response.user.email.into_owned())
+            .map_err(|error| {
+                FusionAuthClientError::Generic(GenericErrorResponse {
+                    message: error.to_string(),
+                })
+            }),
+        202 | 203 | 212 | 213 | 404 | 409 | 410 | 421 => Err(FusionAuthClientError::IncorrectCode),
+        _ => {
+            tracing::error!(status=%status, "unexpected MFA verification response from fusionauth");
+            Err(FusionAuthClientError::Generic(GenericErrorResponse {
+                message: format!("fusionauth returned {status}"),
+            }))
+        }
+    }
+}
+
 impl FusionAuthClient {
     /// Performs a password-based login with the given email and password.
     #[tracing::instrument(skip(self, password), fields(application_id=%self.client_id, fusion_auth_base_url=%self.fusion_auth_base_url))]
@@ -190,6 +255,23 @@ impl FusionAuthClient {
                 login_id: Cow::Borrowed(email),
                 password: Cow::Borrowed(password),
                 no_jwt: true,
+            },
+        )
+        .await
+    }
+
+    /// Completes an existing MFA challenge and returns only the authenticated user's email.
+    #[tracing::instrument(skip(self, code), fields(application_id=%self.client_id, fusion_auth_base_url=%self.fusion_auth_base_url))]
+    pub async fn verify_multi_factor(&self, two_factor_id: &str, code: &str) -> Result<String> {
+        verify_multi_factor(
+            &self.auth_client,
+            &self.fusion_auth_base_url,
+            MultiFactorLoginRequest {
+                application_id: Cow::Borrowed(&self.client_id),
+                two_factor_id: Cow::Borrowed(two_factor_id),
+                code: Cow::Borrowed(code),
+                no_jwt: true,
+                trust_computer: false,
             },
         )
         .await

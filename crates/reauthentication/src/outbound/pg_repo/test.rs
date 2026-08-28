@@ -255,3 +255,34 @@ async fn database_rejects_malformed_direct_rows(pool: PgPool) {
     .await;
     assert!(result.is_err());
 }
+
+#[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
+async fn database_accepts_password_mfa_and_rejects_other_proof_methods(pool: PgPool) {
+    let now = Utc::now();
+    assert!(
+        direct_insert(
+            &pool,
+            "macro|actor@example.com",
+            "company_role_change",
+            "password_mfa",
+            now,
+            now + Duration::minutes(5),
+            "request"
+        )
+        .await
+        .is_ok()
+    );
+    assert!(
+        direct_insert(
+            &pool,
+            "macro|actor@example.com",
+            "company_role_change",
+            "trusted_device",
+            now,
+            now + Duration::minutes(5),
+            "request"
+        )
+        .await
+        .is_err()
+    );
+}
