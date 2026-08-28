@@ -64,3 +64,6 @@ pub fn to_indexed_properties(properties: Vec<IndexedEntityProperty>) -> Vec<Inde
         })
         .collect()
 }
+
+#[cfg(test)]
+mod test;
