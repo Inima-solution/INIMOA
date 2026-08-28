@@ -37,6 +37,7 @@ backfill_binary = [
 default = ["ai_tools", "axum", "inbound", "outbound", "ports"]
 inbound = ["axum", "ports"]
 outbound = [
+  "business_audit/outbound",
   "dep:analytics_client",
   "dep:contacts",
   "dep:models_email",
@@ -44,6 +45,7 @@ outbound = [
   "dep:sqs_client",
   "dep:url",
   "ports",
+  "reauthentication/outbound",
 ]
 ports = [
   "dep:model-entity",
@@ -56,6 +58,7 @@ ports = [
 # Core
 ai_toolset = { path = "../ai_toolset", optional = true }
 anyhow = { workspace = true }
+business_audit = { path = "../business_audit", default-features = false }
 async-stripe = { workspace = true, default-features = false, features = [
   "billing",
   "checkout",
@@ -75,7 +78,9 @@ macro_event_topics = { path = "../macro_event_topics" }
 macro_user_id = { path = "../macro_user_id" }
 macro_uuid = { path = "../macro_uuid" }
 models_permissions = { path = "../models_permissions" }
+models_team = { path = "../models_team" }
 non_empty = { path = "../non_empty" }
+reauthentication = { path = "../reauthentication", optional = true, default-features = false }
 roles_and_permissions = { path = "../roles_and_permissions", default-features = false, features = [
   "ports",
 ] }

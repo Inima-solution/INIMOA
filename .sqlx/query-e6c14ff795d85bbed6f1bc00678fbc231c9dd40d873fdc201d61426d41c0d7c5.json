@@ -1,0 +1,41 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    INSERT INTO team_business_role (team_id, principal, business_role, granted_by)\n                    VALUES ($1, $2, $3, $4)\n                    ON CONFLICT (team_id, principal, business_role) DO NOTHING\n                    RETURNING team_id\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "team_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        {
+          "Custom": {
+            "name": "business_role",
+            "kind": {
+              "Enum": [
+                "member",
+                "manager",
+                "approver",
+                "hr_admin",
+                "payroll_admin",
+                "org_admin",
+                "auditor",
+                "agent"
+              ]
+            }
+          }
+        },
+        "Text"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e6c14ff795d85bbed6f1bc00678fbc231c9dd40d873fdc201d61426d41c0d7c5"
+}

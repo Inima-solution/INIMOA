@@ -1,3 +1,4 @@
+pub mod business_role_change;
 pub mod contacts_enqueuer;
 pub mod crm_enqueuer;
 pub mod customer_repo;

@@ -1,0 +1,40 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    DELETE FROM team_business_role\n                    WHERE team_id = $1 AND principal = $2 AND business_role = $3\n                    RETURNING team_id\n                    ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "team_id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text",
+        {
+          "Custom": {
+            "name": "business_role",
+            "kind": {
+              "Enum": [
+                "member",
+                "manager",
+                "approver",
+                "hr_admin",
+                "payroll_admin",
+                "org_admin",
+                "auditor",
+                "agent"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "605c0d9c2c32733465e152f76ef23c462ea24efc9fd307a191c3fc6e7dc54b14"
+}
