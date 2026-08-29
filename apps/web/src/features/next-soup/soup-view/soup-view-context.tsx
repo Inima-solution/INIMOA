@@ -103,6 +103,7 @@ import { unwrap } from 'solid-js/store';
 
 type DataSource<T> = {
   data: Accessor<T[]>;
+  error: Accessor<Error | null>;
   isLoading: Accessor<boolean>;
   isFetching: Accessor<boolean>;
   /**
@@ -1422,6 +1423,7 @@ export const SoupViewContextProvider: FlowComponent<
     initialize,
     source: {
       data: entities,
+      error: () => itemsQuery.error,
       isLoading: () => itemsSource.isLoading(),
       isFetching: () => itemsSource.isFetching() || searchQuery.isFetching,
       isPlaceholderData: () =>

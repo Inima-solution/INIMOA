@@ -44,11 +44,19 @@ import IconShared from '@icon/wide-share.svg';
 import Info from '@phosphor/info.svg';
 import { createMemo, For, Show } from 'solid-js';
 import { ProjectCreateMenu, useProjectCreateTools } from './ProjectCreateMenu';
+import {
+  type ProjectTaskViewMode,
+  ProjectViewModeControl,
+} from './ProjectViewModeControl';
 
 // TODO (SEAMUS) : Revisit this file when we figure out what we wanna do
 //     with folder block.
 
-export function TopBar() {
+export function TopBar(props: {
+  mode: ProjectTaskViewMode;
+  onChange: (mode: ProjectTaskViewMode) => void;
+  selectorVisible: boolean;
+}) {
   const id = useBlockId();
   const isSpecialProject = getIsSpecialProject(id);
   const isOwner = useIsDocumentOwner();
@@ -125,6 +133,13 @@ export function TopBar() {
       </SplitHeaderLeft>
       <SplitHeaderRight>
         <div class="order-[1000] flex items-center gap-1">
+          <Show when={props.selectorVisible && !isSpecialProject && isMobile()}>
+            <ProjectViewModeControl
+              mode={props.mode}
+              onChange={props.onChange}
+              density="touch"
+            />
+          </Show>
           <Show when={showShare()}>
             <ShareTrigger copyLink={handleCopyLink} />
           </Show>
@@ -143,6 +158,12 @@ export function TopBar() {
       <Show when={!isMobile()}>
         <SplitToolbarLeft class="flex-0">
           <div class="flex gap-2 p-1">
+            <Show when={props.selectorVisible && !isSpecialProject}>
+              <ProjectViewModeControl
+                mode={props.mode}
+                onChange={props.onChange}
+              />
+            </Show>
             <Show when={ops().length > 0}>
               <Show when={canEdit()}>
                 <ProjectCreateMenu id={id} />

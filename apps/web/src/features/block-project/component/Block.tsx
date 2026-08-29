@@ -11,8 +11,14 @@ import {
   SoupViewContextProvider,
   useSoupView,
 } from '@app/features/next-soup/soup-view/soup-view-context';
+import {
+  openEntityInSplitFromUnifiedList,
+  preventDuplicatePreviewEntityOpen,
+} from '@app/features/next-soup/utils';
 import { getIsSpecialProject } from '@block-project/isSpecial';
 import { SidePanel } from '@components/app/side-panel';
+import { useEntryState } from '@components/app/split-layout/entry-state';
+import { useSplitPanelOrThrow } from '@components/app/split-layout/layoutUtils';
 import { useBlockId } from '@core/block';
 import { DocumentBlockContainer } from '@core/component/DocumentBlockContainer';
 import { FileDropOverlay } from '@core/component/FileDropOverlay';
@@ -25,6 +31,7 @@ import {
   type UploadInput,
   uploadFiles,
 } from '@core/util/upload';
+import type { TaskEntityWithProperties } from '@entity';
 import { isTaskEntity } from '@entity/types/entity';
 import { TaskDependencyRelationsProvider } from '@property/task-dependency-relations';
 import { TaskSubtaskProgressProvider } from '@property/task-subtask-progress';
@@ -32,6 +39,8 @@ import { refetchSoupEntity } from '@queries/soup/cache';
 import { refetchResources } from '@service-storage/util/refetchResources';
 import { type Component, createMemo, createSignal, Show } from 'solid-js';
 import { ModalsProvider } from './ModalsProvider';
+import { ProjectTaskStatusBoard } from './ProjectTaskStatusBoard';
+import type { ProjectTaskViewMode } from './ProjectViewModeControl';
 import { ProjectSidePanelSections } from './sidepanel/ProjectSidePanelSections';
 import { TopBar } from './TopBar';
 
@@ -46,6 +55,11 @@ const Block: Component = () => {
   const [isDragging, setIsDragging] = createSignal(false);
   const projectId = useBlockId();
   const isSpecialProject = getIsSpecialProject(projectId);
+  const [taskViewMode, setTaskViewMode] = useEntryState<ProjectTaskViewMode>(
+    'project.taskViewMode',
+    { default: 'list' }
+  );
+  const viewMode = () => (isSpecialProject ? 'list' : taskViewMode());
 
   const handleFileUpload = async (files: UploadInput[]) => {
     if (files.length === 0) return;
@@ -127,8 +141,13 @@ const Block: Component = () => {
               <ProjectSidePanelSections />
             </Show>
             <div class="flex size-full min-w-0 flex-col overflow-hidden">
-              <TopBar />
+              <TopBar
+                mode={viewMode()}
+                onChange={setTaskViewMode}
+                selectorVisible={!isSpecialProject}
+              />
               <ProjectEntityList
+                mode={viewMode()}
                 projectId={projectId}
                 soup={projectSoup}
                 // Scope is already attached by the block container so we can use that
@@ -144,6 +163,7 @@ const Block: Component = () => {
 };
 
 const ProjectEntityList = (props: {
+  mode: ProjectTaskViewMode;
   scopeId: string;
   projectId: string;
   soup: SoupState;
@@ -175,6 +195,7 @@ const ProjectEntityList = (props: {
       >
         <ProjectSoupViewList
           isSpecialProject={getIsSpecialProject(props.projectId)}
+          mode={props.mode}
           scopeId={props.scopeId}
         />
       </SoupViewContextProvider>
@@ -184,9 +205,12 @@ const ProjectEntityList = (props: {
 
 const ProjectSoupViewList = (props: {
   isSpecialProject: boolean;
+  mode: ProjectTaskViewMode;
   scopeId: string;
 }) => {
   const soupView = useSoupView();
+  const { searchText, source, soup } = soupView;
+  const panel = useSplitPanelOrThrow();
   const taskIds = createMemo(() => {
     if (props.isSpecialProject) return [];
 
@@ -195,11 +219,56 @@ const ProjectSoupViewList = (props: {
       return isTaskEntity(row.original) ? [row.original.id] : [];
     });
   });
+  const tasks = () =>
+    props.isSpecialProject
+      ? []
+      : (source.data().filter(isTaskEntity) as TaskEntityWithProperties[]);
+  const boardLoading = () =>
+    tasks().length === 0 &&
+    (source.isLoading() || source.isPlaceholderData() || source.isFetching());
+  const retryBoard = () => {
+    void source.refresh().catch(() => {});
+  };
+  const openTask = (task: TaskEntityWithProperties, event: MouseEvent) => {
+    if (
+      !event.shiftKey &&
+      !event.altKey &&
+      panel.handle.isControllerSplit() &&
+      preventDuplicatePreviewEntityOpen(task, panel.handle)
+    ) {
+      return;
+    }
+
+    soup.focus.set(task.id);
+    void openEntityInSplitFromUnifiedList(task, {
+      openInNewSplit: event.shiftKey,
+      replacePreview: !event.shiftKey && event.altKey,
+      splitHandle: panel.handle,
+      referredFrom: null,
+    });
+  };
 
   return (
     <TaskSubtaskProgressProvider taskIds={taskIds}>
       <TaskDependencyRelationsProvider taskIds={taskIds}>
-        <SoupViewList customScrollbarHidden={true} scopeId={props.scopeId} />
+        <Show
+          when={!props.isSpecialProject && props.mode === 'board'}
+          fallback={
+            <SoupViewList
+              customScrollbarHidden={true}
+              scopeId={props.scopeId}
+            />
+          }
+        >
+          <ProjectTaskStatusBoard
+            tasks={tasks()}
+            loading={boardLoading()}
+            error={source.error() !== null}
+            searching={searchText().trim().length > 0}
+            onOpenTask={openTask}
+            onRetry={retryBoard}
+          />
+        </Show>
       </TaskDependencyRelationsProvider>
     </TaskSubtaskProgressProvider>
   );
