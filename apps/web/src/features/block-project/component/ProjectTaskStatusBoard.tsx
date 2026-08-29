@@ -5,6 +5,7 @@ import {
   getTaskStatusOptionId,
   TASK_STATUS_OPTIONS,
 } from '@entity/utils/task-properties';
+import type { Property } from '@property/types';
 import { EmptyStatePanel } from '@ui';
 import { For, Show } from 'solid-js';
 
@@ -47,8 +48,17 @@ export function ProjectTaskStatusBoard(props: {
   searching?: boolean;
   onOpenTask: (task: TaskEntityWithProperties, event: MouseEvent) => void;
   onRetry?: () => void;
+  canEdit?: boolean;
+  statusProperty?: Property;
+  statusPending?: boolean;
+  activeStatusTaskId?: string;
+  onMoveTaskStatus?: (task: TaskEntityWithProperties, statusId: string) => void;
 }) {
   const buckets = () => bucketTasks(props.tasks);
+  const canMoveStatus = () =>
+    props.canEdit === true &&
+    props.statusProperty?.valueType === 'SELECT_STRING' &&
+    props.onMoveTaskStatus !== undefined;
 
   return (
     <Show
@@ -99,22 +109,76 @@ export function ProjectTaskStatusBoard(props: {
                 </header>
                 <div class="flex min-h-0 flex-1 flex-col overflow-y-auto py-1 scrollbar-hidden @max-[640px]/project-task-status-board:flex-none @max-[640px]/project-task-status-board:overflow-visible">
                   <For each={bucket.tasks}>
-                    {(task) => (
-                      <SoupEntityContextMenu entity={task}>
-                        <button
-                          type="button"
-                          class="flex min-h-10 w-full items-center gap-2 px-2 py-1 text-left text-sm text-ink hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 touch:min-h-11"
-                          onClick={(event) => props.onOpenTask(task, event)}
-                        >
-                          <span class="size-4 shrink-0">
-                            <Entity.Icon entity={task} />
-                          </span>
-                          <span class="min-w-0 truncate">
-                            <Entity.Title entity={task} />
-                          </span>
-                        </button>
-                      </SoupEntityContextMenu>
-                    )}
+                    {(task) => {
+                      const statusId = () => getTaskStatusOptionId(task);
+                      const knownStatusId = () =>
+                        TASK_STATUS_OPTIONS.some(
+                          (option) => option.value === statusId()
+                        )
+                          ? statusId()
+                          : '';
+                      const controlId = encodeURIComponent(task.id);
+                      const isActive = () =>
+                        props.activeStatusTaskId === task.id;
+
+                      return (
+                        <SoupEntityContextMenu entity={task}>
+                          <div class="flex min-w-0 items-center gap-1">
+                            <button
+                              type="button"
+                              class="flex min-h-10 min-w-0 flex-1 items-center gap-2 px-2 py-1 text-left text-sm text-ink hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 touch:min-h-11"
+                              onClick={(event) => props.onOpenTask(task, event)}
+                            >
+                              <span class="size-4 shrink-0">
+                                <Entity.Icon entity={task} />
+                              </span>
+                              <span class="min-w-0 truncate">
+                                <Entity.Title entity={task} />
+                              </span>
+                            </button>
+                            <Show when={canMoveStatus()}>
+                              <select
+                                aria-label={`${task.name} status`}
+                                aria-busy={isActive() || undefined}
+                                data-project-task-status-control={controlId}
+                                disabled={props.statusPending}
+                                value={knownStatusId()}
+                                class="min-h-10 shrink-0 border border-edge-muted bg-surface px-1 text-xs text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 disabled:opacity-50 touch:min-h-11"
+                                onChange={(event) => {
+                                  const nextStatusId =
+                                    event.currentTarget.value;
+                                  if (
+                                    !nextStatusId ||
+                                    nextStatusId === statusId()
+                                  ) {
+                                    return;
+                                  }
+                                  props.onMoveTaskStatus?.(task, nextStatusId);
+                                  requestAnimationFrame(() => {
+                                    document
+                                      .querySelector<HTMLSelectElement>(
+                                        `[data-project-task-status-control="${controlId}"]`
+                                      )
+                                      ?.focus();
+                                  });
+                                }}
+                              >
+                                <option value="" disabled>
+                                  No status
+                                </option>
+                                <For each={TASK_STATUS_OPTIONS}>
+                                  {(option) => (
+                                    <option value={option.value}>
+                                      {option.label}
+                                    </option>
+                                  )}
+                                </For>
+                              </select>
+                            </Show>
+                          </div>
+                        </SoupEntityContextMenu>
+                      );
+                    }}
                   </For>
                 </div>
               </section>

@@ -9,14 +9,20 @@ const mocks = vi.hoisted(() => ({
   dependencyProviderCount: 0,
   boardProps: undefined as
     | {
+        activeStatusTaskId?: string;
+        canEdit?: boolean;
         error?: boolean;
         loading?: boolean;
+        onMoveTaskStatus?: (task: { id: string }, statusId: string) => void;
         onOpenTask: (task: { id: string }, event: MouseEvent) => void;
         onRetry?: () => void;
         searching?: boolean;
+        statusPending?: boolean;
+        statusProperty?: { propertyDefinitionId: string };
         tasks: Array<{ id: string }>;
       }
     | undefined,
+  canEdit: true,
   controllerSplit: false,
   duplicatePreview: false,
   entryStateCalls: [] as Array<{ key: string; options: { default: string } }>,
@@ -34,6 +40,10 @@ const mocks = vi.hoisted(() => ({
   sourceFetching: false,
   sourceLoading: false,
   sourcePlaceholderData: false,
+  statusMutation: vi.fn(),
+  statusMutationCallbacks: undefined as { onSettled?: () => void } | undefined,
+  statusMutationPending: false,
+  statusProperties: [] as Array<Record<string, unknown>>,
   searchText: '',
   topBarProps: undefined as
     | {
@@ -110,6 +120,9 @@ vi.mock('@components/app/split-layout/layoutUtils', () => ({
   }),
 }));
 vi.mock('@core/block', () => ({ useBlockId: () => mocks.projectId }));
+vi.mock('@core/signal/permissions', () => ({
+  useCanEdit: () => () => mocks.canEdit,
+}));
 vi.mock('@core/component/DocumentBlockContainer', () => ({
   DocumentBlockContainer: (props: ParentProps) => props.children,
 }));
@@ -135,6 +148,22 @@ vi.mock('@entity/types/entity', () => ({
 vi.mock('@property/task-subtask-progress', () => ({
   TaskSubtaskProgressProvider: (props: ParentProps) => props.children,
 }));
+vi.mock('@property/editor/hooks/useAllProperties', () => ({
+  useAllProperties: () => () => mocks.statusProperties,
+}));
+vi.mock('@queries/properties/entity', () => ({
+  useBulkSaveEntityPropertiesMutation: (callbacks: {
+    onSettled?: () => void;
+  }) => {
+    mocks.statusMutationCallbacks = callbacks;
+    return {
+      get isPending() {
+        return mocks.statusMutationPending;
+      },
+      mutate: mocks.statusMutation,
+    };
+  },
+}));
 vi.mock('@property/task-dependency-relations', () => ({
   TaskDependencyRelationsProvider: (
     props: ParentProps<{
@@ -159,7 +188,14 @@ vi.mock('./sidepanel/ProjectSidePanelSections', () => ({
 vi.mock('./ProjectTaskStatusBoard', () => ({
   ProjectTaskStatusBoard: (props: NonNullable<typeof mocks.boardProps>) => {
     mocks.boardProps = props;
-    return <div data-testid="project-task-status-board" />;
+    return (
+      <select
+        data-project-task-status-control={encodeURIComponent(
+          props.tasks[0]?.id ?? 'unrelated-task'
+        )}
+        data-testid="project-task-status-board"
+      />
+    );
   },
 }));
 vi.mock('./TopBar', () => ({
@@ -177,6 +213,7 @@ beforeEach(() => {
   mocks.dependencyProviderCount = 0;
   mocks.dependencyProviderTaskIds = [];
   mocks.boardProps = undefined;
+  mocks.canEdit = true;
   mocks.controllerSplit = false;
   mocks.duplicatePreview = false;
   mocks.entryStateCalls = [];
@@ -191,6 +228,10 @@ beforeEach(() => {
   mocks.sourceFetching = false;
   mocks.sourceLoading = false;
   mocks.sourcePlaceholderData = false;
+  mocks.statusMutation.mockReset();
+  mocks.statusMutationCallbacks = undefined;
+  mocks.statusMutationPending = false;
+  mocks.statusProperties = [];
   mocks.searchText = '';
   mocks.topBarProps = undefined;
   mocks.viewMode = 'list';
@@ -265,6 +306,174 @@ describe('project task dependency relation batching', () => {
     });
     expect(document.querySelector('[data-testid="soup-view-list"]')).toBeNull();
     expect(mocks.sourceRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('submits a canonical task status move through the shared mutation seam', () => {
+    mocks.viewMode = 'board';
+    mocks.source = [
+      { id: 'task-a', subType: { type: 'task' }, type: 'document' },
+    ];
+    mocks.statusProperties = [
+      {
+        id: '00000001-0000-0000-0000-000000000002',
+        displayName: 'Status',
+        valueType: 'SELECT_STRING',
+        isMultiSelect: false,
+        isMetadata: false,
+        isSystem: true,
+        owner: { scope: 'system' },
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      },
+    ];
+
+    render(() => <Block />);
+    mocks.boardProps?.onMoveTaskStatus?.(
+      mocks.source[0],
+      '00000001-0000-0000-0002-000000000002'
+    );
+
+    expect(mocks.statusMutation).toHaveBeenCalledWith({
+      properties: [
+        expect.objectContaining({
+          entityId: 'task-a',
+          entityType: 'TASK',
+          property: expect.objectContaining({
+            propertyDefinitionId: '00000001-0000-0000-0000-000000000002',
+          }),
+          apiValues: {
+            valueType: 'SELECT_STRING',
+            values: ['00000001-0000-0000-0002-000000000002'],
+          },
+        }),
+      ],
+    });
+    expect(mocks.boardProps?.activeStatusTaskId).toBe('task-a');
+  });
+
+  it('restores focus to the final status control after a settled rollback and ignores unrelated controls without an active task', () => {
+    mocks.viewMode = 'board';
+    const task = {
+      id: 'task-a',
+      subType: { type: 'task' },
+      type: 'document',
+    };
+    mocks.source = [task];
+    mocks.statusProperties = [
+      {
+        id: '00000001-0000-0000-0000-000000000002',
+        displayName: 'Status',
+        valueType: 'SELECT_STRING',
+        isMultiSelect: false,
+        isMetadata: false,
+        isSystem: true,
+        owner: { scope: 'system' },
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      },
+    ];
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+
+    try {
+      render(() => <Block />);
+      mocks.boardProps?.onMoveTaskStatus?.(
+        task,
+        '00000001-0000-0000-0002-000000000002'
+      );
+      const optimisticControl = document.querySelector<HTMLSelectElement>(
+        '[data-project-task-status-control="task-a"]'
+      );
+      expect(optimisticControl).toBeInstanceOf(HTMLSelectElement);
+      optimisticControl?.focus();
+
+      const rollbackControl = document.createElement('select');
+      rollbackControl.dataset.projectTaskStatusControl = 'task-a';
+      optimisticControl?.replaceWith(rollbackControl);
+      mocks.statusMutationCallbacks?.onSettled?.();
+      expect(mocks.boardProps?.activeStatusTaskId).toBe('task-a');
+      frames.forEach((callback) => callback(0));
+
+      expect(mocks.boardProps?.activeStatusTaskId).toBeUndefined();
+      expect(document.activeElement).toBe(
+        document.querySelector('[data-project-task-status-control="task-a"]')
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not schedule focus for an unrelated status control without an active task', () => {
+    mocks.viewMode = 'board';
+    const requestAnimationFrame = vi.fn();
+    vi.stubGlobal('requestAnimationFrame', requestAnimationFrame);
+
+    try {
+      render(() => <Block />);
+      const unrelated = document.querySelector<HTMLSelectElement>(
+        '[data-project-task-status-control="unrelated-task"]'
+      );
+      unrelated?.focus();
+      mocks.statusMutationCallbacks?.onSettled?.();
+
+      expect(requestAnimationFrame).not.toHaveBeenCalled();
+      expect(document.activeElement).toBe(unrelated);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not transport a status move without edit permission or the canonical status definition', () => {
+    const task = {
+      id: 'task-a',
+      subType: { type: 'task' },
+      type: 'document',
+    };
+    mocks.viewMode = 'board';
+    mocks.source = [task];
+    mocks.statusProperties = [
+      {
+        id: '00000001-0000-0000-0000-000000000002',
+        displayName: 'Status',
+        valueType: 'SELECT_STRING',
+        isMultiSelect: false,
+        isMetadata: false,
+        isSystem: true,
+        owner: { scope: 'system' },
+        createdAt: new Date(0).toISOString(),
+        updatedAt: new Date(0).toISOString(),
+      },
+    ];
+    mocks.canEdit = false;
+
+    const noEdit = render(() => <Block />);
+    mocks.boardProps?.onMoveTaskStatus?.(
+      task,
+      '00000001-0000-0000-0002-000000000001'
+    );
+    expect(mocks.statusMutation).not.toHaveBeenCalled();
+    noEdit.unmount();
+
+    mocks.canEdit = true;
+    mocks.statusProperties = [];
+    render(() => <Block />);
+    mocks.boardProps?.onMoveTaskStatus?.(
+      task,
+      '00000001-0000-0000-0002-000000000001'
+    );
+    expect(mocks.statusMutation).not.toHaveBeenCalled();
+  });
+
+  it('threads the shared pending status mutation state to the board', () => {
+    mocks.viewMode = 'board';
+    mocks.statusMutationPending = true;
+
+    render(() => <Block />);
+
+    expect(mocks.boardProps?.statusPending).toBe(true);
   });
 
   it('uses one parent provider with only ungrouped task rows', () => {

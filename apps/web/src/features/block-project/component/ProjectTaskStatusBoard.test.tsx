@@ -2,10 +2,11 @@
 
 import type { TaskEntityWithProperties } from '@entity';
 import { PROPERTY_OPTION_IDS, SYSTEM_PROPERTY_IDS } from '@property/constants';
+import type { Property } from '@property/types';
 import type { SoupProperty } from '@service-storage/generated/schemas';
 import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import userEvent from '@testing-library/user-event';
-import type { JSX } from 'solid-js';
+import { createSignal, type JSX } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectTaskStatusBoard } from './ProjectTaskStatusBoard';
 
@@ -62,6 +63,19 @@ function task(name: string, status?: unknown): TaskEntityWithProperties {
 function selectedStatus(value: string) {
   return { type: 'SelectOption', value: [value] };
 }
+
+const statusProperty = {
+  propertyId: SYSTEM_PROPERTY_IDS.STATUS,
+  propertyDefinitionId: SYSTEM_PROPERTY_IDS.STATUS,
+  displayName: 'Status',
+  isMultiSelect: false,
+  isRequired: true,
+  owner: { scope: 'system' },
+  createdAt: new Date(0).toISOString(),
+  updatedAt: new Date(0).toISOString(),
+  valueType: 'SELECT_STRING',
+  value: null,
+} as unknown as Property;
 
 describe('ProjectTaskStatusBoard', () => {
   it('uses canonical status order and preserves source order inside buckets', () => {
@@ -237,6 +251,169 @@ describe('ProjectTaskStatusBoard', () => {
     ).toBeTruthy();
     expect(retained.queryByText('Couldn’t load tasks')).toBeNull();
     expect(retained.queryByText('No tasks in this project')).toBeNull();
+  });
+
+  it('offers only canonical status moves and keeps open and status controls separate', async () => {
+    const noStatusTask = task('Move from no status');
+    const currentTask = task(
+      'Current status',
+      selectedStatus(PROPERTY_OPTION_IDS.STATUS.IN_PROGRESS)
+    );
+    const onMoveTaskStatus = vi.fn();
+    const view = render(() => (
+      <ProjectTaskStatusBoard
+        tasks={[noStatusTask, currentTask]}
+        canEdit
+        statusProperty={statusProperty}
+        onMoveTaskStatus={onMoveTaskStatus}
+        onOpenTask={() => {}}
+      />
+    ));
+    const noStatusControl = view.container.querySelector(
+      'select[aria-label="Move from no status status"]'
+    );
+    const currentControl = view.container.querySelector(
+      'select[aria-label="Current status status"]'
+    );
+    if (
+      !(noStatusControl instanceof HTMLSelectElement) ||
+      !(currentControl instanceof HTMLSelectElement)
+    ) {
+      throw new Error('Expected native task status selects');
+    }
+
+    expect(noStatusControl.querySelectorAll('option')).toHaveLength(6);
+    expect(
+      Array.from(noStatusControl.options)
+        .map((option) => option.value)
+        .filter(Boolean)
+    ).toEqual([
+      PROPERTY_OPTION_IDS.STATUS.NOT_STARTED,
+      PROPERTY_OPTION_IDS.STATUS.IN_PROGRESS,
+      PROPERTY_OPTION_IDS.STATUS.IN_REVIEW,
+      PROPERTY_OPTION_IDS.STATUS.COMPLETED,
+      PROPERTY_OPTION_IDS.STATUS.CANCELED,
+    ]);
+    expect(noStatusControl.value).toBe('');
+    const openButton = view.getByRole('button', {
+      name: 'Move from no status',
+    });
+    const contextRow = noStatusControl.closest(
+      '[data-testid="task-context-menu"]'
+    );
+    expect(contextRow?.getAttribute('role')).toBeNull();
+    expect(contextRow?.contains(openButton)).toBe(true);
+    expect(contextRow?.contains(noStatusControl)).toBe(true);
+    expect(openButton.contains(noStatusControl)).toBe(false);
+    expect(noStatusControl.contains(openButton)).toBe(false);
+    expect(openButton.classList.contains('touch:min-h-11')).toBe(true);
+    expect(noStatusControl.classList.contains('touch:min-h-11')).toBe(true);
+    const user = userEvent.setup();
+    noStatusControl.focus();
+    expect(document.activeElement).toBe(noStatusControl);
+    await user.selectOptions(
+      noStatusControl,
+      PROPERTY_OPTION_IDS.STATUS.NOT_STARTED
+    );
+    fireEvent.change(currentControl, {
+      target: { value: PROPERTY_OPTION_IDS.STATUS.IN_PROGRESS },
+    });
+    expect(onMoveTaskStatus).toHaveBeenCalledTimes(1);
+    expect(onMoveTaskStatus).toHaveBeenCalledWith(
+      noStatusTask,
+      PROPERTY_OPTION_IDS.STATUS.NOT_STARTED
+    );
+  });
+
+  it('restores focus to the same task status control after an optimistic rebucket', async () => {
+    const original = task(
+      'Rebucket task',
+      selectedStatus(PROPERTY_OPTION_IDS.STATUS.IN_PROGRESS)
+    );
+    const rebucketed = task(
+      'Rebucket task',
+      selectedStatus(PROPERTY_OPTION_IDS.STATUS.COMPLETED)
+    );
+    let animationFrame: FrameRequestCallback | undefined;
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      animationFrame = callback;
+      return 1;
+    });
+
+    try {
+      const view = render(() => {
+        const [tasks, setTasks] = createSignal([original]);
+        return (
+          <ProjectTaskStatusBoard
+            tasks={tasks()}
+            canEdit
+            statusProperty={statusProperty}
+            onOpenTask={() => {}}
+            onMoveTaskStatus={() => setTasks([rebucketed])}
+          />
+        );
+      });
+      const control = view.getByRole('combobox', {
+        name: 'Rebucket task status',
+      });
+      const user = userEvent.setup();
+
+      await user.selectOptions(control, PROPERTY_OPTION_IDS.STATUS.COMPLETED);
+      animationFrame?.(0);
+
+      const movedControl = view
+        .getByRole('region', { name: 'Completed tasks' })
+        .querySelector<HTMLSelectElement>(
+          'select[aria-label="Rebucket task status"]'
+        );
+      expect(document.activeElement).toBe(movedControl);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('hides status controls without permission or the canonical definition and marks only the active task busy', () => {
+    const first = task('First task');
+    const second = task('Second task');
+    const noEdit = render(() => (
+      <ProjectTaskStatusBoard
+        tasks={[first]}
+        statusProperty={statusProperty}
+        onOpenTask={() => {}}
+        onMoveTaskStatus={vi.fn()}
+      />
+    ));
+    expect(noEdit.queryByRole('combobox')).toBeNull();
+    noEdit.unmount();
+
+    const missingDefinition = render(() => (
+      <ProjectTaskStatusBoard
+        tasks={[first]}
+        canEdit
+        onOpenTask={() => {}}
+        onMoveTaskStatus={vi.fn()}
+      />
+    ));
+    expect(missingDefinition.queryByRole('combobox')).toBeNull();
+    missingDefinition.unmount();
+
+    const pending = render(() => (
+      <ProjectTaskStatusBoard
+        tasks={[first, second]}
+        canEdit
+        statusProperty={statusProperty}
+        statusPending
+        activeStatusTaskId={first.id}
+        onMoveTaskStatus={vi.fn()}
+        onOpenTask={() => {}}
+      />
+    ));
+    const controls = pending.getAllByRole('combobox');
+    expect(controls.every((control) => control.hasAttribute('disabled'))).toBe(
+      true
+    );
+    expect(controls[0].getAttribute('aria-busy')).toBe('true');
+    expect(controls[1].getAttribute('aria-busy')).toBeNull();
   });
 
   it('uses responsive classes for horizontal board columns and narrow stacked sections', () => {

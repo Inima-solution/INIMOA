@@ -26,6 +26,7 @@ import { toast } from '@core/component/Toast/Toast';
 import { fileFolderDrop } from '@core/directive/fileFolderDrop';
 import { fileSelector } from '@core/directive/fileSelector';
 import { blockHotkeyScopeSignal } from '@core/signal/blockElement';
+import { useCanEdit } from '@core/signal/permissions';
 import {
   handleFileFolderDrop,
   type UploadInput,
@@ -33,9 +34,15 @@ import {
 } from '@core/util/upload';
 import type { TaskEntityWithProperties } from '@entity';
 import { isTaskEntity } from '@entity/types/entity';
+import { getTaskStatusOptionId } from '@entity/utils/task-properties';
+import { SYSTEM_PROPERTY_IDS } from '@property/constants';
+import { useAllProperties } from '@property/editor/hooks/useAllProperties';
 import { TaskDependencyRelationsProvider } from '@property/task-dependency-relations';
 import { TaskSubtaskProgressProvider } from '@property/task-subtask-progress';
+import type { Property } from '@property/types';
+import { useBulkSaveEntityPropertiesMutation } from '@queries/properties/entity';
 import { refetchSoupEntity } from '@queries/soup/cache';
+import { EntityType } from '@service-properties/generated/schemas/entityType';
 import { refetchResources } from '@service-storage/util/refetchResources';
 import { type Component, createMemo, createSignal, Show } from 'solid-js';
 import { ModalsProvider } from './ModalsProvider';
@@ -211,6 +218,58 @@ const ProjectSoupViewList = (props: {
   const soupView = useSoupView();
   const { searchText, source, soup } = soupView;
   const panel = useSplitPanelOrThrow();
+  const canEdit = useCanEdit();
+  const allProperties = useAllProperties();
+  const [activeStatusTaskId, setActiveStatusTaskId] = createSignal<string>();
+  const restoreStatusControlFocus = (
+    taskId: string,
+    onComplete: () => void
+  ) => {
+    const controlId = encodeURIComponent(taskId);
+    requestAnimationFrame(() => {
+      const control = document.querySelector(
+        `[data-project-task-status-control="${controlId}"]`
+      );
+      if (control instanceof HTMLSelectElement && control.isConnected) {
+        control.focus();
+      }
+      onComplete();
+    });
+  };
+  const statusMutation = useBulkSaveEntityPropertiesMutation({
+    onSettled: () => {
+      const taskId = activeStatusTaskId();
+      if (taskId) {
+        restoreStatusControlFocus(taskId, () =>
+          setActiveStatusTaskId(undefined)
+        );
+      } else {
+        setActiveStatusTaskId(undefined);
+      }
+    },
+  });
+  const statusProperty = createMemo<Property | undefined>(() => {
+    const definition = allProperties().find(
+      (property) => property.id === SYSTEM_PROPERTY_IDS.STATUS
+    );
+    if (!definition || definition.valueType !== 'SELECT_STRING') return;
+    return {
+      propertyId: definition.id,
+      propertyDefinitionId: definition.id,
+      displayName: definition.displayName,
+      isMultiSelect: definition.isMultiSelect,
+      isMetadata: definition.isMetadata,
+      isSystemProperty: definition.isSystem,
+      isRequired: true,
+      options: definition.options,
+      owner: definition.owner,
+      specificEntityType: definition.specificEntityType,
+      createdAt: definition.createdAt,
+      updatedAt: definition.updatedAt,
+      valueType: 'SELECT_STRING',
+      value: null,
+    };
+  });
   const taskIds = createMemo(() => {
     if (props.isSpecialProject) return [];
 
@@ -247,6 +306,28 @@ const ProjectSoupViewList = (props: {
       referredFrom: null,
     });
   };
+  const moveTaskStatus = (task: TaskEntityWithProperties, statusId: string) => {
+    const property = statusProperty();
+    if (
+      !canEdit() ||
+      !property ||
+      statusMutation.isPending ||
+      getTaskStatusOptionId(task) === statusId
+    ) {
+      return;
+    }
+    setActiveStatusTaskId(task.id);
+    statusMutation.mutate({
+      properties: [
+        {
+          entityId: task.id,
+          entityType: EntityType.TASK,
+          property,
+          apiValues: { valueType: 'SELECT_STRING', values: [statusId] },
+        },
+      ],
+    });
+  };
 
   return (
     <TaskSubtaskProgressProvider taskIds={taskIds}>
@@ -267,6 +348,11 @@ const ProjectSoupViewList = (props: {
             searching={searchText().trim().length > 0}
             onOpenTask={openTask}
             onRetry={retryBoard}
+            canEdit={canEdit()}
+            statusProperty={statusProperty()}
+            statusPending={statusMutation.isPending}
+            activeStatusTaskId={activeStatusTaskId()}
+            onMoveTaskStatus={moveTaskStatus}
           />
         </Show>
       </TaskDependencyRelationsProvider>
