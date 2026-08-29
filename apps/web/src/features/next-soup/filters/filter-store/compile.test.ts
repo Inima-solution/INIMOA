@@ -1,8 +1,33 @@
-import { describe, expect, it } from 'vitest';
+import { SYSTEM_PROPERTY_IDS } from '@property/constants';
+import { describe, expect, it, vi } from 'vitest';
 import { compileToAst, defineQueryFilters, queryStateFrom } from './compile';
+import { removeFieldValues } from './field-values';
+import { resolveDueDateBucket } from './task-due-date';
 import type { DocumentFilterExpression, QueryState } from './types';
 
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
+
+const withFixedLocalTime = (
+  timezone: string,
+  instant: string,
+  test: () => void
+) => {
+  const previousTimezone = process.env.TZ;
+  process.env.TZ = timezone;
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date(instant));
+
+  try {
+    test();
+  } finally {
+    vi.useRealTimers();
+    if (previousTimezone === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = previousTimezone;
+    }
+  }
+};
 
 describe('defineQueryFilters', () => {
   it('treats emailView as referencing the email target', () => {
@@ -308,6 +333,202 @@ describe('compileToAst', () => {
           ],
         },
       ],
+    });
+  });
+
+  it('resolves Due Date buckets from local calendar starts, including DST', () => {
+    withFixedLocalTime('Asia/Seoul', '2026-08-30T03:00:00.000Z', () => {
+      expect(resolveDueDateBucket('overdue')).toEqual({
+        lt: '2026-08-29T15:00:00.000Z',
+      });
+      expect(resolveDueDateBucket('today')).toEqual({
+        gte: '2026-08-29T15:00:00.000Z',
+        lt: '2026-08-30T15:00:00.000Z',
+      });
+      expect(resolveDueDateBucket('upcoming')).toEqual({
+        gte: '2026-08-30T15:00:00.000Z',
+      });
+      expect(resolveDueDateBucket('no-due')).toEqual({ exclude: true });
+    });
+
+    withFixedLocalTime(
+      'America/Los_Angeles',
+      '2026-03-08T19:00:00.000Z',
+      () => {
+        expect(resolveDueDateBucket('today')).toEqual({
+          gte: '2026-03-08T08:00:00.000Z',
+          lt: '2026-03-09T07:00:00.000Z',
+        });
+      }
+    );
+  });
+
+  it('compiles every Due Date bucket to the compact TASK property AST', () => {
+    withFixedLocalTime('Asia/Seoul', '2026-08-30T03:00:00.000Z', () => {
+      const compileBucket = (
+        value: 'overdue' | 'today' | 'upcoming' | 'no-due'
+      ) =>
+        compileToAst(
+          queryStateFrom({
+            include: {
+              properties: [
+                {
+                  propertyId: SYSTEM_PROPERTY_IDS.DUE_DATE,
+                  type: 'date',
+                  value,
+                },
+              ],
+            },
+          })
+        ).propf;
+
+      expect(compileBucket('overdue')).toEqual({
+        l: {
+          pd: SYSTEM_PROPERTY_IDS.DUE_DATE,
+          et: 'TASK',
+          v: { dr: { lt: '2026-08-29T15:00:00.000Z' } },
+        },
+      });
+      expect(compileBucket('today')).toEqual({
+        l: {
+          pd: SYSTEM_PROPERTY_IDS.DUE_DATE,
+          et: 'TASK',
+          v: {
+            dr: {
+              gte: '2026-08-29T15:00:00.000Z',
+              lt: '2026-08-30T15:00:00.000Z',
+            },
+          },
+        },
+      });
+      expect(compileBucket('upcoming')).toEqual({
+        l: {
+          pd: SYSTEM_PROPERTY_IDS.DUE_DATE,
+          et: 'TASK',
+          v: { dr: { gte: '2026-08-30T15:00:00.000Z' } },
+        },
+      });
+      expect(compileBucket('no-due')).toEqual({
+        '!': {
+          l: {
+            pd: SYSTEM_PROPERTY_IDS.DUE_DATE,
+            et: 'TASK',
+            v: { dr: {} },
+          },
+        },
+      });
+    });
+  });
+
+  it('keeps the Due Date bucket stable while its resolved range crosses midnight', () => {
+    const filter = {
+      propertyId: SYSTEM_PROPERTY_IDS.DUE_DATE,
+      type: 'date' as const,
+      value: 'today' as const,
+    };
+
+    withFixedLocalTime('Asia/Seoul', '2026-08-30T03:00:00.000Z', () => {
+      expect(filter.value).toBe('today');
+      expect(resolveDueDateBucket(filter.value)).not.toEqual(
+        resolveDueDateBucket(filter.value, new Date('2026-08-30T16:00:00.000Z'))
+      );
+      expect(filter.value).toBe('today');
+      expect(
+        removeFieldValues(
+          { properties: [filter] },
+          { properties: [{ ...filter }] }
+        )
+      ).toEqual({});
+    });
+  });
+
+  it('fails closed for a Date filter on a non-Due Date property', () => {
+    expect(() =>
+      compileToAst(
+        queryStateFrom({
+          include: {
+            properties: [
+              { propertyId: 'not-due-date', type: 'date', value: 'today' },
+            ],
+          },
+        })
+      )
+    ).toThrow('Invalid Due Date property filter group');
+  });
+
+  it('ANDs mixed and duplicate Due Date filters without broadening results', () => {
+    withFixedLocalTime('Asia/Seoul', '2026-08-30T03:00:00.000Z', () => {
+      const compileProperties = (
+        properties: NonNullable<QueryState['include']['properties']>
+      ) => compileToAst(queryStateFrom({ include: { properties } })).propf;
+
+      expect(
+        compileProperties([
+          {
+            propertyId: SYSTEM_PROPERTY_IDS.DUE_DATE,
+            type: 'date',
+            value: 'today',
+          },
+          {
+            propertyId: SYSTEM_PROPERTY_IDS.DUE_DATE,
+            type: 'select',
+            value: 'option-1',
+          },
+        ])
+      ).toEqual({
+        '&': [
+          {
+            l: {
+              pd: SYSTEM_PROPERTY_IDS.DUE_DATE,
+              et: 'TASK',
+              v: {
+                dr: {
+                  gte: '2026-08-29T15:00:00.000Z',
+                  lt: '2026-08-30T15:00:00.000Z',
+                },
+              },
+            },
+          },
+          { l: { pd: SYSTEM_PROPERTY_IDS.DUE_DATE, v: { so: 'option-1' } } },
+        ],
+      });
+
+      expect(
+        compileProperties([
+          {
+            propertyId: SYSTEM_PROPERTY_IDS.DUE_DATE,
+            type: 'date',
+            value: 'today',
+          },
+          {
+            propertyId: SYSTEM_PROPERTY_IDS.DUE_DATE,
+            type: 'date',
+            value: 'upcoming',
+          },
+        ])
+      ).toEqual({
+        '&': [
+          {
+            l: {
+              pd: SYSTEM_PROPERTY_IDS.DUE_DATE,
+              et: 'TASK',
+              v: {
+                dr: {
+                  gte: '2026-08-29T15:00:00.000Z',
+                  lt: '2026-08-30T15:00:00.000Z',
+                },
+              },
+            },
+          },
+          {
+            l: {
+              pd: SYSTEM_PROPERTY_IDS.DUE_DATE,
+              et: 'TASK',
+              v: { dr: { gte: '2026-08-30T15:00:00.000Z' } },
+            },
+          },
+        ],
+      });
     });
   });
 });

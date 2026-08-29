@@ -60,6 +60,7 @@ import {
   assignedToMeFilter,
   assigneeFilter,
   myTasksFilter,
+  TASK_DUE_DATE_FILTERS,
   TASK_PRIORITY_FILTERS,
   TASK_STATUS_FILTERS,
   taskMilestoneFilter,
@@ -109,6 +110,7 @@ export const SOUP_FILTERS = [
   ...ENTITY_TYPE_FILTERS,
   ...TASK_STATUS_FILTERS,
   ...TASK_PRIORITY_FILTERS,
+  ...TASK_DUE_DATE_FILTERS,
   ...DOCUMENT_CONTEXTUAL_FILTERS,
   ...FILE_TYPE_FILTERS,
 ] as const;

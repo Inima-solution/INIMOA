@@ -2,6 +2,7 @@ import type { ListView } from '@app/constants/list-views';
 import { isListViewID } from '@app/constants/list-views';
 import {
   type FilterContext,
+  type FilterID,
   NO_ASSIGNEE,
 } from '@app/features/next-soup/filters';
 import {
@@ -42,8 +43,9 @@ import XIcon from '@phosphor/x.svg';
 import SlidersHorizontalIcon from '@phosphor-icons/core/regular/sliders-horizontal.svg?component-solid';
 import { useContacts } from '@queries/contacts/contacts';
 import { Button, cn } from '@ui';
-import { createMemo, createSignal, For, Show } from 'solid-js';
+import { batch, createMemo, createSignal, For, Show } from 'solid-js';
 import { ConsolidatedFilterChip } from './consolidated-filter-chip';
+import { getSingleSelectFilterPlan } from './filter-categories';
 import { useInboxPicker } from './inbox-picker';
 import {
   buildContactLabel,
@@ -187,6 +189,42 @@ export const MobileFilterDrawer = (props: {
     showInboxSection();
 
   const toggleFilter = (optionId: FilterOption['id']) => {
+    const category = categories().find((candidate) =>
+      candidate.options.some((option) => option.id === optionId)
+    );
+    if (category?.multiple === false) {
+      const plan = getSingleSelectFilterPlan<FilterID>(
+        category,
+        optionId,
+        soup.predicates.isActive
+      );
+      const ctx: FilterContext = {
+        userId: userId(),
+        assignees: assigneeFilter(),
+      };
+      const getQuery = (id: FilterOption['id']) => {
+        const filter = soup.predicates.getConfig(id);
+        if (!filter?.query) return undefined;
+        return typeof filter.query === 'function'
+          ? filter.query(ctx)
+          : filter.query;
+      };
+
+      batch(() => {
+        const deactivateIds = new Set<string>(plan.deactivate);
+        soup.predicates.set(({ andIds, orIds }) => ({
+          and: andIds.filter((id) => !deactivateIds.has(id)),
+          or: [
+            ...orIds.filter((id) => !deactivateIds.has(id)),
+            ...(plan.activate ? [plan.activate] : []),
+          ],
+        }));
+        for (const id of plan.deactivate) queryFilters.remove(getQuery(id));
+        if (plan.activate) queryFilters.add(getQuery(plan.activate));
+      });
+      return;
+    }
+
     const wasActive = soup.predicates.isActive(optionId);
     const previousDocumentTypeIds =
       currentView() === 'documents' && isDocumentTypeFilterId(optionId)
@@ -562,7 +600,13 @@ export const MobileFilterDrawer = (props: {
                                 </div>
                               </Accordion.Trigger>
                             </Accordion.Header>
-                            <Accordion.Content>
+                            <Accordion.Content
+                              role={
+                                category.multiple === false
+                                  ? 'radiogroup'
+                                  : undefined
+                              }
+                            >
                               <For each={category.options}>
                                 {(option) => {
                                   const active = () =>
@@ -570,7 +614,11 @@ export const MobileFilterDrawer = (props: {
                                   return (
                                     <button
                                       type="button"
-                                      role="checkbox"
+                                      role={
+                                        category.multiple === false
+                                          ? 'radio'
+                                          : 'checkbox'
+                                      }
                                       aria-checked={active()}
                                       class="w-full flex items-center gap-3 px-3 py-2.5 text-sm hover:bg-hover transition-colors text-left bg-surface not-last:mb-px"
                                       onClick={() => toggleFilter(option.id)}

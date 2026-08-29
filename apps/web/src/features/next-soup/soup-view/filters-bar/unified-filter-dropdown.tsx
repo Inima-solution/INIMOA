@@ -2,6 +2,7 @@ import type { ListView } from '@app/constants/list-views';
 import { isListViewID, TAGGABLE_LIST_VIEWS } from '@app/constants/list-views';
 import {
   type FilterContext,
+  type FilterID,
   NO_ASSIGNEE,
   NO_STAGE,
 } from '@app/features/next-soup/filters/configs/';
@@ -56,6 +57,7 @@ import {
 import {
   type FilterCategory,
   filterInboxGithubPrOption,
+  getSingleSelectFilterPlan,
 } from './filter-categories';
 import {
   SearchableMultiSelectInline,
@@ -301,6 +303,17 @@ const TASKS_FILTER_CATEGORIES: FilterCategory[] = [
       { id: 'task-no-priority', label: 'No Priority' },
     ],
     multiple: true,
+  },
+  {
+    id: 'due-date',
+    label: 'Due date',
+    options: [
+      { id: 'task-due-overdue', label: 'Overdue' },
+      { id: 'task-due-today', label: 'Today' },
+      { id: 'task-due-upcoming', label: 'Upcoming' },
+      { id: 'task-due-none', label: 'No due date' },
+    ],
+    multiple: false,
   },
 ];
 
@@ -612,7 +625,43 @@ export const UnifiedFilterDropdown = (
     return soup.predicates.isActive(optionId);
   };
 
-  const toggleFilter = (optionId: string) => {
+  const toggleFilter = (optionId: FilterID) => {
+    const category = categories().find((candidate) =>
+      candidate.options.some((option) => option.id === optionId)
+    );
+    if (category?.multiple === false) {
+      const plan = getSingleSelectFilterPlan<FilterID>(
+        category,
+        optionId,
+        soup.predicates.isActive
+      );
+      const ctx: FilterContext = {
+        userId: userId(),
+        assignees: assigneeFilter(),
+      };
+      const getQuery = (id: FilterID) => {
+        const filter = soup.predicates.getConfig(id);
+        if (!filter?.query) return undefined;
+        return typeof filter.query === 'function'
+          ? filter.query(ctx)
+          : filter.query;
+      };
+
+      batch(() => {
+        const deactivateIds = new Set<string>(plan.deactivate);
+        soup.predicates.set(({ andIds, orIds }) => ({
+          and: andIds.filter((id) => !deactivateIds.has(id)),
+          or: [
+            ...orIds.filter((id) => !deactivateIds.has(id)),
+            ...(plan.activate ? [plan.activate] : []),
+          ],
+        }));
+        for (const id of plan.deactivate) queryFilters.remove(getQuery(id));
+        if (plan.activate) queryFilters.add(getQuery(plan.activate));
+      });
+      return;
+    }
+
     const wasActive = soup.predicates.isActive(optionId);
     const previousDocumentTypeIds =
       currentView() === 'documents' && isDocumentTypeFilterId(optionId)

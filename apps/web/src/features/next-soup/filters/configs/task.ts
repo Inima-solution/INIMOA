@@ -4,9 +4,14 @@ import {
 } from '@entity/types/entity';
 import {
   getTaskAssigneeIds,
+  getTaskDueDate,
   isTaskMilestone,
 } from '@entity/utils/task-properties';
 import { PROPERTY_OPTION_IDS, SYSTEM_PROPERTY_IDS } from '@property/constants';
+import {
+  type DueDateBucket,
+  resolveDueDateBucket,
+} from '../filter-store/task-due-date';
 import {
   hasNoPriority,
   isCanceled,
@@ -203,6 +208,51 @@ export const TASK_PRIORITY_FILTERS = [
   taskMediumPriorityFilter,
   taskLowPriorityFilter,
   taskNoPriorityFilter,
+] as const;
+
+const dueDateFilter = <TId extends string>(id: TId, bucket: DueDateBucket) =>
+  config({
+    id,
+    predicate: (entity) => {
+      if (!isTaskEntity(entity)) return false;
+
+      const dueDate = getTaskDueDate(entity as TaskEntityWithProperties);
+      const range = resolveDueDateBucket(bucket);
+      if (range.exclude) return dueDate === undefined;
+      if (!dueDate) return false;
+
+      const dueDateTime = dueDate.getTime();
+      return (
+        (range.gt === undefined || dueDateTime > Date.parse(range.gt)) &&
+        (range.gte === undefined || dueDateTime >= Date.parse(range.gte)) &&
+        (range.lt === undefined || dueDateTime < Date.parse(range.lt)) &&
+        (range.lte === undefined || dueDateTime <= Date.parse(range.lte))
+      );
+    },
+    query: {
+      include: {
+        ...isTask.include,
+        properties: [
+          {
+            propertyId: SYSTEM_PROPERTY_IDS.DUE_DATE,
+            type: 'date',
+            value: bucket,
+          },
+        ],
+      },
+    },
+  });
+
+const taskDueOverdueFilter = dueDateFilter('task-due-overdue', 'overdue');
+const taskDueTodayFilter = dueDateFilter('task-due-today', 'today');
+const taskDueUpcomingFilter = dueDateFilter('task-due-upcoming', 'upcoming');
+const taskDueNoneFilter = dueDateFilter('task-due-none', 'no-due');
+
+export const TASK_DUE_DATE_FILTERS = [
+  taskDueOverdueFilter,
+  taskDueTodayFilter,
+  taskDueUpcomingFilter,
+  taskDueNoneFilter,
 ] as const;
 
 export const myTasksFilter = config({

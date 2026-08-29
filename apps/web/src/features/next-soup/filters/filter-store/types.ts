@@ -1,3 +1,5 @@
+import type { DueDateBucket } from './task-due-date';
+
 export type EmailView = 'inbox' | 'drafts' | 'sent' | 'all';
 
 export type CallStatus = 'ATTENDED' | 'MISSED' | 'UNATTENDED';
@@ -37,7 +39,21 @@ export type BooleanPropertyFilter = {
   value: boolean;
 };
 
-export type PropertyFilter = StringPropertyFilter | BooleanPropertyFilter;
+/**
+ * A task Due Date bucket stays semantic in query state. Its UTC bounds are
+ * resolved when compiling or refetching a request, enabling exact removal and
+ * a fresh range at the next explicit query evaluation.
+ */
+export type DatePropertyFilter = {
+  propertyId: string;
+  type: 'date';
+  value: DueDateBucket;
+};
+
+export type PropertyFilter =
+  | StringPropertyFilter
+  | BooleanPropertyFilter
+  | DatePropertyFilter;
 
 export type TagFilterMode = 'any' | 'all';
 

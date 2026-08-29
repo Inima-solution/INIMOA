@@ -1,3 +1,5 @@
+import { SYSTEM_PROPERTY_IDS } from '@property/constants';
+import { resolveDueDateBucket } from './task-due-date';
 import type {
   DateRangeFilter,
   DocumentFieldFilters,
@@ -172,12 +174,23 @@ const expandDateRange = (
   return asts;
 };
 
-const propertyToAst = (p: PropertyFilter): BackendAst =>
-  p.type === 'select'
-    ? { l: { pd: p.propertyId, v: { so: p.value } } }
-    : p.type === 'entity'
-      ? { l: { pd: p.propertyId, v: { er: p.value } } }
-      : { l: { pd: p.propertyId, v: { b: p.value } } };
+const propertyToAst = (p: PropertyFilter): BackendAst => {
+  if (p.type === 'select') {
+    return { l: { pd: p.propertyId, v: { so: p.value } } };
+  }
+  if (p.type === 'entity') {
+    return { l: { pd: p.propertyId, v: { er: p.value } } };
+  }
+  if (p.type === 'boolean') {
+    return { l: { pd: p.propertyId, v: { b: p.value } } };
+  }
+
+  const { exclude, ...range } = resolveDueDateBucket(p.value);
+  const literal: BackendAst = {
+    l: { pd: p.propertyId, et: 'TASK', v: { dr: range } },
+  };
+  return exclude ? AST.not(literal) : literal;
+};
 
 const propertyEquals = (a: PropertyFilter, b: PropertyFilter): boolean =>
   a.propertyId === b.propertyId && a.type === b.type && a.value === b.value;
@@ -376,16 +389,40 @@ export function compileToAst(state: QueryState): TargetAstMap {
     const includeVals = includeByPropId.get(propId);
     const excludeVals = excludeByPropId.get(propId);
 
-    if (includeVals?.length) {
-      byTarget.propf.push(AST.or(includeVals.map(propertyToAst)));
+    const propertyVals = [...(includeVals ?? []), ...(excludeVals ?? [])];
+    if (
+      propertyVals.some((property) => property.type === 'date') &&
+      propId !== SYSTEM_PROPERTY_IDS.DUE_DATE
+    ) {
+      throw new Error('Invalid Due Date property filter group');
     }
 
-    if (excludeVals?.length) {
-      const filtered = includeVals?.length
-        ? excludeVals.filter(
-            (ev) => !includeVals.some((iv) => propertyEquals(iv, ev))
+    const includeDateVals = includeVals?.filter((p) => p.type === 'date') ?? [];
+    const includeKeywordVals =
+      includeVals?.filter((p) => p.type !== 'date') ?? [];
+    const excludeDateVals = excludeVals?.filter((p) => p.type === 'date') ?? [];
+    const excludeKeywordVals =
+      excludeVals?.filter((p) => p.type !== 'date') ?? [];
+
+    for (const dateFilter of includeDateVals) {
+      byTarget.propf.push(propertyToAst(dateFilter));
+    }
+    if (includeKeywordVals.length) {
+      byTarget.propf.push(AST.or(includeKeywordVals.map(propertyToAst)));
+    }
+
+    if (excludeDateVals.length) {
+      for (const dateFilter of excludeDateVals) {
+        byTarget.propf.push(AST.not(propertyToAst(dateFilter)));
+      }
+    }
+
+    if (excludeKeywordVals.length) {
+      const filtered = includeKeywordVals.length
+        ? excludeKeywordVals.filter(
+            (ev) => !includeKeywordVals.some((iv) => propertyEquals(iv, ev))
           )
-        : excludeVals;
+        : excludeKeywordVals;
 
       if (filtered.length > 0) {
         byTarget.propf.push(AST.not(AST.or(filtered.map(propertyToAst))));

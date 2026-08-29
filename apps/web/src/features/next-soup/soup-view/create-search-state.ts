@@ -4,6 +4,7 @@ import {
   NIL_UUID,
   type QueryState,
 } from '@app/features/next-soup/filters/filter-store';
+import { resolveDueDateBucket } from '@app/features/next-soup/filters/filter-store/task-due-date';
 import { useSearchContext } from '@app/features/next-soup/search-context';
 import {
   createSoupFreshSearch,
@@ -15,6 +16,7 @@ import { useUserId } from '@core/context/user';
 import { arrayEquals } from '@core/util/compareUtils';
 import { debouncedDependent } from '@core/util/debounce';
 import { type EntityData, isChannelEntity } from '@entity';
+import { SYSTEM_PROPERTY_IDS } from '@property/constants';
 import {
   useSearchSoupQuery,
   validateSearchServiceText,
@@ -48,22 +50,52 @@ export function includePropertiesToFilters(
   properties: QueryState['include']['properties']
 ): PropertyFilter[] {
   if (!properties?.length) return [];
-  const byPropId = new Map<string, PropertyFilter>();
+  const byPropId = new Map<string, NonNullable<typeof properties>>();
   for (const p of properties) {
-    let filter = byPropId.get(p.propertyId);
-    if (!filter) {
-      filter = { property_definition_id: p.propertyId };
-      byPropId.set(p.propertyId, filter);
-    }
-    if (p.type === 'select') {
-      filter.option_ids = [...(filter.option_ids ?? []), p.value];
-    } else if (p.type === 'entity') {
-      filter.entity_ids = [...(filter.entity_ids ?? []), p.value];
-    } else {
-      filter.boolean_value = p.value;
-    }
+    const group = byPropId.get(p.propertyId) ?? [];
+    group.push(p);
+    byPropId.set(p.propertyId, group);
   }
-  return [...byPropId.values()];
+
+  const result: PropertyFilter[] = [];
+  for (const [propertyId, group] of byPropId) {
+    if (
+      group.some((property) => property.type === 'date') &&
+      propertyId !== SYSTEM_PROPERTY_IDS.DUE_DATE
+    ) {
+      throw new Error('Invalid Due Date property filter group');
+    }
+
+    const dateFilters = group.filter(
+      (p): p is Extract<(typeof group)[number], { type: 'date' }> =>
+        p.type === 'date'
+    );
+    if (dateFilters.length > 0) {
+      result.push(
+        ...dateFilters.map((dateFilter) => ({
+          property_definition_id: propertyId,
+          entity_type: 'TASK',
+          date_range: resolveDueDateBucket(dateFilter.value),
+        }))
+      );
+    }
+
+    const keywordFilters = group.filter((p) => p.type !== 'date');
+    if (keywordFilters.length === 0) continue;
+
+    const filter: PropertyFilter = { property_definition_id: propertyId };
+    for (const p of keywordFilters) {
+      if (p.type === 'select') {
+        filter.option_ids = [...(filter.option_ids ?? []), p.value];
+      } else if (p.type === 'entity') {
+        filter.entity_ids = [...(filter.entity_ids ?? []), p.value];
+      } else {
+        filter.boolean_value = p.value;
+      }
+    }
+    result.push(filter);
+  }
+  return result;
 }
 
 function filterDataToQueryFilters(data: QueryState): EntityFilters {

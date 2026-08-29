@@ -36,6 +36,7 @@ import type {
   ConsolidatedFilter,
   FilterValue,
 } from './consolidated-filter-chip';
+import { getSingleSelectFilterPlan } from './filter-categories';
 import type { SearchableOption } from './searchable-multi-select';
 import { useTagFilter } from './tag-filter';
 import {
@@ -613,6 +614,32 @@ export function useFilterRefinements() {
           isValueActive: (id) => soup.predicates.isActive(id),
           onToggleValue: (id) => {
             const filterId = id as FilterID;
+            if (!group.multiple) {
+              const plan = getSingleSelectFilterPlan(
+                { options: group.allOptions },
+                id,
+                soup.predicates.isActive
+              );
+
+              batch(() => {
+                const deactivateIds = new Set(plan.deactivate);
+                soup.predicates.set(({ andIds, orIds }) => ({
+                  and: andIds.filter((id) => !deactivateIds.has(id)),
+                  or: [
+                    ...orIds.filter((id) => !deactivateIds.has(id)),
+                    ...(plan.activate ? [plan.activate] : []),
+                  ],
+                }));
+                for (const idToRemove of plan.deactivate) {
+                  queryFilters.remove(getFilterQuery(idToRemove));
+                }
+                if (plan.activate) {
+                  queryFilters.add(getFilterQuery(plan.activate));
+                }
+              });
+              return;
+            }
+
             const wasActive = soup.predicates.isActive(filterId);
             const isInboxTypeFilter =
               currentView() === 'inbox' && categoryId === 'type';
