@@ -41,6 +41,17 @@ async fn canonical_edge(pool: &Pool<Postgres>, parent: Uuid, child: Uuid) {
     .await;
 }
 
+async fn milestone_value(pool: &Pool<Postgres>, id: Uuid) -> Option<Option<serde_json::Value>> {
+    sqlx::query_scalar(
+        "SELECT values FROM entity_properties WHERE entity_id = $1 AND entity_type = 'TASK' AND property_definition_id = $2",
+    )
+    .bind(id.to_string())
+    .bind(SystemPropertyKey::MILESTONE_UUID)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
+}
+
 #[sqlx::test(
     migrator = "MACRO_DB_MIGRATIONS",
     fixtures(path = "../../../fixtures", scripts("task_dependencies_seed"))
@@ -87,6 +98,150 @@ async fn subtask_progress_counts_only_live_canonical_children(
     assert_eq!(rows[0].completed_subtask_ids, vec![completed]);
     assert_eq!(rows[0].canceled_subtask_ids, vec![canceled]);
     assert!(!rows[0].has_unavailable_subtasks);
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("task_dependencies_seed"))
+)]
+async fn subtask_progress_ignores_milestone_marker_without_mutating_it(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let true_source = Uuid::from_u128(0xE505);
+    let false_source = Uuid::from_u128(0xE506);
+    let null_source = Uuid::from_u128(0xE507);
+    let empty_source = Uuid::from_u128(0xE508);
+    let sources = [true_source, false_source, null_source, empty_source];
+    let child_groups = [
+        [
+            Uuid::from_u128(0xE509),
+            Uuid::from_u128(0xE50A),
+            Uuid::from_u128(0xE50B),
+        ],
+        [
+            Uuid::from_u128(0xE50C),
+            Uuid::from_u128(0xE50D),
+            Uuid::from_u128(0xE50E),
+        ],
+        [
+            Uuid::from_u128(0xE50F),
+            Uuid::from_u128(0xE510),
+            Uuid::from_u128(0xE520),
+        ],
+    ];
+    for id in sources
+        .into_iter()
+        .chain(child_groups.into_iter().flatten())
+    {
+        task(&pool, id, Some(PROJECT), true).await;
+    }
+    property(
+        &pool,
+        true_source,
+        SystemPropertyKey::MILESTONE_UUID,
+        serde_json::json!({"type":"Boolean","value":true}),
+    )
+    .await;
+    property(
+        &pool,
+        false_source,
+        SystemPropertyKey::MILESTONE_UUID,
+        serde_json::json!({"type":"Boolean","value":false}),
+    )
+    .await;
+    property(
+        &pool,
+        empty_source,
+        SystemPropertyKey::MILESTONE_UUID,
+        serde_json::json!({"type":"Boolean","value":true}),
+    )
+    .await;
+    sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, NULL)")
+        .bind(Uuid::new_v4())
+        .bind(null_source.to_string())
+        .bind(SystemPropertyKey::MILESTONE_UUID)
+        .execute(&pool)
+        .await?;
+
+    for (source, children) in [true_source, false_source, null_source]
+        .into_iter()
+        .zip(child_groups)
+    {
+        property(
+            &pool,
+            source,
+            SystemPropertyKey::SUBTASKS_UUID,
+            references(&children),
+        )
+        .await;
+        for child in children {
+            canonical_edge(&pool, source, child).await;
+        }
+        property(
+            &pool,
+            children[0],
+            SystemPropertyKey::STATUS_UUID,
+            serde_json::json!({"type":"SelectOption","value":[StatusOption::COMPLETED_UUID]}),
+        )
+        .await;
+        property(
+            &pool,
+            children[1],
+            SystemPropertyKey::STATUS_UUID,
+            serde_json::json!({"type":"SelectOption","value":[StatusOption::CANCELED_UUID]}),
+        )
+        .await;
+        property(
+            &pool,
+            children[2],
+            SystemPropertyKey::STATUS_UUID,
+            serde_json::json!({"type":"SelectOption","value":[StatusOption::IN_PROGRESS_UUID]}),
+        )
+        .await;
+    }
+
+    let mut before = Vec::with_capacity(sources.len());
+    for source in sources {
+        before.push(milestone_value(&pool, source).await);
+    }
+    let rows = get_task_subtask_progress(&pool, &sources).await?.unwrap();
+    let mut after = Vec::with_capacity(sources.len());
+    for source in sources {
+        after.push(milestone_value(&pool, source).await);
+    }
+    assert_eq!(before, after);
+    assert_eq!(
+        before,
+        vec![
+            Some(Some(serde_json::json!({"type":"Boolean","value":true}))),
+            Some(Some(serde_json::json!({"type":"Boolean","value":false}))),
+            Some(None),
+            Some(Some(serde_json::json!({"type":"Boolean","value":true}))),
+        ]
+    );
+    for (row, children) in rows[..3].iter().zip(child_groups) {
+        assert_eq!(row.subtask_ids, children);
+        assert_eq!(row.completed_subtask_ids, vec![children[0]]);
+        assert_eq!(row.canceled_subtask_ids, vec![children[1]]);
+        assert!(!row.has_unavailable_subtasks);
+        assert_eq!(
+            (
+                row.completed_subtask_ids.len(),
+                row.subtask_ids.len() - row.canceled_subtask_ids.len(),
+            ),
+            (1, 2)
+        );
+    }
+    assert!(rows[3].subtask_ids.is_empty());
+    assert_eq!(
+        (
+            rows[3].completed_subtask_ids.len(),
+            rows[3].subtask_ids.len()
+        ),
+        (0, 0)
+    );
+    assert!(!rows[3].has_unavailable_subtasks);
     Ok(())
 }
 
