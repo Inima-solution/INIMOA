@@ -1441,6 +1441,38 @@ export type ProjectSearchResult = {
 };
 
 /**
+ * A compact UTC range for matching Date property values.
+ */
+export type PropertyDateRange = {
+    /**
+     * Match values strictly after this UTC timestamp.
+     */
+    gt?: string | null;
+    /**
+     * Match values at or after this UTC timestamp.
+     */
+    gte?: string | null;
+    /**
+     * Match values strictly before this UTC timestamp.
+     */
+    lt?: string | null;
+    /**
+     * Match values at or before this UTC timestamp.
+     */
+    lte?: string | null;
+};
+
+/**
+ * A Date-property range together with whether matching Task values are excluded.
+ */
+export type PropertyDateRangeFilter = PropertyDateRange & {
+    /**
+     * Exclude Tasks whose Date property matches these bounds.
+     */
+    exclude?: boolean;
+};
+
+/**
  * Property definition model (service representation).
  */
 export type PropertyDefinition = {
@@ -1476,6 +1508,7 @@ export type PropertyFilter = {
      * Boolean value to match. None does not filter on a boolean value.
      */
     boolean_value?: boolean | null;
+    date_range?: null | PropertyDateRangeFilter;
     /**
      * Entity reference IDs to match. Multiple values are OR'd together.
      */

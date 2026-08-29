@@ -2796,6 +2796,50 @@
           }
         }
       },
+      "PropertyDateRange": {
+        "type": "object",
+        "description": "A compact UTC range for matching Date property values.",
+        "properties": {
+          "gt": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Match values strictly after this UTC timestamp."
+          },
+          "gte": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Match values at or after this UTC timestamp."
+          },
+          "lt": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Match values strictly before this UTC timestamp."
+          },
+          "lte": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Match values at or before this UTC timestamp."
+          }
+        }
+      },
+      "PropertyDateRangeFilter": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PropertyDateRange",
+            "description": "UTC bounds for the Date property value."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "exclude": {
+                "type": "boolean",
+                "description": "Exclude Tasks whose Date property matches these bounds."
+              }
+            }
+          }
+        ],
+        "description": "A Date-property range together with whether matching Task values are excluded."
+      },
       "PropertyDefinition": {
         "type": "object",
         "description": "Property definition model (service representation).",
@@ -2863,6 +2907,17 @@
           "boolean_value": {
             "type": ["boolean", "null"],
             "description": "Boolean value to match. None does not filter on a boolean value."
+          },
+          "date_range": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PropertyDateRangeFilter",
+                "description": "Task Date property range. Date ranges are Task-only and cannot be\ncombined with option, entity-reference, or boolean matching."
+              }
+            ]
           },
           "entity_ids": {
             "type": "array",
