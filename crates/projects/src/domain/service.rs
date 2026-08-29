@@ -2,6 +2,7 @@
 
 use std::collections::HashSet;
 
+use chrono::{DateTime, Utc};
 use entity_access::domain::models::{
     EditAccessLevel, EntityAccessAuth, EntityAccessReceipt, EntityPermission, EntityType,
     OwnerAccessLevel, ReadProjectWorkScoped, ViewAccessLevel, WriteProjectWorkStatusScoped,
@@ -32,8 +33,9 @@ use super::events::{
 };
 use super::models::{
     CreateProjectArgs, EditProjectArgs, ProjectError, ProjectOperations, ProjectOverview,
-    PurgedProjectTree, RevertDeleteResult, SoftDeleteResult, UpdateProjectOperationsCommand,
-    UpdateProjectOperationsOutcome, UpdateProjectOperationsRequest, UploadFolderRepoArgs,
+    PurgedProjectTree, PurgedProjectTreeWithRoot, RevertDeleteResult, SoftDeleteResult,
+    UpdateProjectOperationsCommand, UpdateProjectOperationsOutcome, UpdateProjectOperationsRequest,
+    UploadFolderRepoArgs,
 };
 use super::ports::{
     BulkUploadRequestPort, ProjectRepo, ProjectSearchIndexer, ProjectService, ProjectUploadUrlPort,
@@ -45,6 +47,110 @@ use super::upload::{build_destination_map, build_root_folder};
 mod tests;
 
 const MAX_PROJECT_NAME_GRAPHEMES: usize = 100;
+
+/// Result of an exact-token background or manual project-tree purge attempt.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ProjectPurgeOutcome {
+    /// The commit succeeded and all returned metadata is authoritative.
+    Purged(PurgedProjectTree),
+    /// The scan candidate no longer describes a fully deleted project tree.
+    StaleOrUnavailable,
+}
+
+/// Owns a committed project purge and its ordered post-commit effects.
+pub struct ProjectPurgeCoordinator<'a, R, Sha, Idx, B>
+where
+    R: ProjectRepo + ?Sized,
+    Sha: ShaCounterPort + ?Sized,
+    Idx: ProjectSearchIndexer + ?Sized,
+    B: MacroEventBroker + ?Sized,
+{
+    repo: &'a R,
+    sha_counter: &'a Sha,
+    search_indexer: &'a Idx,
+    macro_event_broker: &'a B,
+}
+
+impl<'a, R, Sha, Idx, B> ProjectPurgeCoordinator<'a, R, Sha, Idx, B>
+where
+    R: ProjectRepo + ?Sized,
+    Sha: ShaCounterPort + ?Sized,
+    Idx: ProjectSearchIndexer + ?Sized,
+    B: MacroEventBroker + ?Sized,
+{
+    /// Create the focused composition used by both request and poller paths.
+    pub fn new(
+        repo: &'a R,
+        sha_counter: &'a Sha,
+        search_indexer: &'a Idx,
+        macro_event_broker: &'a B,
+    ) -> Self {
+        Self {
+            repo,
+            sha_counter,
+            search_indexer,
+            macro_event_broker,
+        }
+    }
+
+    /// Purge only an exact soft-delete generation, then run existing effects after commit.
+    pub async fn purge(
+        &self,
+        project_id: &str,
+        deleted_at: DateTime<Utc>,
+        actor_user_id: Option<MacroUserIdStr<'static>>,
+    ) -> Result<ProjectPurgeOutcome, ProjectError> {
+        let Some(PurgedProjectTreeWithRoot { root, tree }) = self
+            .repo
+            .purge_deleted_project_tree_if_token(project_id, deleted_at)
+            .await
+            .map_err(|error| internal_error(error, "unable to permanently delete project"))?
+        else {
+            return Ok(ProjectPurgeOutcome::StaleOrUnavailable);
+        };
+        if !tree.bom_shas.is_empty() {
+            self.sha_counter
+                .decrement_counts(&tree.bom_shas)
+                .await
+                .map_err(|error| internal_error(error, "unable to update document references"))?;
+        }
+        let document_ids = tree
+            .documents
+            .iter()
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        if !tree.documents.is_empty() {
+            let _ = self.search_indexer
+                .remove_documents(document_ids.clone())
+                .await
+                .inspect_err(|error| tracing::error!(error = ?error, "unable to enqueue purged documents for search"));
+            let _ = self
+                .search_indexer
+                .enqueue_document_deletes(tree.documents.clone())
+                .await
+                .inspect_err(
+                    |error| tracing::error!(error = ?error, "unable to enqueue document deletion"),
+                );
+        }
+        let event = ProjectMacroEvent::permanently_deleted(
+            project_id.to_owned(),
+            ProjectPermanentlyDeletedMetadata {
+                project_id: project_id.to_owned(),
+                owner: root.user_id,
+                actor_user_id,
+                parent_project_id: root.parent_id,
+                purged_project_ids: tree.project_ids.clone(),
+                purged_document_ids: document_ids,
+                purged_chat_ids: tree.chat_ids.clone(),
+            },
+        );
+        let _ = self
+            .macro_event_broker
+            .send_event(&event)
+            .inspect_err(|error| tracing::error!(error=?error, "failed to publish project event"));
+        Ok(ProjectPurgeOutcome::Purged(tree))
+    }
+}
 
 /// The user id to attribute a project lifecycle event to, when the caller is an
 /// authenticated user.
@@ -612,58 +718,27 @@ where
         receipt: EntityAccessReceipt<OwnerAccessLevel>,
         project: BasicProject,
     ) -> Result<PurgedProjectTree, ProjectError> {
-        let purged = self
-            .repo
-            .purge_deleted_project_tree(&receipt.entity().entity_id)
-            .await
-            .map_err(|error| internal_error(error, "unable to permanently delete project"))?;
-        let result = purged.clone();
-
-        if !purged.bom_shas.is_empty() {
-            self.sha_counter
-                .decrement_counts(&purged.bom_shas)
-                .await
-                .map_err(|error| internal_error(error, "unable to update document references"))?;
+        let Some(deleted_at) = project.deleted_at else {
+            return Err(ProjectError::NotFound(receipt.entity().entity_id.clone()));
+        };
+        match ProjectPurgeCoordinator::new(
+            &self.repo,
+            &self.sha_counter,
+            &self.search_indexer,
+            &self.macro_event_broker,
+        )
+        .purge(
+            &receipt.entity().entity_id,
+            deleted_at,
+            event_actor_user_id(receipt.auth()),
+        )
+        .await?
+        {
+            ProjectPurgeOutcome::Purged(tree) => Ok(tree),
+            ProjectPurgeOutcome::StaleOrUnavailable => {
+                Err(ProjectError::NotFound(receipt.entity().entity_id.clone()))
+            }
         }
-
-        let purged_project_ids = purged.project_ids.clone();
-        let purged_chat_ids = purged.chat_ids.clone();
-        let purged_document_ids = purged
-            .documents
-            .iter()
-            .map(|(document_id, _)| document_id.clone())
-            .collect::<Vec<_>>();
-
-        if !purged.documents.is_empty() {
-            let _ = self
-                .search_indexer
-                .remove_documents(purged_document_ids.clone())
-                .await
-                .inspect_err(|error| tracing::error!(error = ?error, "unable to enqueue purged documents for search"));
-            let _ = self
-                .search_indexer
-                .enqueue_document_deletes(purged.documents)
-                .await
-                .inspect_err(
-                    |error| tracing::error!(error = ?error, "unable to enqueue document deletion"),
-                );
-        }
-
-        let project_id = receipt.entity().entity_id.clone();
-        self.publish_project_event(&ProjectMacroEvent::permanently_deleted(
-            project_id.clone(),
-            ProjectPermanentlyDeletedMetadata {
-                project_id,
-                owner: project.user_id,
-                actor_user_id: event_actor_user_id(receipt.auth()),
-                parent_project_id: project.parent_id,
-                purged_project_ids,
-                purged_document_ids,
-                purged_chat_ids,
-            },
-        ));
-
-        Ok(result)
     }
 
     async fn revert_delete_project(

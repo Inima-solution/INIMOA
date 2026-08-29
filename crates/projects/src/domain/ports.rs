@@ -5,6 +5,8 @@
 
 use std::future::Future;
 
+use chrono::{DateTime, Utc};
+
 use entity_access::domain::models::{
     EditAccessLevel, EntityAccessReceipt, OwnerAccessLevel, ReadProjectWorkScoped, ViewAccessLevel,
     WriteProjectWorkStatusScoped,
@@ -31,8 +33,9 @@ use uuid::Uuid;
 use super::models::{
     CreateProjectArgs, EditProjectArgs, MarkedUploadedTree, MutatedProject, ProjectError,
     ProjectOperations, ProjectOverview, ProjectOverviewSnapshot, PurgedProjectTree,
-    RevertDeleteResult, SoftDeleteResult, UpdateProjectOperationsCommand,
-    UpdateProjectOperationsOutcome, UpdateProjectOperationsRequest, UploadFolderRepoArgs,
+    PurgedProjectTreeWithRoot, RevertDeleteResult, SoftDeleteResult,
+    UpdateProjectOperationsCommand, UpdateProjectOperationsOutcome, UpdateProjectOperationsRequest,
+    UploadFolderRepoArgs,
 };
 
 /// Repository for reading project data from persistent storage.
@@ -144,11 +147,12 @@ pub trait ProjectRepo: Send + Sync + 'static {
         project_id: &str,
     ) -> impl Future<Output = Result<SoftDeleteResult, Self::Err>> + Send;
 
-    /// Permanently purge an already-soft-deleted project subtree and its child data.
-    fn purge_deleted_project_tree(
+    /// Atomically purge only when the root retains the scan's exact delete token.
+    fn purge_deleted_project_tree_if_token(
         &self,
         project_id: &str,
-    ) -> impl Future<Output = Result<PurgedProjectTree, Self::Err>> + Send;
+        deleted_at: DateTime<Utc>,
+    ) -> impl Future<Output = Result<Option<PurgedProjectTreeWithRoot>, Self::Err>> + Send;
 
     /// Restore a deleted project subtree and the owners' history rows.
     fn revert_delete_project(

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT id, owner\n        FROM \"Document\"\n        WHERE \"projectId\" = ANY($1) AND \"deletedAt\" IS NOT NULL\n        ",
+  "query": "SELECT id, \"deletedAt\"::timestamptz AS deleted_at\n           FROM \"Chat\" WHERE \"projectId\" = ANY($1) ORDER BY id FOR UPDATE",
   "describe": {
     "columns": [
       {
@@ -10,8 +10,8 @@
       },
       {
         "ordinal": 1,
-        "name": "owner",
-        "type_info": "Text"
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
       }
     ],
     "parameters": {
@@ -21,8 +21,8 @@
     },
     "nullable": [
       false,
-      false
+      null
     ]
   },
-  "hash": "bbdb96688fe6edb340cbb6b0beab958f78b356243700e9d0fd142bf29a46b493"
+  "hash": "b6c092ab1981df7e71a07b8e98950374d3b7cb6109ea31abb8aaf651f7209d6f"
 }

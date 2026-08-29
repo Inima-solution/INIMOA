@@ -24,7 +24,7 @@ use sqlx::PgPool;
 
 use crate::domain::models::{
     CreateProjectArgs, EditProjectArgs, MarkedUploadedTree, ProjectOperations,
-    ProjectOverviewSnapshot, PurgedProjectTree, RevertDeleteResult, SoftDeleteResult,
+    ProjectOverviewSnapshot, PurgedProjectTreeWithRoot, RevertDeleteResult, SoftDeleteResult,
     UpdateProjectOperationsCommand, UpdateProjectOperationsOutcome, UploadFolderRepoArgs,
 };
 use crate::domain::ports::ProjectRepo;
@@ -322,12 +322,21 @@ impl ProjectRepo for PgProjectRepo {
     }
 
     #[tracing::instrument(err, skip(self))]
-    async fn purge_deleted_project_tree(
+    async fn purge_deleted_project_tree_if_token(
         &self,
         project_id: &str,
-    ) -> Result<PurgedProjectTree, Self::Err> {
+        deleted_at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<PurgedProjectTreeWithRoot>, Self::Err> {
         let mut transaction = self.pool.begin().await?;
-        let result = delete::purge_deleted_project_tree(&mut transaction, project_id).await?;
+        sqlx::query_scalar!(
+            r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+            i64::from_be_bytes(*b"TASKDEPS")
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+        let result =
+            delete::purge_deleted_project_tree_if_token(&mut transaction, project_id, deleted_at)
+                .await?;
         transaction.commit().await?;
         Ok(result)
     }

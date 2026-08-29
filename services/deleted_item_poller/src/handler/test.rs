@@ -127,75 +127,76 @@ fn document_purge_candidates_round_trip_exact_rfc3339_tokens_without_events() {
 }
 
 #[tokio::test]
-async fn publish_project_purge_events_publishes_separately_keyed_events() {
-    let event_broker = FakeEventBroker::default();
-    let projects = vec![
-        ProjectToDelete {
-            project_id: "project-one".to_string(),
-            user_id: "macro|owner-one@example.com".to_string(),
+async fn project_candidates_preserve_token_order_for_purge_closure() {
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let expected = chrono::DateTime::parse_from_rfc3339("2026-07-01T02:03:04.123456+00:00")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let seen_by_purge = seen.clone();
+    process_project_candidates(
+        vec![
+            macro_db_client::projects::ProjectToDelete {
+                project_id: "first".into(),
+                deleted_at: expected,
+            },
+            macro_db_client::projects::ProjectToDelete {
+                project_id: "second".into(),
+                deleted_at: expected + chrono::Duration::seconds(1),
+            },
+        ],
+        move |candidate| {
+            let seen = seen_by_purge.clone();
+            async move {
+                seen.lock()
+                    .unwrap()
+                    .push((candidate.project_id, candidate.deleted_at));
+                Ok(ProjectPurgeOutcome::StaleOrUnavailable)
+            }
         },
-        ProjectToDelete {
-            project_id: "project-two".to_string(),
-            user_id: "macro|owner-two@example.com".to_string(),
-        },
-    ];
-
-    publish_project_purge_events(&event_broker, &projects)
-        .await
-        .unwrap();
-
-    let published = event_broker.published();
-    assert_eq!(published.len(), projects.len());
-
-    for (event, project) in published.iter().zip(&projects) {
-        assert_eq!(event.topic, "macro.projects");
-        assert_eq!(event.key, project.project_id);
-        assert_eq!(event.envelope["schema_version"], json!(1));
-        assert_eq!(
-            event.envelope["event_type"],
-            json!("project.permanently_deleted")
-        );
-
-        let metadata = &event.envelope["metadata"];
-        assert_eq!(metadata["project_id"], json!(project.project_id));
-        assert_eq!(metadata["owner"], json!(project.user_id));
-        assert_eq!(metadata["actor_user_id"], Value::Null);
-        assert_eq!(metadata["parent_project_id"], Value::Null);
-        assert_eq!(metadata["purged_project_ids"], json!([project.project_id]));
-        assert_eq!(metadata["purged_document_ids"], json!([]));
-        assert_eq!(metadata["purged_chat_ids"], json!([]));
-    }
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![
+            ("first".to_string(), expected),
+            (
+                "second".to_string(),
+                expected + chrono::Duration::seconds(1)
+            ),
+        ]
+    );
 }
 
 #[tokio::test]
-async fn publish_project_purge_events_returns_publication_failures() {
-    let event_broker = FakeEventBroker::failing_delivery();
-    let projects = vec![ProjectToDelete {
-        project_id: "project-one".to_string(),
-        user_id: "macro|owner@example.com".to_string(),
-    }];
-
-    let error = publish_project_purge_events(&event_broker, &projects)
-        .await
-        .expect_err("publication failure should be returned");
-
-    assert!(format!("{error:#}").contains("publisher unavailable"));
-}
-
-#[tokio::test]
-async fn publish_project_purge_events_rejects_malformed_owners() {
-    let event_broker = FakeEventBroker::default();
-    let projects = vec![ProjectToDelete {
-        project_id: "project-one".to_string(),
-        user_id: "not-a-macro-user".to_string(),
-    }];
-
-    let error = publish_project_purge_events(&event_broker, &projects)
-        .await
-        .expect_err("malformed owners should be returned");
-
-    assert!(format!("{error:#}").contains("invalid owner for project project-one"));
-    assert!(event_broker.published().is_empty());
+async fn project_candidate_error_propagates_without_following_purge() {
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let calls_by_purge = calls.clone();
+    let error = process_project_candidates(
+        vec![
+            macro_db_client::projects::ProjectToDelete {
+                project_id: "broken".into(),
+                deleted_at: chrono::Utc::now(),
+            },
+            macro_db_client::projects::ProjectToDelete {
+                project_id: "not-reached".into(),
+                deleted_at: chrono::Utc::now(),
+            },
+        ],
+        move |candidate| {
+            let calls = calls_by_purge.clone();
+            async move {
+                calls.lock().unwrap().push(candidate.project_id);
+                Err(projects::domain::models::ProjectError::Internal(
+                    anyhow::anyhow!("purge failed"),
+                ))
+            }
+        },
+    )
+    .await
+    .expect_err("purge errors are returned");
+    assert!(format!("{error:#}").contains("unable to purge project candidate"));
+    assert_eq!(*calls.lock().unwrap(), vec!["broken"]);
 }
 
 #[tokio::test]

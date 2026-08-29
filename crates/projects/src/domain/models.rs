@@ -5,7 +5,7 @@ use std::{fmt::Display, str::FromStr};
 use chrono::{DateTime, NaiveDate, Utc};
 use macro_user_id::user_id::MacroUserIdStr;
 use model::folder::FileSystemNode;
-use model::project::Project;
+use model::project::{BasicProject, Project};
 use models_permissions::share_permission::{SharePermissionV2, UpdateSharePermissionRequestV2};
 use uuid::Uuid;
 
@@ -13,9 +13,8 @@ use uuid::Uuid;
 mod test;
 
 /// The operational lifecycle state stored for a project.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "axum", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectOperationalStatus {
     /// Work has not started.
@@ -31,9 +30,8 @@ pub enum ProjectOperationalStatus {
 }
 
 /// The relative operational urgency stored for a project.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema,
-)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "axum", derive(utoipa::ToSchema))]
 #[serde(rename_all = "lowercase")]
 pub enum ProjectPriority {
     /// Low urgency.
@@ -124,7 +122,8 @@ impl FromStr for ProjectPriority {
 /// Operational metadata attached one-to-one to a canonical project.
 ///
 /// This model deliberately excludes project content and generic project fields.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "axum", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectOperations {
     /// Canonical project identifier.
@@ -146,16 +145,17 @@ pub struct ProjectOperations {
     /// When the operational record was last updated.
     pub updated_at: DateTime<Utc>,
     /// Optional bounded object-shaped operational policy.
-    #[schema(value_type = Option<Object>)]
+    #[cfg_attr(feature = "axum", schema(value_type = Option<Object>))]
     pub policy: Option<serde_json::Value>,
 }
 
 /// The bounded, canonical overview for one project.
-#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "axum", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectOverview {
     /// The canonical project row.
-    #[schema(inline)]
+    #[cfg_attr(feature = "axum", schema(inline))]
     pub project: Project,
     /// The validated caller access level for this project.
     pub user_access_level: models_permissions::share_permission::access_level::AccessLevel,
@@ -166,7 +166,8 @@ pub struct ProjectOverview {
 }
 
 /// Exact live depth-one child counts for a project overview.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "axum", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectOverviewImmediateChildren {
     /// Non-deleted direct child projects.
@@ -190,6 +191,15 @@ pub struct ProjectOverviewSnapshot {
     pub operations: ProjectOperations,
     /// Exact direct-child counts returned by the scoped repository read.
     pub immediate_children: ProjectOverviewImmediateChildren,
+}
+
+/// The authoritative root metadata captured with a committed project-tree purge.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PurgedProjectTreeWithRoot {
+    /// Root row locked and read in the purge transaction.
+    pub root: BasicProject,
+    /// Canonically removed project tree and dependent data.
+    pub tree: PurgedProjectTree,
 }
 
 /// A full replacement of mutable project operational fields.

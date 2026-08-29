@@ -10,10 +10,9 @@ use lambda_runtime::{
     Error, LambdaEvent,
     tracing::{self},
 };
-use macro_db_client::projects::ProjectToDelete;
 use macro_event_broker::MacroEventBroker;
-use macro_user_id::user_id::MacroUserIdStr;
-use projects::domain::events::{ProjectMacroEvent, ProjectPermanentlyDeletedMetadata};
+use projects::domain::service::{ProjectPurgeCoordinator, ProjectPurgeOutcome};
+use std::future::Future;
 
 #[tracing::instrument(skip(ctx, _event), err)]
 pub async fn handler(
@@ -25,53 +24,6 @@ pub async fn handler(
         handle_documents(&ctx),
         handle_projects(&ctx)
     )?;
-
-    Ok(())
-}
-
-#[tracing::instrument(skip(event_broker, projects_to_delete), err)]
-async fn publish_project_purge_events<B: MacroEventBroker>(
-    event_broker: &B,
-    projects_to_delete: &[ProjectToDelete],
-) -> anyhow::Result<()> {
-    let events = projects_to_delete
-        .iter()
-        .map(|project| {
-            let project_id = project.project_id.clone();
-            let owner: MacroUserIdStr<'static> = MacroUserIdStr::try_from(project.user_id.clone())
-                .with_context(|| format!("invalid owner for project {}", project.project_id))?;
-
-            Ok(ProjectMacroEvent::permanently_deleted(
-                project_id.clone(),
-                ProjectPermanentlyDeletedMetadata {
-                    project_id: project_id.clone(),
-                    owner,
-                    actor_user_id: None,
-                    parent_project_id: None,
-                    purged_project_ids: vec![project_id],
-                    purged_document_ids: Vec::new(),
-                    purged_chat_ids: Vec::new(),
-                },
-            ))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let publications = events
-        .iter()
-        .map(|event| event_broker.send_event(event))
-        .collect::<Vec<_>>();
-    let publication_results = join_all(publications.into_iter().map(|publication| async move {
-        let handle = publication.context("failed to enqueue project purge event")?;
-        handle
-            .await
-            .context("project purge event publication task failed")?
-            .context("failed to publish project purge event")
-    }))
-    .await;
-
-    for result in publication_results {
-        result?;
-    }
 
     Ok(())
 }
@@ -124,23 +76,46 @@ async fn handle_projects(ctx: &context::Context) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    tracing::debug!(projects_to_delete=?projects_to_delete, "projects to delete");
+    let coordinator = ProjectPurgeCoordinator::new(
+        &ctx.project_repo,
+        &ctx.sha_counter,
+        &ctx.project_search_indexer,
+        &ctx.macro_event_broker,
+    );
+    let coordinator_ref = &coordinator;
+    process_project_candidates(projects_to_delete, move |candidate| {
+        let coordinator = coordinator_ref;
+        async move {
+            coordinator
+                .purge(&candidate.project_id, candidate.deleted_at, None)
+                .await
+        }
+    })
+    .await?;
 
-    publish_project_purge_events(&ctx.macro_event_broker, &projects_to_delete)
-        .await
-        .context("unable to publish project purge events")?;
+    Ok(())
+}
 
-    let project_ids = projects_to_delete
-        .into_iter()
-        .map(|project| project.project_id)
-        .collect::<Vec<String>>();
-
-    // We can actually perform the project deletion here as we will automatically be queuing all
-    // the items in the project for deletion as well
-    macro_db_client::projects::delete::delete_projects_bulk(&ctx.db, &project_ids)
-        .await
-        .context("unable to delete projects")?;
-
+async fn process_project_candidates<F, Fut>(
+    candidates: Vec<macro_db_client::projects::ProjectToDelete>,
+    mut purge: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(macro_db_client::projects::ProjectToDelete) -> Fut,
+    Fut: Future<Output = Result<ProjectPurgeOutcome, projects::domain::models::ProjectError>>,
+{
+    for candidate in candidates {
+        let project_id = candidate.project_id.clone();
+        match purge(candidate)
+            .await
+            .context("unable to purge project candidate")?
+        {
+            ProjectPurgeOutcome::Purged(_) => {}
+            ProjectPurgeOutcome::StaleOrUnavailable => {
+                tracing::debug!(%project_id, "project purge candidate is stale");
+            }
+        }
+    }
     Ok(())
 }
 

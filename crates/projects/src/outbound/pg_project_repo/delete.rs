@@ -1,23 +1,48 @@
-use chrono::Utc;
+use chrono::{DateTime, Utc};
+use macro_user_id::cowlike::CowLike;
+use macro_user_id::user_id::MacroUserIdStr;
 use sqlx::{Postgres, Transaction};
 
-use crate::domain::models::{PurgedProjectTree, SoftDeleteResult};
+use crate::domain::models::{PurgedProjectTree, PurgedProjectTreeWithRoot, SoftDeleteResult};
 
-pub(super) async fn purge_deleted_project_tree(
+pub(super) async fn purge_deleted_project_tree_if_token(
     transaction: &mut Transaction<'_, Postgres>,
     project_id: &str,
-) -> Result<PurgedProjectTree, sqlx::Error> {
-    let project_ids = sqlx::query_scalar!(
+    deleted_at: DateTime<Utc>,
+) -> Result<Option<PurgedProjectTreeWithRoot>, sqlx::Error> {
+    let root = sqlx::query!(
+        r#"
+        SELECT id, "userId" AS user_id, name, "parentId" AS parent_id,
+               "deletedAt"::timestamptz AS deleted_at
+        FROM "Project"
+        WHERE id = $1 AND "deletedAt" = $2
+        FOR UPDATE
+        "#,
+        project_id,
+        deleted_at.naive_utc(),
+    )
+    .fetch_optional(transaction.as_mut())
+    .await?;
+    let Some(root) = root else {
+        return Ok(None);
+    };
+    let root = model::project::BasicProject {
+        id: root.id,
+        user_id: MacroUserIdStr::parse_from_str(&root.user_id)
+            .map_err(|error| sqlx::Error::Decode(Box::new(error)))?
+            .into_owned(),
+        parent_id: root.parent_id,
+        name: root.name,
+        deleted_at: root.deleted_at,
+    };
+
+    let mut project_ids = sqlx::query_scalar!(
         r#"
         WITH RECURSIVE project_hierarchy AS (
-            SELECT id
-            FROM "Project"
-            WHERE id = $1 AND "deletedAt" IS NOT NULL
+            SELECT id FROM "Project" WHERE id = $1
             UNION ALL
-            SELECT child.id
-            FROM "Project" child
+            SELECT child.id FROM "Project" child
             JOIN project_hierarchy parent ON child."parentId" = parent.id
-            WHERE child."deletedAt" IS NOT NULL
         )
         SELECT id AS "id!" FROM project_hierarchy
         "#,
@@ -25,32 +50,64 @@ pub(super) async fn purge_deleted_project_tree(
     )
     .fetch_all(transaction.as_mut())
     .await?;
-
-    let documents = sqlx::query!(
-        r#"
-        SELECT id, owner
-        FROM "Document"
-        WHERE "projectId" = ANY($1) AND "deletedAt" IS NOT NULL
-        "#,
+    project_ids.sort();
+    let locked_projects = sqlx::query!(
+        r#"SELECT id, "deletedAt"::timestamptz AS deleted_at
+           FROM "Project" WHERE id = ANY($1) ORDER BY id FOR UPDATE"#,
         &project_ids,
     )
-    .map(|row| (row.id, row.owner))
     .fetch_all(transaction.as_mut())
     .await?;
+    if locked_projects
+        .iter()
+        .map(|project| &project.id)
+        .ne(project_ids.iter())
+        || locked_projects
+            .iter()
+            .any(|project| project.deleted_at.is_none())
+    {
+        return Ok(None);
+    }
+    let documents = sqlx::query!(
+        r#"SELECT id, owner, "deletedAt"::timestamptz AS deleted_at
+           FROM "Document" WHERE "projectId" = ANY($1) ORDER BY id FOR UPDATE"#,
+        &project_ids,
+    )
+    .fetch_all(transaction.as_mut())
+    .await?;
+    let chats = sqlx::query!(
+        r#"SELECT id, "deletedAt"::timestamptz AS deleted_at
+           FROM "Chat" WHERE "projectId" = ANY($1) ORDER BY id FOR UPDATE"#,
+        &project_ids,
+    )
+    .fetch_all(transaction.as_mut())
+    .await?;
+    if documents
+        .iter()
+        .any(|document| document.deleted_at.is_none())
+        || chats.iter().any(|chat| chat.deleted_at.is_none())
+    {
+        return Ok(None);
+    }
+    let documents = documents
+        .into_iter()
+        .map(|document| (document.id, document.owner))
+        .collect::<Vec<_>>();
+    let chat_ids = chats.into_iter().map(|chat| chat.id).collect::<Vec<_>>();
+    let tree = purge_locked_project_tree(transaction, project_ids, documents, chat_ids).await?;
+    Ok(Some(PurgedProjectTreeWithRoot { root, tree }))
+}
+
+async fn purge_locked_project_tree(
+    transaction: &mut Transaction<'_, Postgres>,
+    project_ids: Vec<String>,
+    documents: Vec<(String, String)>,
+    chat_ids: Vec<String>,
+) -> Result<PurgedProjectTree, sqlx::Error> {
     let document_ids = documents
         .iter()
         .map(|(id, _)| id.clone())
         .collect::<Vec<_>>();
-    let chat_ids = sqlx::query_scalar!(
-        r#"
-        SELECT id
-        FROM "Chat"
-        WHERE "projectId" = ANY($1) AND "deletedAt" IS NOT NULL
-        "#,
-        &project_ids,
-    )
-    .fetch_all(transaction.as_mut())
-    .await?;
     let bom_shas = sqlx::query!(
         r#"
         SELECT part.sha, COUNT(*) AS "count!"

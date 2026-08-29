@@ -6,6 +6,8 @@ env_vars! {
     struct DatabaseUrl;
     #[derive(Debug, Clone)]
     pub struct KafkaBrokers;
+    #[derive(Debug, Clone)]
+    pub struct RedisUri;
 }
 
 #[derive(Debug, Clone)]
@@ -15,6 +17,9 @@ pub struct Config {
 
     /// Comma-separated Kafka bootstrap servers for document, project, and chat lifecycle events.
     pub kafka_brokers: KafkaBrokers,
+
+    /// Redis endpoint used by the existing SHA count adapter.
+    pub redis_uri: RedisUri,
 
     /// The environment we are in
     #[allow(dead_code)]
@@ -27,10 +32,12 @@ impl Config {
             .context("DATABASE_URL must be provided")?
             .to_string();
         let kafka_brokers = KafkaBrokers::new().context("KAFKA_BROKERS must be provided")?;
+        let redis_uri = RedisUri::new().context("REDIS_URI must be provided")?;
 
         Ok(Config {
             database_url,
             kafka_brokers,
+            redis_uri,
             environment: Environment::new_or_prod(),
         })
     }

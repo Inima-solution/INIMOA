@@ -76,16 +76,16 @@ pub async fn get_sub_project_ids(
     Ok(result)
 }
 
-/// A deleted project and the user who owns it.
+/// A deleted project and the exact soft-delete token observed by the scan.
 #[derive(Debug, Eq, PartialEq)]
 pub struct ProjectToDelete {
     /// The deleted project's ID.
     pub project_id: String,
-    /// The owning user's ID.
-    pub user_id: String,
+    /// The compare token. Authoritative metadata is read in the purge transaction.
+    pub deleted_at: DateTime<Utc>,
 }
 
-/// Gets all projects and their owners that are older than the provided date.
+/// Gets soft-deleted subtree roots and their exact delete tokens older than the cutoff.
 #[tracing::instrument(skip(db))]
 pub async fn get_projects_to_delete(
     db: &Pool<Postgres>,
@@ -94,9 +94,14 @@ pub async fn get_projects_to_delete(
     let result = sqlx::query_as!(
         ProjectToDelete,
         r#"
-            SELECT p.id as project_id, p."userId" as user_id
+            SELECT p.id as project_id, p."deletedAt"::timestamptz as "deleted_at!"
             FROM "Project" p
             WHERE p."deletedAt" IS NOT NULL AND p."deletedAt" <= $1
+                AND NOT EXISTS (
+                    SELECT 1 FROM "Project" parent
+                    WHERE parent.id = p."parentId" AND parent."deletedAt" IS NOT NULL
+                )
+            ORDER BY p."deletedAt" ASC, p.id ASC
         "#,
         date
     )

@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT p.id as project_id, p.\"deletedAt\"::timestamptz as \"deleted_at!\"\n            FROM \"Project\" p\n            WHERE p.\"deletedAt\" IS NOT NULL AND p.\"deletedAt\" <= $1\n                AND NOT EXISTS (\n                    SELECT 1 FROM \"Project\" parent\n                    WHERE parent.id = p.\"parentId\" AND parent.\"deletedAt\" IS NOT NULL\n                )\n            ORDER BY p.\"deletedAt\" ASC, p.id ASC\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "project_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "deleted_at!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamp"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "15657963edc29edade296c3346b45cc2da2d0dc92ec1d34148ccf49ac80a89ea"
+}

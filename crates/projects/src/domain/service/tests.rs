@@ -48,6 +48,7 @@ struct PublishedEvent {
 #[derive(Clone, Default)]
 struct TestEventBroker {
     published: Arc<Mutex<Vec<PublishedEvent>>>,
+    order: Option<Arc<Mutex<Vec<&'static str>>>>,
     fail: bool,
 }
 
@@ -61,6 +62,13 @@ impl TestEventBroker {
 
     fn published(&self) -> Arc<Mutex<Vec<PublishedEvent>>> {
         Arc::clone(&self.published)
+    }
+
+    fn recording(order: Arc<Mutex<Vec<&'static str>>>) -> Self {
+        Self {
+            order: Some(order),
+            ..Self::default()
+        }
     }
 }
 
@@ -78,6 +86,9 @@ impl MacroEventBroker for TestEventBroker {
             key: event.key().to_string(),
             payload: serde_json::to_value(event.event())?,
         });
+        if let Some(order) = &self.order {
+            order.lock().unwrap().push("project_event");
+        }
         Ok(tokio::spawn(async { Ok(()) }))
     }
 }
@@ -2117,20 +2128,29 @@ fn upload_document(id: &str, file_type: FileType) -> DocumentMetadata {
 async fn permanent_delete_runs_external_work_after_committed_purge() {
     let events = Arc::new(Mutex::new(Vec::new()));
     let repo_events = events.clone();
+    let project_id = Uuid::new_v4();
+    let parent_id = Uuid::new_v4();
+    let authoritative_parent_id = Uuid::new_v4();
     let mut repo = MockProjectRepo::new();
-    repo.expect_purge_deleted_project_tree()
-        .return_once(move |_| {
+    repo.expect_purge_deleted_project_tree_if_token()
+        .return_once(move |_, _| {
             repo_events.lock().unwrap().push("repo");
-            Box::pin(async {
-                Ok(PurgedProjectTree {
-                    project_ids: vec!["project".to_string()],
-                    chat_ids: vec!["chat".to_string()],
-                    documents: vec![("document".to_string(), "owner".to_string())],
-                    bom_shas: vec![("sha".to_string(), 2)],
-                })
+            Box::pin(async move {
+                Ok(Some(PurgedProjectTreeWithRoot {
+                    root: BasicProject {
+                        user_id: user_id("macro|authoritative@example.com"),
+                        ..basic_project(project_id, Some(authoritative_parent_id), true)
+                    },
+                    tree: PurgedProjectTree {
+                        project_ids: vec!["project".to_string()],
+                        chat_ids: vec!["chat".to_string()],
+                        documents: vec![("document".to_string(), "owner".to_string())],
+                        bom_shas: vec![("sha".to_string(), 2)],
+                    },
+                }))
             })
         });
-    let event_broker = TestEventBroker::default();
+    let event_broker = TestEventBroker::recording(events.clone());
     let published = event_broker.published();
     let service = ProjectServiceImpl::new(
         repo,
@@ -2148,8 +2168,6 @@ async fn permanent_delete_runs_external_work_after_committed_purge() {
         event_broker,
     );
 
-    let project_id = Uuid::new_v4();
-    let parent_id = Uuid::new_v4();
     service
         .permanently_delete_project(
             mutation_receipt::<OwnerAccessLevel>(project_id, AccessLevel::Owner),
@@ -2160,16 +2178,25 @@ async fn permanent_delete_runs_external_work_after_committed_purge() {
 
     assert_eq!(
         *events.lock().unwrap(),
-        vec!["repo", "sha", "documents", "document_deletes"]
+        vec![
+            "repo",
+            "sha",
+            "documents",
+            "document_deletes",
+            "project_event"
+        ]
     );
     let published = published.lock().unwrap();
     assert_eq!(published.len(), 1);
     assert_project_event(&published[0], project_id, "project.permanently_deleted");
     let metadata = &published[0].payload["metadata"];
     assert_eq!(metadata["project_id"], project_id.to_string());
-    assert_eq!(metadata["owner"], "macro|owner@example.com");
+    assert_eq!(metadata["owner"], "macro|authoritative@example.com");
     assert_eq!(metadata["actor_user_id"], "macro|owner@example.com");
-    assert_eq!(metadata["parent_project_id"], parent_id.to_string());
+    assert_eq!(
+        metadata["parent_project_id"],
+        authoritative_parent_id.to_string()
+    );
     assert_eq!(
         metadata["purged_project_ids"],
         serde_json::json!(["project"])
@@ -2184,8 +2211,8 @@ async fn permanent_delete_runs_external_work_after_committed_purge() {
 #[tokio::test]
 async fn permanent_delete_has_no_external_side_effects_when_purge_fails() {
     let mut repo = MockProjectRepo::new();
-    repo.expect_purge_deleted_project_tree()
-        .return_once(|_| Box::pin(async { Err(anyhow::anyhow!("commit failed")) }));
+    repo.expect_purge_deleted_project_tree_if_token()
+        .return_once(|_, _| Box::pin(async { Err(anyhow::anyhow!("commit failed")) }));
     let event_broker = TestEventBroker::default();
     let published = event_broker.published();
     let service = service_with_event_broker(repo, RecordingBulkUpload::default(), event_broker);
@@ -2203,19 +2230,89 @@ async fn permanent_delete_has_no_external_side_effects_when_purge_fails() {
 }
 
 #[tokio::test]
-async fn permanent_delete_sha_failure_publishes_no_event() {
+async fn coordinator_stale_candidate_has_zero_external_effects() {
     let mut repo = MockProjectRepo::new();
-    repo.expect_purge_deleted_project_tree().return_once(|_| {
-        Box::pin(async {
-            Ok(PurgedProjectTree {
-                project_ids: vec!["project".to_string()],
-                chat_ids: Vec::new(),
-                documents: Vec::new(),
-                bom_shas: vec![("sha".to_string(), 1)],
-            })
-        })
-    });
+    repo.expect_purge_deleted_project_tree_if_token()
+        .return_once(|_, _| Box::pin(async { Ok(None) }));
+    let events = Arc::new(Mutex::new(Vec::new()));
     let event_broker = TestEventBroker::default();
+    let published = event_broker.published();
+    let sha = OrderedSha {
+        events: events.clone(),
+    };
+    let indexer = OrderedIndexer {
+        events: events.clone(),
+        fail: false,
+    };
+    let coordinator = ProjectPurgeCoordinator::new(&repo, &sha, &indexer, &event_broker);
+    let outcome = coordinator
+        .purge("stale", chrono::Utc::now(), None)
+        .await
+        .unwrap();
+    assert!(matches!(outcome, ProjectPurgeOutcome::StaleOrUnavailable));
+    assert!(events.lock().unwrap().is_empty());
+    assert!(published.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn coordinator_none_actor_uses_authoritative_root_metadata() {
+    let project_id = Uuid::new_v4();
+    let authoritative_parent = Uuid::new_v4();
+    let mut repo = MockProjectRepo::new();
+    repo.expect_purge_deleted_project_tree_if_token()
+        .return_once(move |_, _| {
+            Box::pin(async move {
+                Ok(Some(PurgedProjectTreeWithRoot {
+                    root: BasicProject {
+                        user_id: user_id("macro|poller-authoritative@example.com"),
+                        ..basic_project(project_id, Some(authoritative_parent), true)
+                    },
+                    tree: PurgedProjectTree {
+                        project_ids: vec![project_id.to_string()],
+                        chat_ids: Vec::new(),
+                        documents: Vec::new(),
+                        bom_shas: Vec::new(),
+                    },
+                }))
+            })
+        });
+    let event_broker = TestEventBroker::default();
+    let published = event_broker.published();
+    let coordinator = ProjectPurgeCoordinator::new(&repo, &NullPort, &NullPort, &event_broker);
+    coordinator
+        .purge(&project_id.to_string(), chrono::Utc::now(), None)
+        .await
+        .unwrap();
+    let published = published.lock().unwrap();
+    let metadata = &published[0].payload["metadata"];
+    assert_eq!(metadata["owner"], "macro|poller-authoritative@example.com");
+    assert_eq!(
+        metadata["parent_project_id"],
+        authoritative_parent.to_string()
+    );
+    assert!(metadata["actor_user_id"].is_null());
+}
+
+#[tokio::test]
+async fn permanent_delete_sha_failure_publishes_no_event() {
+    let project_id = Uuid::new_v4();
+    let effects = Arc::new(Mutex::new(Vec::new()));
+    let mut repo = MockProjectRepo::new();
+    repo.expect_purge_deleted_project_tree_if_token()
+        .return_once(move |_, _| {
+            Box::pin(async move {
+                Ok(Some(PurgedProjectTreeWithRoot {
+                    root: basic_project(project_id, None, true),
+                    tree: PurgedProjectTree {
+                        project_ids: vec!["project".to_string()],
+                        chat_ids: Vec::new(),
+                        documents: Vec::new(),
+                        bom_shas: vec![("sha".to_string(), 1)],
+                    },
+                }))
+            })
+        });
+    let event_broker = TestEventBroker::recording(effects.clone());
     let published = event_broker.published();
     let service = ProjectServiceImpl::new(
         repo,
@@ -2223,12 +2320,13 @@ async fn permanent_delete_sha_failure_publishes_no_event() {
         RecordingBulkUpload::default(),
         FailingSha,
         NullPort,
-        RecordingIndexer::default(),
+        OrderedIndexer {
+            events: effects.clone(),
+            fail: false,
+        },
         None,
         event_broker,
     );
-    let project_id = Uuid::new_v4();
-
     let result = service
         .permanently_delete_project(
             mutation_receipt::<OwnerAccessLevel>(project_id, AccessLevel::Owner),
@@ -2237,6 +2335,7 @@ async fn permanent_delete_sha_failure_publishes_no_event() {
         .await;
 
     assert!(result.is_err());
+    assert!(effects.lock().unwrap().is_empty());
     assert!(published.lock().unwrap().is_empty());
 }
 

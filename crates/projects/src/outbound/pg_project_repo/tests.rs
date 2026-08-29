@@ -1488,7 +1488,20 @@ async fn purge_returns_outputs_and_removes_access_and_permissions(
     .execute(&pool)
     .await?;
 
-    let result = repo.purge_deleted_project_tree(ROOT_ID).await?;
+    let deleted_at = repo
+        .get_basic_project(ROOT_ID)
+        .await?
+        .and_then(|project| project.deleted_at)
+        .expect("soft-delete token");
+    let purged = repo
+        .purge_deleted_project_tree_if_token(ROOT_ID, deleted_at)
+        .await?
+        .expect("matching project tree");
+    assert_eq!(purged.root.id, ROOT_ID);
+    assert_eq!(purged.root.user_id.as_ref(), "macro|owner@test.com");
+    assert_eq!(purged.root.parent_id, None);
+    assert_eq!(purged.root.deleted_at, Some(deleted_at));
+    let result = purged.tree;
     assert_eq!(result.project_ids.len(), 4);
     assert_eq!(result.documents.len(), 2);
     assert_eq!(result.chat_ids.len(), 2);
@@ -1534,10 +1547,17 @@ async fn purge_returns_outputs_and_removes_access_and_permissions(
 async fn purge_rolls_back_all_deletions(pool: Pool<Postgres>) -> anyhow::Result<()> {
     let repo = PgProjectRepo::new(pool.clone());
     repo.soft_delete_project(ROOT_ID).await?;
+    let deleted_at = repo
+        .get_basic_project(ROOT_ID)
+        .await?
+        .and_then(|project| project.deleted_at)
+        .expect("soft-delete token");
 
     let mut transaction = pool.begin().await?;
-    let result = super::delete::purge_deleted_project_tree(&mut transaction, ROOT_ID).await?;
-    assert!(!result.project_ids.is_empty());
+    let result =
+        super::delete::purge_deleted_project_tree_if_token(&mut transaction, ROOT_ID, deleted_at)
+            .await?;
+    assert!(result.is_some());
     transaction.rollback().await?;
 
     assert!(repo.get_basic_project(ROOT_ID).await?.is_some());
@@ -1561,6 +1581,205 @@ async fn purge_rolls_back_all_deletions(pool: Pool<Postgres>) -> anyhow::Result<
             .fetch_one(&pool)
             .await?;
     assert_eq!(operation_count, 1);
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn purge_exact_token_rejects_stale_missing_and_live_subtree_rows(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    repo.soft_delete_project(ROOT_ID).await?;
+    let token = repo
+        .get_basic_project(ROOT_ID)
+        .await?
+        .and_then(|project| project.deleted_at)
+        .expect("soft-delete token");
+    assert!(
+        repo.purge_deleted_project_tree_if_token(ROOT_ID, token + chrono::Duration::seconds(1))
+            .await?
+            .is_none()
+    );
+    assert!(
+        repo.purge_deleted_project_tree_if_token("missing", token)
+            .await?
+            .is_none()
+    );
+
+    for (table, id) in [
+        ("Project", CHILD_ID),
+        ("Document", "20000000-0000-0000-0000-000000000001"),
+        ("Chat", "30000000-0000-0000-0000-000000000001"),
+    ] {
+        let sql = format!(r#"UPDATE "{table}" SET "deletedAt" = NULL WHERE id = $1"#);
+        sqlx::query(&sql).bind(id).execute(&pool).await?;
+        assert!(
+            repo.purge_deleted_project_tree_if_token(ROOT_ID, token)
+                .await?
+                .is_none()
+        );
+        let still_present: bool = sqlx::query_scalar(&format!(
+            r#"SELECT EXISTS(SELECT 1 FROM "{table}" WHERE id = $1)"#
+        ))
+        .bind(id)
+        .fetch_one(&pool)
+        .await?;
+        assert!(still_present);
+        let sql = format!(r#"UPDATE "{table}" SET "deletedAt" = $2 WHERE id = $1"#);
+        sqlx::query(&sql)
+            .bind(id)
+            .bind(token.naive_utc())
+            .execute(&pool)
+            .await?;
+    }
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn purge_rejects_live_root_without_deleting_source_rows(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    repo.soft_delete_project(ROOT_ID).await?;
+    let token = repo
+        .get_basic_project(ROOT_ID)
+        .await?
+        .and_then(|project| project.deleted_at)
+        .expect("soft-delete token");
+    sqlx::query!(
+        r#"UPDATE "Project" SET "deletedAt" = NULL WHERE id = $1"#,
+        ROOT_ID
+    )
+    .execute(&pool)
+    .await?;
+    assert!(
+        repo.purge_deleted_project_tree_if_token(ROOT_ID, token)
+            .await?
+            .is_none()
+    );
+    assert!(repo.get_basic_project(ROOT_ID).await?.is_some());
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn taskdeps_restore_race_leaves_one_complete_tree_state(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool);
+    let deleted = repo.soft_delete_project(ROOT_ID).await?;
+    let token = repo
+        .get_basic_project(ROOT_ID)
+        .await?
+        .and_then(|project| project.deleted_at)
+        .expect("soft-delete token");
+    let purge_repo = repo.clone();
+    let restore_repo = repo.clone();
+    let (purge, restore) = tokio::join!(
+        async move {
+            purge_repo
+                .purge_deleted_project_tree_if_token(ROOT_ID, token)
+                .await
+        },
+        async move { restore_repo.revert_delete_project(ROOT_ID, None).await },
+    );
+    let purge = purge?;
+    let restore = restore?;
+    assert!(purge.is_some() ^ !restore.project_ids.is_empty());
+    let root = repo.get_basic_project(ROOT_ID).await?;
+    let project_count: i64 =
+        sqlx::query_scalar(r#"SELECT COUNT(*) FROM "Project" WHERE id = ANY($1)"#)
+            .bind(&deleted.project_ids)
+            .fetch_one(&repo.pool)
+            .await?;
+    let document_count: i64 =
+        sqlx::query_scalar(r#"SELECT COUNT(*) FROM "Document" WHERE id = ANY($1)"#)
+            .bind(&deleted.document_ids)
+            .fetch_one(&repo.pool)
+            .await?;
+    let chat_count: i64 = sqlx::query_scalar(r#"SELECT COUNT(*) FROM "Chat" WHERE id = ANY($1)"#)
+        .bind(&deleted.chat_ids)
+        .fetch_one(&repo.pool)
+        .await?;
+    if purge.is_some() {
+        assert!(root.is_none());
+        assert_eq!(project_count, 0);
+        assert_eq!(document_count, 0);
+        assert_eq!(chat_count, 0);
+    } else {
+        assert!(root.is_some_and(|project| project.deleted_at.is_none()));
+        assert_eq!(project_count as usize, deleted.project_ids.len());
+        assert_eq!(document_count as usize, deleted.document_ids.len());
+        assert_eq!(chat_count as usize, deleted.chat_ids.len());
+        let live_projects: i64 = sqlx::query_scalar(
+            r#"SELECT COUNT(*) FROM "Project" WHERE id = ANY($1) AND "deletedAt" IS NULL"#,
+        )
+        .bind(&deleted.project_ids)
+        .fetch_one(&repo.pool)
+        .await?;
+        let live_documents: i64 = sqlx::query_scalar(
+            r#"SELECT COUNT(*) FROM "Document" WHERE id = ANY($1) AND "deletedAt" IS NULL"#,
+        )
+        .bind(&deleted.document_ids)
+        .fetch_one(&repo.pool)
+        .await?;
+        let live_chats: i64 = sqlx::query_scalar(
+            r#"SELECT COUNT(*) FROM "Chat" WHERE id = ANY($1) AND "deletedAt" IS NULL"#,
+        )
+        .bind(&deleted.chat_ids)
+        .fetch_one(&repo.pool)
+        .await?;
+        assert_eq!(live_projects as usize, deleted.project_ids.len());
+        assert_eq!(live_documents as usize, deleted.document_ids.len());
+        assert_eq!(live_chats as usize, deleted.chat_ids.len());
+    }
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn purge_redelete_rejects_old_token_and_successful_retry_is_stale(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool);
+    repo.soft_delete_project(ROOT_ID).await?;
+    let old_token = repo
+        .get_basic_project(ROOT_ID)
+        .await?
+        .and_then(|project| project.deleted_at)
+        .expect("old token");
+    repo.revert_delete_project(ROOT_ID, None).await?;
+    repo.soft_delete_project(ROOT_ID).await?;
+    let fresh_token = repo
+        .get_basic_project(ROOT_ID)
+        .await?
+        .and_then(|project| project.deleted_at)
+        .expect("fresh token");
+    assert!(
+        repo.purge_deleted_project_tree_if_token(ROOT_ID, old_token)
+            .await?
+            .is_none()
+    );
+    assert!(
+        repo.purge_deleted_project_tree_if_token(ROOT_ID, fresh_token)
+            .await?
+            .is_some()
+    );
+    assert!(
+        repo.purge_deleted_project_tree_if_token(ROOT_ID, fresh_token)
+            .await?
+            .is_none()
+    );
     Ok(())
 }
 

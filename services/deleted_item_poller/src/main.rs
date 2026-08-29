@@ -46,11 +46,23 @@ async fn main() -> Result<(), Error> {
     ))
     .document_delete_queue(&document_delete_queue)
     .chat_delete_queue(&chat_delete_queue);
+    let project_repo = projects::outbound::PgProjectRepo::new(db.clone());
+    let redis = macro_sha_count_client::Redis::new(
+        redis::Client::open(config.redis_uri.as_ref()).context("invalid REDIS_URI")?,
+    );
+    let sha_counter = projects::outbound::ShaCountAdapter::new(redis);
+    let project_search_indexer = projects::outbound::SqsProjectSearchIndexer::new(
+        Arc::new(sqs_client.clone()),
+        macro_event_broker.clone(),
+    );
 
     let ctx = context::Context {
         db,
         macro_event_broker,
         sqs_client: Arc::new(sqs_client),
+        project_repo,
+        sha_counter,
+        project_search_indexer,
     };
 
     let func = service_fn(move |event: LambdaEvent<EventBridgeEvent>| {
