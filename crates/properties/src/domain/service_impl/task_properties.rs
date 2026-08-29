@@ -13,7 +13,9 @@ use system_properties::SystemPropertyKey;
 use uuid::Uuid;
 
 use crate::domain::error::PropertiesErr;
-use crate::domain::model::{EditReceipt, PropertyAccessReceiptExt, TaskAssignedNotification};
+use crate::domain::model::{
+    EditReceipt, PropertyAccessReceiptExt, TaskAssignedNotification, TaskHierarchyMutationOutcome,
+};
 use crate::domain::ports::{NotificationService, PermissionService, PropertiesRepo};
 use crate::domain::service_impl::PropertiesServiceImpl;
 
@@ -78,6 +80,11 @@ where
                                 "Parent Task must reference a Task entity".to_string(),
                             ));
                         }
+                        if reference.specific_message_id.is_some() {
+                            return Err(PropertiesErr::Validation(
+                                "Parent Task cannot reference a specific message".to_string(),
+                            ));
+                        }
                         Some(Uuid::parse_str(&reference.entity_id).map_err(|_| {
                             PropertiesErr::Validation("Invalid task ID".to_string())
                         })?)
@@ -88,15 +95,29 @@ where
                         ));
                     }
                 };
+                if parent_task_id == Some(task_id) {
+                    return Err(PropertiesErr::Validation(
+                        "A task cannot be its own parent".to_string(),
+                    ));
+                }
 
                 self.check_referenced_task_edit_access(access, parent_task_id.as_slice())
                     .await?;
 
-                self.repository
+                match self
+                    .repository
                     .link_parent_task(task_id, parent_task_id)
                     .await
                     .map_err(anyhow::Error::from)?
-                    .ok_or(PropertiesErr::EntityPropertyNotFound)?
+                {
+                    TaskHierarchyMutationOutcome::Updated(property) => property,
+                    TaskHierarchyMutationOutcome::Unavailable => {
+                        return Err(PropertiesErr::TaskDependenciesUnavailable);
+                    }
+                    TaskHierarchyMutationOutcome::Cycle => {
+                        return Err(PropertiesErr::TaskHierarchyCycle);
+                    }
+                }
             }
             SystemPropertyKey::SUBTASKS_UUID => {
                 let subtask_ids = match &value {
@@ -109,9 +130,25 @@ where
                                     "Subtasks must reference Task entities".to_string(),
                                 ));
                             }
+                            if ref_.specific_message_id.is_some() {
+                                return Err(PropertiesErr::Validation(
+                                    "Subtasks cannot reference a specific message".to_string(),
+                                ));
+                            }
                             ids.push(Uuid::parse_str(&ref_.entity_id).map_err(|_| {
                                 PropertiesErr::Validation("Invalid task ID".to_string())
                             })?);
+                        }
+                        let mut seen = HashSet::with_capacity(ids.len());
+                        if ids.iter().any(|id| !seen.insert(*id)) {
+                            return Err(PropertiesErr::Validation(
+                                "Subtasks cannot contain duplicates".to_string(),
+                            ));
+                        }
+                        if ids.contains(&task_id) {
+                            return Err(PropertiesErr::Validation(
+                                "A task cannot be its own subtask".to_string(),
+                            ));
                         }
                         ids
                     }
@@ -125,11 +162,20 @@ where
                 self.check_referenced_task_edit_access(access, &subtask_ids)
                     .await?;
 
-                self.repository
+                match self
+                    .repository
                     .link_subtasks(task_id, subtask_ids)
                     .await
                     .map_err(anyhow::Error::from)?
-                    .ok_or(PropertiesErr::EntityPropertyNotFound)?
+                {
+                    TaskHierarchyMutationOutcome::Updated(property) => property,
+                    TaskHierarchyMutationOutcome::Unavailable => {
+                        return Err(PropertiesErr::TaskDependenciesUnavailable);
+                    }
+                    TaskHierarchyMutationOutcome::Cycle => {
+                        return Err(PropertiesErr::TaskHierarchyCycle);
+                    }
+                }
             }
             _ => {
                 return Err(PropertiesErr::Validation(

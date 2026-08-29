@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH RECURSIVE parent_chain(id, path) AS (\n            SELECT $1::TEXT, ARRAY[$1::TEXT]\n            UNION ALL\n            SELECT edge->>'entity_id', parent_chain.path || (edge->>'entity_id')\n            FROM parent_chain\n            JOIN entity_properties ep\n              ON ep.entity_id = parent_chain.id\n             AND ep.entity_type = 'TASK'\n             AND ep.property_definition_id = $2\n            CROSS JOIN LATERAL jsonb_array_elements(\n                CASE WHEN jsonb_typeof(ep.values->'value') = 'array'\n                    THEN ep.values->'value' ELSE '[]'::jsonb END\n            ) edge\n            WHERE edge->>'entity_type' = 'TASK'\n              AND edge->>'entity_id' IS NOT NULL\n              AND NOT edge->>'entity_id' = ANY(parent_chain.path)\n        )\n        SELECT EXISTS(\n            SELECT 1 FROM parent_chain WHERE id = $3\n        ) AS \"has_cycle!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "has_cycle!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "e635f53454d3e94ca1e82aa5360d9082d2a56356673affae26dc358f7e69967e"
+}

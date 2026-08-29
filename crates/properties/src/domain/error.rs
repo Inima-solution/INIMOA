@@ -42,6 +42,10 @@ pub enum PropertiesErr {
     #[error("Task dependencies cannot contain a cycle")]
     TaskDependencyCycle,
 
+    /// Replacing Parent Task / Subtasks would introduce a cycle.
+    #[error("Task hierarchy cannot contain a cycle")]
+    TaskHierarchyCycle,
+
     /// A task cannot enter a dependency-gated status yet.
     #[error("Task transition is blocked by dependencies")]
     TaskTransitionBlocked,

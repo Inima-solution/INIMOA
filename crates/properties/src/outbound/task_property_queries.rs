@@ -1,159 +1,191 @@
-//! Helper functions for bidirectional task parent/subtask linking.
+//! Atomic canonical task hierarchy replacements.
 
 use std::collections::HashSet;
 
-use models_properties::EntityReference;
-use models_properties::EntityType;
 use models_properties::service::{entity_property::EntityProperty, property_value::PropertyValue};
+use models_properties::{EntityReference, EntityType};
 use sqlx::{PgConnection, Pool, Postgres};
 use system_properties::SystemPropertyKey;
 use uuid::Uuid;
 
-// ============================================================================
-// Main linking functions
-// ============================================================================
+use crate::domain::model::TaskHierarchyMutationOutcome;
 
-/// Link or unlink a task's parent (for Parent Task property).
 pub async fn link_parent_task(
     pool: &Pool<Postgres>,
     task_id: Uuid,
     parent_task_id: Option<Uuid>,
-) -> anyhow::Result<Option<EntityProperty>> {
-    // Validate: can't set self as parent
+) -> anyhow::Result<TaskHierarchyMutationOutcome> {
     if parent_task_id == Some(task_id) {
-        anyhow::bail!("a task cannot be its own parent");
+        return Ok(TaskHierarchyMutationOutcome::Cycle);
     }
-
     let mut tx = pool.begin().await?;
-
-    // Validate: can't set a subtask as parent (would create mutual reference)
-    if let Some(parent_id) = parent_task_id {
-        let current_subtasks = get_task_subtasks(&mut tx, task_id).await?;
-        if current_subtasks.contains(&parent_id) {
-            anyhow::bail!("cannot set a subtask as parent (would create circular reference)");
-        }
+    lock_hierarchy(&mut tx).await?;
+    if !lock_live_same_project_tasks(
+        &mut tx,
+        task_id,
+        &parent_task_id.into_iter().collect::<Vec<_>>(),
+    )
+    .await?
+    {
+        return Ok(TaskHierarchyMutationOutcome::Unavailable);
     }
-
-    // 1. Get old parent
-    let old_parent = get_task_parent(&mut tx, task_id).await?;
-    tracing::debug!(old_parent = ?old_parent, "fetched current parent");
-
-    // 2. Remove from old parent if changed
+    if let Some(parent_id) = parent_task_id
+        && would_create_cycle(&mut tx, task_id, parent_id).await?
+    {
+        return Ok(TaskHierarchyMutationOutcome::Cycle);
+    }
+    let old_parent = read_parent(&mut tx, task_id).await?;
     if let Some(old_parent_id) = old_parent
         && Some(old_parent_id) != parent_task_id
     {
-        remove_from_parent_subtasks(&mut tx, old_parent_id, task_id).await?;
-        tracing::debug!(old_parent = %old_parent_id, "removed task from old parent's Subtasks");
+        remove_from_subtasks(&mut tx, old_parent_id, task_id).await?;
     }
-
-    // 3. Set new parent and retain the canonical assignment returned by Postgres.
-    let property = set_task_parent(&mut tx, task_id, parent_task_id).await?;
-
-    // 4. Add to new parent's subtasks (only if task exists)
-    if property.is_some() {
-        if let Some(parent_id) = parent_task_id {
-            add_to_parent_subtasks(&mut tx, parent_id, task_id).await?;
-            tracing::debug!("added task to parent's Subtasks");
-        }
-    } else {
-        tracing::debug!("task does not exist, skipping subtasks update");
+    let Some(property) = write_parent(&mut tx, task_id, parent_task_id).await? else {
+        return Ok(TaskHierarchyMutationOutcome::Unavailable);
+    };
+    if let Some(parent_id) = parent_task_id {
+        append_to_subtasks(&mut tx, parent_id, task_id).await?;
     }
-
     tx.commit().await?;
-    tracing::info!("successfully linked parent task");
-    Ok(property)
+    Ok(TaskHierarchyMutationOutcome::Updated(property))
 }
 
-/// Set a task's subtasks (for Subtasks property).
 pub async fn link_subtasks(
     pool: &Pool<Postgres>,
     task_id: Uuid,
     subtask_ids: Vec<Uuid>,
-) -> anyhow::Result<Option<EntityProperty>> {
-    // Validate: can't include self as subtask
+) -> anyhow::Result<TaskHierarchyMutationOutcome> {
     if subtask_ids.contains(&task_id) {
-        anyhow::bail!("a task cannot be its own subtask");
+        return Ok(TaskHierarchyMutationOutcome::Cycle);
     }
-
-    // Dedupe subtask IDs
-    let subtask_ids: Vec<Uuid> = subtask_ids
-        .into_iter()
-        .collect::<HashSet<_>>()
-        .into_iter()
-        .collect();
-
+    if subtask_ids.iter().collect::<HashSet<_>>().len() != subtask_ids.len() {
+        anyhow::bail!("duplicate task hierarchy references");
+    }
     let mut tx = pool.begin().await?;
-
-    // Validate: can't include parent as subtask (would create mutual reference)
-    if let Some(current_parent) = get_task_parent(&mut tx, task_id).await?
-        && subtask_ids.contains(&current_parent)
-    {
-        anyhow::bail!("cannot set parent as subtask (would create circular reference)");
+    lock_hierarchy(&mut tx).await?;
+    if !lock_live_same_project_tasks(&mut tx, task_id, &subtask_ids).await? {
+        return Ok(TaskHierarchyMutationOutcome::Unavailable);
     }
-
-    // 1. Get current subtasks & compute diff
-    let current_subtasks = get_task_subtasks(&mut tx, task_id).await?;
-
-    let added: Vec<Uuid> = subtask_ids
+    for child_id in &subtask_ids {
+        if would_create_cycle(&mut tx, *child_id, task_id).await? {
+            return Ok(TaskHierarchyMutationOutcome::Cycle);
+        }
+    }
+    let current = read_subtasks(&mut tx, task_id).await?;
+    let requested = subtask_ids.iter().copied().collect::<HashSet<_>>();
+    let removed = current
         .iter()
         .copied()
-        .filter(|id| !current_subtasks.contains(id))
-        .collect();
-    let removed: Vec<Uuid> = current_subtasks
-        .iter()
-        .copied()
-        .filter(|id| !subtask_ids.contains(id))
-        .collect();
-
-    tracing::debug!(
-        current = ?current_subtasks,
-        added = ?added,
-        removed = ?removed,
-        "computed subtasks diff"
-    );
-
-    // 2. Set task's subtasks to new list and retain the canonical assignment.
-    let property = set_task_subtasks(&mut tx, task_id, subtask_ids).await?;
-
-    // 3. For added subtasks: remove from old parent, set new parent
-    for subtask_id in &added {
-        if let Some(old_parent_id) = get_task_parent(&mut tx, *subtask_id).await?
+        .filter(|id| !requested.contains(id))
+        .collect::<Vec<_>>();
+    let Some(property) = write_subtasks(&mut tx, task_id, &subtask_ids).await? else {
+        return Ok(TaskHierarchyMutationOutcome::Unavailable);
+    };
+    for child_id in &subtask_ids {
+        if let Some(old_parent_id) = read_parent(&mut tx, *child_id).await?
             && old_parent_id != task_id
         {
-            remove_from_parent_subtasks(&mut tx, old_parent_id, *subtask_id).await?;
-            tracing::debug!(
-                subtask = %subtask_id,
-                old_parent = %old_parent_id,
-                "removed subtask from old parent's Subtasks"
-            );
+            remove_from_subtasks(&mut tx, old_parent_id, *child_id).await?;
         }
-        let _ = set_task_parent(&mut tx, *subtask_id, Some(task_id)).await?;
+        if write_parent(&mut tx, *child_id, Some(task_id))
+            .await?
+            .is_none()
+        {
+            return Ok(TaskHierarchyMutationOutcome::Unavailable);
+        }
     }
-
-    // 4. For removed subtasks: clear their parent
-    for subtask_id in &removed {
-        let _ = set_task_parent(&mut tx, *subtask_id, None).await?;
+    for child_id in removed {
+        if read_parent(&mut tx, child_id).await? == Some(task_id)
+            && write_parent(&mut tx, child_id, None).await?.is_none()
+        {
+            return Ok(TaskHierarchyMutationOutcome::Unavailable);
+        }
     }
-
     tx.commit().await?;
-    tracing::info!(
-        added_count = added.len(),
-        removed_count = removed.len(),
-        "successfully linked subtasks"
-    );
-    Ok(property)
+    Ok(TaskHierarchyMutationOutcome::Updated(property))
 }
 
-// ============================================================================
-// Helper functions
-// ============================================================================
+async fn lock_hierarchy(tx: &mut PgConnection) -> anyhow::Result<()> {
+    // ponytail: this global lock is only for hierarchy replacements; shard per project only after measured throughput requires it.
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKHIER")
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+    Ok(())
+}
 
-/// Get a task's current parent task ID.
-async fn get_task_parent(tx: &mut PgConnection, task_id: Uuid) -> anyhow::Result<Option<Uuid>> {
-    let parent_task_prop_id = SystemPropertyKey::PARENT_TASK_UUID;
-    let task_id_str = task_id.to_string();
+async fn lock_live_same_project_tasks(
+    tx: &mut PgConnection,
+    source_id: Uuid,
+    candidates: &[Uuid],
+) -> anyhow::Result<bool> {
+    let mut ids = candidates.to_vec();
+    ids.push(source_id);
+    ids.sort_unstable();
+    ids.dedup();
+    let ids = ids.iter().map(Uuid::to_string).collect::<Vec<_>>();
+    let rows = sqlx::query!(
+        r#"
+        SELECT d.id
+        FROM "Document" d
+        JOIN document_sub_type dst ON dst.document_id = d.id AND dst.sub_type = 'task'
+        WHERE d.id = ANY($1)
+          AND d."deletedAt" IS NULL
+          AND d."projectId" IS NOT DISTINCT FROM (
+              SELECT "projectId" FROM "Document" WHERE id = $2
+          )
+        ORDER BY d.id
+        FOR UPDATE
+        "#,
+        &ids,
+        source_id.to_string(),
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    Ok(rows.len() == ids.len())
+}
 
-    let parent_str: Option<Option<String>> = sqlx::query_scalar!(
+/// The single canonical parent-chain check used by both write directions.
+async fn would_create_cycle(
+    tx: &mut PgConnection,
+    child_id: Uuid,
+    proposed_parent_id: Uuid,
+) -> anyhow::Result<bool> {
+    Ok(sqlx::query_scalar!(
+        r#"
+        WITH RECURSIVE parent_chain(id, path) AS (
+            SELECT $1::TEXT, ARRAY[$1::TEXT]
+            UNION ALL
+            SELECT edge->>'entity_id', parent_chain.path || (edge->>'entity_id')
+            FROM parent_chain
+            JOIN entity_properties ep
+              ON ep.entity_id = parent_chain.id
+             AND ep.entity_type = 'TASK'
+             AND ep.property_definition_id = $2
+            CROSS JOIN LATERAL jsonb_array_elements(
+                CASE WHEN jsonb_typeof(ep.values->'value') = 'array'
+                    THEN ep.values->'value' ELSE '[]'::jsonb END
+            ) edge
+            WHERE edge->>'entity_type' = 'TASK'
+              AND edge->>'entity_id' IS NOT NULL
+              AND NOT edge->>'entity_id' = ANY(parent_chain.path)
+        )
+        SELECT EXISTS(
+            SELECT 1 FROM parent_chain WHERE id = $3
+        ) AS "has_cycle!"
+        "#,
+        proposed_parent_id.to_string(),
+        SystemPropertyKey::PARENT_TASK_UUID,
+        child_id.to_string(),
+    )
+    .fetch_one(&mut *tx)
+    .await?)
+}
+
+async fn read_parent(tx: &mut PgConnection, task_id: Uuid) -> anyhow::Result<Option<Uuid>> {
+    let parent: Option<Option<String>> = sqlx::query_scalar!(
         r#"
         SELECT values->'value'->0->>'entity_id' as "parent_id"
         FROM entity_properties
@@ -162,23 +194,20 @@ async fn get_task_parent(tx: &mut PgConnection, task_id: Uuid) -> anyhow::Result
           AND property_definition_id = $2
           AND values IS NOT NULL
         "#,
-        task_id_str,
-        parent_task_prop_id
+        task_id.to_string(),
+        SystemPropertyKey::PARENT_TASK_UUID
     )
     .fetch_optional(&mut *tx)
     .await?;
-
-    Ok(parent_str
+    parent
         .flatten()
-        .and_then(|s: String| Uuid::parse_str(&s).ok()))
+        .map(|id| Uuid::parse_str(&id))
+        .transpose()
+        .map_err(Into::into)
 }
 
-/// Get a task's current subtask IDs.
-async fn get_task_subtasks(tx: &mut PgConnection, task_id: Uuid) -> anyhow::Result<Vec<Uuid>> {
-    let subtasks_prop_id = SystemPropertyKey::SUBTASKS_UUID;
-    let task_id_str = task_id.to_string();
-
-    let subtask_strs: Vec<String> = sqlx::query_scalar!(
+async fn read_subtasks(tx: &mut PgConnection, task_id: Uuid) -> anyhow::Result<Vec<Uuid>> {
+    let ids: Vec<String> = sqlx::query_scalar!(
         r#"
         SELECT elem->>'entity_id' as "subtask_id!"
         FROM entity_properties,
@@ -188,109 +217,90 @@ async fn get_task_subtasks(tx: &mut PgConnection, task_id: Uuid) -> anyhow::Resu
           AND property_definition_id = $2
           AND values IS NOT NULL
         "#,
-        task_id_str,
-        subtasks_prop_id
+        task_id.to_string(),
+        SystemPropertyKey::SUBTASKS_UUID
     )
     .fetch_all(&mut *tx)
     .await?;
+    ids.into_iter()
+        .map(|id| Uuid::parse_str(&id).map_err(Into::into))
+        .collect()
+}
 
-    Ok(subtask_strs
+async fn remove_from_subtasks(
+    tx: &mut PgConnection,
+    parent_id: Uuid,
+    child_id: Uuid,
+) -> anyhow::Result<()> {
+    let updated = read_subtasks(tx, parent_id)
+        .await?
         .into_iter()
-        .filter_map(|s: String| Uuid::parse_str(&s).ok())
-        .collect())
-}
-
-/// Remove a task from a parent's subtasks array.
-async fn remove_from_parent_subtasks(
-    tx: &mut PgConnection,
-    parent_id: Uuid,
-    task_id: Uuid,
-) -> anyhow::Result<()> {
-    let current = get_task_subtasks(&mut *tx, parent_id).await?;
-    let updated: Vec<Uuid> = current.into_iter().filter(|id| *id != task_id).collect();
-    set_task_subtasks(&mut *tx, parent_id, updated)
-        .await
-        .map(|_| ())
-}
-
-/// Set a task's parent task property, returning the updated assignment when present.
-async fn set_task_parent(
-    tx: &mut PgConnection,
-    task_id: Uuid,
-    parent_task_id: Option<Uuid>,
-) -> anyhow::Result<Option<EntityProperty>> {
-    let parent_task_prop_id = SystemPropertyKey::PARENT_TASK_UUID;
-    let task_id_str = task_id.to_string();
-
-    let parent_value = match parent_task_id {
-        Some(parent_id) => {
-            let entity_ref = EntityReference::new(parent_id.to_string(), EntityType::Task);
-            serde_json::to_value(PropertyValue::EntityRef(vec![entity_ref]))?
-        }
-        None => serde_json::Value::Null,
-    };
-
-    Ok(sqlx::query_as!(
-        EntityProperty,
-        r#"
-        UPDATE entity_properties
-        SET values = $4, updated_at = NOW()
-        WHERE entity_id = $1
-          AND entity_type = $2
-          AND property_definition_id = $3
-        RETURNING
-            id,
-            entity_id,
-            entity_type as "entity_type: EntityType",
-            property_definition_id,
-            created_at,
-            updated_at
-        "#,
-        task_id_str,
-        EntityType::Task as EntityType,
-        parent_task_prop_id,
-        parent_value
-    )
-    .fetch_optional(&mut *tx)
-    .await?)
-}
-
-/// Add a task to a parent's subtasks array (if not already present).
-async fn add_to_parent_subtasks(
-    tx: &mut PgConnection,
-    parent_id: Uuid,
-    task_id: Uuid,
-) -> anyhow::Result<()> {
-    let current = get_task_subtasks(&mut *tx, parent_id).await?;
-
-    if !current.contains(&task_id) {
-        let mut updated = current;
-        updated.push(task_id);
-        set_task_subtasks(&mut *tx, parent_id, updated).await?;
+        .filter(|id| *id != child_id)
+        .collect::<Vec<_>>();
+    if write_subtasks(tx, parent_id, &updated).await?.is_none() {
+        anyhow::bail!("required task hierarchy property missing");
     }
-
     Ok(())
 }
 
-/// Set a task's subtasks property to a new list.
-async fn set_task_subtasks(
+async fn append_to_subtasks(
+    tx: &mut PgConnection,
+    parent_id: Uuid,
+    child_id: Uuid,
+) -> anyhow::Result<()> {
+    let mut current = read_subtasks(tx, parent_id).await?;
+    if !current.contains(&child_id) {
+        current.push(child_id);
+    }
+    if write_subtasks(tx, parent_id, &current).await?.is_none() {
+        anyhow::bail!("required task hierarchy property missing");
+    }
+    Ok(())
+}
+
+async fn write_parent(
     tx: &mut PgConnection,
     task_id: Uuid,
-    subtask_ids: Vec<Uuid>,
+    parent_id: Option<Uuid>,
 ) -> anyhow::Result<Option<EntityProperty>> {
-    let subtasks_prop_id = SystemPropertyKey::SUBTASKS_UUID;
-    let task_id_str = task_id.to_string();
+    write_property(
+        tx,
+        task_id,
+        SystemPropertyKey::PARENT_TASK_UUID,
+        parent_id.map(|id| {
+            PropertyValue::EntityRef(vec![EntityReference::new(id.to_string(), EntityType::Task)])
+        }),
+    )
+    .await
+}
 
-    let subtasks_value = if subtask_ids.is_empty() {
-        serde_json::Value::Null
-    } else {
-        let refs: Vec<EntityReference> = subtask_ids
-            .iter()
-            .map(|id| EntityReference::new(id.to_string(), EntityType::Task))
-            .collect();
-        serde_json::to_value(PropertyValue::EntityRef(refs))?
-    };
+async fn write_subtasks(
+    tx: &mut PgConnection,
+    task_id: Uuid,
+    ids: &[Uuid],
+) -> anyhow::Result<Option<EntityProperty>> {
+    write_property(
+        tx,
+        task_id,
+        SystemPropertyKey::SUBTASKS_UUID,
+        (!ids.is_empty()).then(|| {
+            PropertyValue::EntityRef(
+                ids.iter()
+                    .map(|id| EntityReference::new(id.to_string(), EntityType::Task))
+                    .collect(),
+            )
+        }),
+    )
+    .await
+}
 
+async fn write_property(
+    tx: &mut PgConnection,
+    task_id: Uuid,
+    property_id: Uuid,
+    value: Option<PropertyValue>,
+) -> anyhow::Result<Option<EntityProperty>> {
+    let value = value.map(serde_json::to_value).transpose()?;
     Ok(sqlx::query_as!(
         EntityProperty,
         r#"
@@ -307,10 +317,10 @@ async fn set_task_subtasks(
             created_at,
             updated_at
         "#,
-        task_id_str,
+        task_id.to_string(),
         EntityType::Task as EntityType,
-        subtasks_prop_id,
-        subtasks_value
+        property_id,
+        value,
     )
     .fetch_optional(&mut *tx)
     .await?)

@@ -161,10 +161,14 @@ impl SystemPropertiesRepository for PgSystemPropertiesRepository {
             FROM entity_properties
             WHERE entity_id = $1
               AND entity_type = 'TASK'
-              AND property_definition_id <> $2
+              AND property_definition_id <> ALL($2)
             "#,
             from_task_id,
-            SystemPropertyKey::DependsOn.uuid()
+            &[
+                SystemPropertyKey::ParentTask.uuid(),
+                SystemPropertyKey::Subtasks.uuid(),
+                SystemPropertyKey::DependsOn.uuid(),
+            ]
         )
         .fetch_all(&self.pool)
         .await?;

@@ -89,8 +89,10 @@ pub trait PropertiesService: Send + Sync + 'static {
     /// Set or update a property value for an entity, or attach a property without a value.
     /// Returns the canonical property assignment, definition, and persisted value.
     /// Validates property options if the value contains select options.
-    /// Linking Parent Task / Subtasks additionally requires edit access to the
-    /// referenced tasks.
+    /// Linking Parent Task / Subtasks additionally requires edit access to every
+    /// referenced task. Hierarchy replacements preserve requested subtask order,
+    /// reject invalid/cyclic references, and publish only the primary post-commit
+    /// property event.
     fn set_entity_property(
         &self,
         access: &EditReceipt,

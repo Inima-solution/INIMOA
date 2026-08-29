@@ -9,7 +9,6 @@ use document_sub_type::DocumentSubType;
 use entity_access::domain::models::EntityType as AccessEntityType;
 use macro_user_id::user_id::MacroUserIdStr;
 use models_properties::service::document_metadata::DocumentMetadata;
-use models_properties::service::entity_property::EntityProperty;
 use models_properties::service::entity_property_with_definition::EntityPropertyWithDefinition;
 use models_properties::service::project_metadata::ProjectMetadata;
 use models_properties::service::property_definition::PropertyDefinition;
@@ -24,8 +23,8 @@ use super::model::{
     EditReceipt, EntityPropertiesKey, EntityPropertyInfo, EntityPropertyMutationSnapshot,
     EntityPropertyOptionSelection, EntityPropertyOptionUpdate, GetOrCreateTagDefinitionResult,
     PropertyDefinitionOwner, TagPromotionOutcome, TagRemapOutcome, TaskAssignedNotification,
-    TaskDependencyMutationOutcome, TaskDependencyReadiness, TaskStatusMutationOutcome,
-    UpdatePropertyOptionOutcome, ViewReceipt,
+    TaskDependencyMutationOutcome, TaskDependencyReadiness, TaskHierarchyMutationOutcome,
+    TaskStatusMutationOutcome, UpdatePropertyOptionOutcome, ViewReceipt,
 };
 
 /// Repository trait for property operations.
@@ -276,22 +275,26 @@ pub trait PropertiesRepo: Send + Sync + 'static {
     /// When `parent_task_id` is `None`:
     /// - Clears task's Parent Task
     /// - Removes task from old parent's Subtasks
+    /// Source and proposed tasks must be live TASK documents in the same nullable
+    /// project. Required reciprocal rows are part of this transaction.
     fn link_parent_task(
         &self,
         task_id: Uuid,
         parent_task_id: Option<Uuid>,
-    ) -> impl Future<Output = Result<Option<EntityProperty>, Self::Err>> + Send;
+    ) -> impl Future<Output = Result<TaskHierarchyMutationOutcome, Self::Err>> + Send;
 
     /// Atomically set a task's subtasks (for Subtasks property).
     ///
     /// - Sets task's Subtasks to the new list
     /// - For added subtasks: sets their Parent Task = task
-    /// - For removed subtasks: clears their Parent Task
+    /// - For removed subtasks: clears their Parent Task only when it is still task
+    ///
+    /// The input order is persisted exactly; callers must reject duplicates.
     fn link_subtasks(
         &self,
         task_id: Uuid,
         subtask_ids: Vec<Uuid>,
-    ) -> impl Future<Output = Result<Option<EntityProperty>, Self::Err>> + Send;
+    ) -> impl Future<Output = Result<TaskHierarchyMutationOutcome, Self::Err>> + Send;
 
     /// Get a property value for a specific entity and property definition.
     /// Returns `None` if the property is not attached to the entity.

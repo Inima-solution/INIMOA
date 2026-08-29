@@ -2422,7 +2422,13 @@ async fn entity_property_event_parent_task_uses_primary_task_snapshot_only() {
         .withf(move |target_task_id, target_parent_id| {
             *target_task_id == task_id && *target_parent_id == Some(parent_id)
         })
-        .return_once(move |_, _| Box::pin(async move { Ok(Some(assignment)) }));
+        .return_once(move |_, _| {
+            Box::pin(async move {
+                Ok(crate::domain::model::TaskHierarchyMutationOutcome::Updated(
+                    assignment,
+                ))
+            })
+        });
     let event_broker = RecordingEventBroker::default();
     let service = PropertiesServiceImpl::new(
         repo,
@@ -2488,7 +2494,13 @@ async fn entity_property_event_subtasks_publishes_complete_primary_value_only() 
         .withf(move |target_task_id, target_subtask_ids| {
             *target_task_id == task_id && target_subtask_ids.as_slice() == subtask_ids
         })
-        .return_once(move |_, _| Box::pin(async move { Ok(Some(assignment)) }));
+        .return_once(move |_, _| {
+            Box::pin(async move {
+                Ok(crate::domain::model::TaskHierarchyMutationOutcome::Updated(
+                    assignment,
+                ))
+            })
+        });
     let event_broker = RecordingEventBroker::default();
     let service = PropertiesServiceImpl::new(
         repo,
@@ -2610,7 +2622,11 @@ async fn test_link_parent_task_delegates_to_repo() {
                 EntityType::Task,
                 SystemPropertyKey::PARENT_TASK_UUID,
             );
-            Box::pin(async move { Ok(Some(property)) })
+            Box::pin(async move {
+                Ok(crate::domain::model::TaskHierarchyMutationOutcome::Updated(
+                    property,
+                ))
+            })
         });
 
     let service = PropertiesServiceImpl::new(
@@ -2643,7 +2659,11 @@ async fn test_link_parent_task_clear_parent() {
                 EntityType::Task,
                 SystemPropertyKey::PARENT_TASK_UUID,
             );
-            Box::pin(async move { Ok(Some(property)) })
+            Box::pin(async move {
+                Ok(crate::domain::model::TaskHierarchyMutationOutcome::Updated(
+                    property,
+                ))
+            })
         });
 
     let service = PropertiesServiceImpl::new(
@@ -2756,11 +2776,13 @@ async fn test_link_parent_task_error_propagates() {
         None::<MockNotificationService>,
     );
 
+    let task_id = Uuid::from_u128(0xD001);
+    let parent_id = Uuid::from_u128(0xD002);
     let err = service
         .handle_task_relationship_property(
-            &edit_receipt(&Uuid::nil().to_string(), EntityType::Task),
+            &edit_receipt(&task_id.to_string(), EntityType::Task),
             SystemPropertyKey::PARENT_TASK_UUID,
-            Some(parent_task_value(Uuid::nil())),
+            Some(parent_task_value(parent_id)),
         )
         .await
         .unwrap_err();
@@ -2777,16 +2799,18 @@ async fn test_link_subtasks_delegates_to_repo() {
     let subtask_2 = Uuid::from_u128(0xbbbbbbbb_bbbb_bbbb_bbbb_bbbbbbbbbbbb);
 
     repo.expect_link_subtasks()
-        .withf(move |t, s| {
-            *t == task_id && s.len() == 2 && s.contains(&subtask_1) && s.contains(&subtask_2)
-        })
+        .withf(move |t, s| *t == task_id && s.as_slice() == [subtask_1, subtask_2])
         .returning(|task_id, _| {
             let property = entity_property(
                 &task_id.to_string(),
                 EntityType::Task,
                 SystemPropertyKey::SUBTASKS_UUID,
             );
-            Box::pin(async move { Ok(Some(property)) })
+            Box::pin(async move {
+                Ok(crate::domain::model::TaskHierarchyMutationOutcome::Updated(
+                    property,
+                ))
+            })
         });
 
     let service = PropertiesServiceImpl::new(
@@ -2819,7 +2843,11 @@ async fn test_link_subtasks_clear_all() {
                 EntityType::Task,
                 SystemPropertyKey::SUBTASKS_UUID,
             );
-            Box::pin(async move { Ok(Some(property)) })
+            Box::pin(async move {
+                Ok(crate::domain::model::TaskHierarchyMutationOutcome::Updated(
+                    property,
+                ))
+            })
         });
 
     let service = PropertiesServiceImpl::new(
@@ -2879,16 +2907,315 @@ async fn test_link_subtasks_error_propagates() {
         None::<MockNotificationService>,
     );
 
+    let task_id = Uuid::from_u128(0xD003);
+    let child_id = Uuid::from_u128(0xD004);
     let err = service
         .handle_task_relationship_property(
-            &edit_receipt(&Uuid::nil().to_string(), EntityType::Task),
+            &edit_receipt(&task_id.to_string(), EntityType::Task),
             SystemPropertyKey::SUBTASKS_UUID,
-            Some(subtasks_value(&[Uuid::nil()])),
+            Some(subtasks_value(&[child_id])),
         )
         .await
         .unwrap_err();
 
     assert_eq!(err.to_string(), "subtask link failed");
+}
+
+#[tokio::test]
+async fn task_hierarchy_outcomes_map_without_publishing_events() {
+    let task_id = Uuid::from_u128(0xD010);
+    let parent_id = Uuid::from_u128(0xD011);
+    for (outcome, expected) in [
+        (
+            crate::domain::model::TaskHierarchyMutationOutcome::Unavailable,
+            "One or more task dependencies are unavailable",
+        ),
+        (
+            crate::domain::model::TaskHierarchyMutationOutcome::Cycle,
+            "Task hierarchy cannot contain a cycle",
+        ),
+    ] {
+        let mut repo = MockPropertiesRepo::new();
+        expect_task_storage(&mut repo, task_id);
+        repo.expect_get_property_definition().return_once(|_| {
+            Box::pin(async {
+                Ok(Some(task_relationship_definition(
+                    SystemPropertyKey::PARENT_TASK_UUID,
+                )))
+            })
+        });
+        repo.expect_link_parent_task()
+            .return_once(move |_, _| Box::pin(async move { Ok(outcome) }));
+        let broker = RecordingEventBroker::default();
+        let service = PropertiesServiceImpl::new(
+            repo,
+            Some(create_mock_permission_service()),
+            None::<MockNotificationService>,
+        )
+        .with_event_broker(broker.clone());
+        let error = service
+            .set_entity_property(
+                &edit_receipt(&task_id.to_string(), EntityType::Task),
+                SystemPropertyKey::PARENT_TASK_UUID,
+                Some(parent_task_value(parent_id)),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), expected);
+        assert!(broker.events().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn task_hierarchy_subtask_outcomes_map_without_publishing_events() {
+    let task_id = Uuid::from_u128(0xD012);
+    let child_id = Uuid::from_u128(0xD013);
+    for (outcome, expected) in [
+        (
+            crate::domain::model::TaskHierarchyMutationOutcome::Unavailable,
+            "One or more task dependencies are unavailable",
+        ),
+        (
+            crate::domain::model::TaskHierarchyMutationOutcome::Cycle,
+            "Task hierarchy cannot contain a cycle",
+        ),
+    ] {
+        let mut repo = MockPropertiesRepo::new();
+        expect_task_storage(&mut repo, task_id);
+        repo.expect_get_property_definition().return_once(|_| {
+            Box::pin(async {
+                Ok(Some(task_relationship_definition(
+                    SystemPropertyKey::SUBTASKS_UUID,
+                )))
+            })
+        });
+        repo.expect_link_subtasks()
+            .return_once(move |_, _| Box::pin(async move { Ok(outcome) }));
+        let broker = RecordingEventBroker::default();
+        let service = PropertiesServiceImpl::new(
+            repo,
+            Some(create_mock_permission_service()),
+            None::<MockNotificationService>,
+        )
+        .with_event_broker(broker.clone());
+        let error = service
+            .set_entity_property(
+                &edit_receipt(&task_id.to_string(), EntityType::Task),
+                SystemPropertyKey::SUBTASKS_UUID,
+                Some(subtasks_value(&[child_id])),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), expected);
+        assert!(broker.events().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn task_hierarchy_parent_validation_rejects_before_permission_or_repo() {
+    let task_id = Uuid::from_u128(0xD020);
+    let cases = [
+        (
+            models_properties::api::requests::SetPropertyValue::EntityReference {
+                reference: models_properties::shared::EntityReference {
+                    entity_type: EntityType::Document,
+                    entity_id: Uuid::new_v4().to_string(),
+                    specific_message_id: None,
+                },
+            },
+            "Parent Task must reference a Task entity",
+        ),
+        (
+            models_properties::api::requests::SetPropertyValue::EntityReference {
+                reference: models_properties::shared::EntityReference {
+                    entity_type: EntityType::Task,
+                    entity_id: "not-a-uuid".to_string(),
+                    specific_message_id: None,
+                },
+            },
+            "Invalid task ID",
+        ),
+        (
+            models_properties::api::requests::SetPropertyValue::EntityReference {
+                reference: models_properties::shared::EntityReference {
+                    entity_type: EntityType::Task,
+                    entity_id: Uuid::new_v4().to_string(),
+                    specific_message_id: Some(Uuid::new_v4()),
+                },
+            },
+            "Parent Task cannot reference a specific message",
+        ),
+        (
+            parent_task_value(task_id),
+            "A task cannot be its own parent",
+        ),
+    ];
+    for (value, message) in cases {
+        let mut repo = MockPropertiesRepo::new();
+        repo.expect_link_parent_task().times(0);
+        let service = PropertiesServiceImpl::new(
+            repo,
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        );
+        let error = service
+            .handle_task_relationship_property(
+                &edit_receipt(&task_id.to_string(), EntityType::Task),
+                SystemPropertyKey::PARENT_TASK_UUID,
+                Some(value),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, PropertiesErr::Validation(actual) if actual == message));
+    }
+}
+
+#[tokio::test]
+async fn task_hierarchy_subtasks_validation_rejects_before_permission_or_repo() {
+    let task_id = Uuid::from_u128(0xD030);
+    let cases = [
+        (
+            models_properties::api::requests::SetPropertyValue::MultiEntityReference {
+                references: vec![models_properties::shared::EntityReference {
+                    entity_type: EntityType::Document,
+                    entity_id: Uuid::new_v4().to_string(),
+                    specific_message_id: None,
+                }],
+            },
+            "Subtasks must reference Task entities",
+        ),
+        (
+            models_properties::api::requests::SetPropertyValue::MultiEntityReference {
+                references: vec![models_properties::shared::EntityReference {
+                    entity_type: EntityType::Task,
+                    entity_id: "not-a-uuid".to_string(),
+                    specific_message_id: None,
+                }],
+            },
+            "Invalid task ID",
+        ),
+        (
+            models_properties::api::requests::SetPropertyValue::MultiEntityReference {
+                references: vec![models_properties::shared::EntityReference {
+                    entity_type: EntityType::Task,
+                    entity_id: Uuid::new_v4().to_string(),
+                    specific_message_id: Some(Uuid::new_v4()),
+                }],
+            },
+            "Subtasks cannot reference a specific message",
+        ),
+        (
+            subtasks_value(&[task_id]),
+            "A task cannot be its own subtask",
+        ),
+        (
+            subtasks_value(&[Uuid::from_u128(0xD031), Uuid::from_u128(0xD031)]),
+            "Subtasks cannot contain duplicates",
+        ),
+    ];
+    for (value, message) in cases {
+        let mut repo = MockPropertiesRepo::new();
+        repo.expect_link_subtasks().times(0);
+        let service = PropertiesServiceImpl::new(
+            repo,
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        );
+        let error = service
+            .handle_task_relationship_property(
+                &edit_receipt(&task_id.to_string(), EntityType::Task),
+                SystemPropertyKey::SUBTASKS_UUID,
+                Some(value),
+            )
+            .await
+            .unwrap_err();
+        assert!(matches!(error, PropertiesErr::Validation(actual) if actual == message));
+    }
+}
+
+#[tokio::test]
+async fn task_hierarchy_human_subtasks_mint_in_request_order_and_preserve_order() {
+    let task_id = Uuid::from_u128(0xD040);
+    let first = Uuid::from_u128(0xD041);
+    let second = Uuid::from_u128(0xD042);
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_link_subtasks()
+        .withf(move |source, children| *source == task_id && children.as_slice() == [first, second])
+        .return_once(move |_, _| {
+            Box::pin(async move {
+                Ok(crate::domain::model::TaskHierarchyMutationOutcome::Updated(
+                    entity_property(
+                        &task_id.to_string(),
+                        EntityType::Task,
+                        SystemPropertyKey::SUBTASKS_UUID,
+                    ),
+                ))
+            })
+        });
+    let mut permission = MockPermissionService::new();
+    permission
+        .expect_mint_edit_receipt()
+        .withf(move |_, id, _| id == first.to_string())
+        .return_once(|_, id, kind| {
+            let receipt =
+                EditReceipt::dangerously_assert_authenticated_user(caller_user_id(), id, kind);
+            Box::pin(async move { Ok(receipt) })
+        });
+    permission
+        .expect_mint_edit_receipt()
+        .withf(move |_, id, _| id == second.to_string())
+        .return_once(|_, id, kind| {
+            let receipt =
+                EditReceipt::dangerously_assert_authenticated_user(caller_user_id(), id, kind);
+            Box::pin(async move { Ok(receipt) })
+        });
+    let service =
+        PropertiesServiceImpl::new(repo, Some(permission), None::<MockNotificationService>);
+    service
+        .handle_task_relationship_property(
+            &edit_receipt(&task_id.to_string(), EntityType::Task),
+            SystemPropertyKey::SUBTASKS_UUID,
+            Some(subtasks_value(&[first, second])),
+        )
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn task_hierarchy_internal_calls_repository_without_permission_service() {
+    let task_id = Uuid::from_u128(0xD050);
+    let parent_id = Uuid::from_u128(0xD051);
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_link_parent_task()
+        .withf(move |source, parent| *source == task_id && *parent == Some(parent_id))
+        .return_once(move |_, _| {
+            Box::pin(async move {
+                Ok(crate::domain::model::TaskHierarchyMutationOutcome::Updated(
+                    entity_property(
+                        &task_id.to_string(),
+                        EntityType::Task,
+                        SystemPropertyKey::PARENT_TASK_UUID,
+                    ),
+                ))
+            })
+        });
+    let service = PropertiesServiceImpl::new(
+        repo,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+    let internal = EditReceipt::dangerously_assert_internal_user(
+        &task_id.to_string(),
+        AccessEntityType::Document,
+    );
+    service
+        .handle_task_relationship_property(
+            &internal,
+            SystemPropertyKey::PARENT_TASK_UUID,
+            Some(parent_task_value(parent_id)),
+        )
+        .await
+        .unwrap();
 }
 
 // ============================================================================

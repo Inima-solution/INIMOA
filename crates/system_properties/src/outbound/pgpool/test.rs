@@ -341,7 +341,7 @@ async fn test_copy_task_properties_idempotent(pool: Pool<Postgres>) -> anyhow::R
 }
 
 #[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
-async fn test_copy_task_properties_does_not_copy_depends_on(
+async fn test_copy_task_properties_does_not_copy_hierarchy_or_depends_on(
     pool: Pool<Postgres>,
 ) -> anyhow::Result<()> {
     let repo = PgSystemPropertiesRepository::new(pool.clone());
@@ -370,6 +370,25 @@ async fn test_copy_task_properties_does_not_copy_depends_on(
         .bind(value)
         .execute(&pool)
         .await?;
+    }
+    for (task_id, reference_id) in [
+        (source, "source-hierarchy-task"),
+        (existing_destination, "retained-hierarchy-task"),
+    ] {
+        for property_id in [
+            SystemPropertyKey::ParentTask.uuid(),
+            SystemPropertyKey::Subtasks.uuid(),
+        ] {
+            sqlx::query(
+                "INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)",
+            )
+            .bind(Uuid::new_v4())
+            .bind(task_id)
+            .bind(property_id)
+            .bind(serde_json::json!({"type": "EntityReference", "value": [{"entity_id": reference_id, "entity_type": "TASK"}]}))
+            .execute(&pool)
+            .await?;
+        }
     }
     let status_value = serde_json::json!({"type": "SelectOption", "value": []});
     sqlx::query(
@@ -407,6 +426,30 @@ async fn test_copy_task_properties_does_not_copy_depends_on(
             "value": [{"entity_id": "retained-task", "entity_type": "TASK"}]
         }))
     );
+    for property_id in [
+        SystemPropertyKey::ParentTask.uuid(),
+        SystemPropertyKey::Subtasks.uuid(),
+    ] {
+        let absent = get_task_property_values(&pool, absent_destination)
+            .await
+            .into_iter()
+            .find(|(id, _)| *id == property_id)
+            .unwrap()
+            .1;
+        assert!(absent.is_none());
+        let retained = get_task_property_values(&pool, existing_destination)
+            .await
+            .into_iter()
+            .find(|(id, _)| *id == property_id)
+            .unwrap()
+            .1;
+        assert_eq!(
+            retained,
+            Some(
+                serde_json::json!({"type": "EntityReference", "value": [{"entity_id": "retained-hierarchy-task", "entity_type": "TASK"}]})
+            )
+        );
+    }
     assert_eq!(
         get_task_property_values(&pool, absent_destination)
             .await

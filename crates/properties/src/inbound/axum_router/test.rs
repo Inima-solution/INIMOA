@@ -63,6 +63,11 @@ fn task_dependency_errors_keep_the_frozen_statuses_and_bodies() {
             "Task dependencies cannot contain a cycle",
         ),
         (
+            PropertiesErr::TaskHierarchyCycle,
+            StatusCode::CONFLICT,
+            "Task hierarchy cannot contain a cycle",
+        ),
+        (
             PropertiesErr::TaskTransitionBlocked,
             StatusCode::CONFLICT,
             "Task transition is blocked by dependencies",
@@ -96,6 +101,11 @@ async fn task_dependency_set_handler_errors_render_frozen_bodies() {
             PropertiesErr::TaskDependencyCycle,
             StatusCode::CONFLICT,
             "Task dependencies cannot contain a cycle",
+        ),
+        (
+            PropertiesErr::TaskHierarchyCycle,
+            StatusCode::CONFLICT,
+            "Task hierarchy cannot contain a cycle",
         ),
         (
             PropertiesErr::TaskTransitionBlocked,

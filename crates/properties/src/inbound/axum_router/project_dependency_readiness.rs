@@ -96,6 +96,7 @@ impl ProjectTaskDependencyReadinessError {
             | PropertiesErr::DuplicateOptionValue
             | PropertiesErr::ConflictingTeamLabel(_)
             | PropertiesErr::TaskDependencyCycle
+            | PropertiesErr::TaskHierarchyCycle
             | PropertiesErr::TaskTransitionBlocked
             | PropertiesErr::TaskTransitionBlockedWithReadiness(_)
             | PropertiesErr::Repo(_)

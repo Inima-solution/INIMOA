@@ -74,11 +74,140 @@ fn task_uuid(task_id: &str) -> Uuid {
     }
 }
 
+const HIERARCHY_TEST_OWNER: &str = "hierarchy-test";
+const HIERARCHY_TEST_MACRO_USER_ID: Uuid =
+    Uuid::from_u128(0xD400_0000_0000_0000_0000_0000_0000_0001);
+
+async fn seed_hierarchy_test_owner(pool: &Pool<Postgres>) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO macro_user (id, username, email, stripe_customer_id) VALUES ($1, 'hierarchy-test@example.test', 'hierarchy-test@example.test', 'cus_hierarchy_test') ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(HIERARCHY_TEST_MACRO_USER_ID)
+    .execute(pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO \"User\" (id, email, macro_user_id) VALUES ($1, 'hierarchy-test@example.test', $2) ON CONFLICT (id) DO NOTHING",
+    )
+    .bind(HIERARCHY_TEST_OWNER)
+    .bind(HIERARCHY_TEST_MACRO_USER_ID)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// The legacy property-only fixture predates live task rows. Hierarchy writes
+/// deliberately validate Document/subtype liveness, so make its named tasks
+/// live without changing the shared fixture itself.
+async fn seed_live_fixture_tasks(pool: &Pool<Postgres>) -> anyhow::Result<()> {
+    seed_hierarchy_test_owner(pool).await?;
+    for name in [
+        "task-parent-a",
+        "task-parent-b",
+        "task-child-1",
+        "task-child-2",
+        "task-child-3",
+        "task-orphan",
+        "task-standalone",
+    ] {
+        let id = task_uuid(name).to_string();
+        sqlx::query(
+            "INSERT INTO \"Document\" (id, name, owner) VALUES ($1, $2, 'hierarchy-test') ON CONFLICT (id) DO NOTHING",
+        )
+        .bind(&id)
+        .bind(name)
+        .execute(pool)
+        .await?;
+        sqlx::query(
+            "INSERT INTO document_sub_type (document_id, sub_type) VALUES ($1, 'task') ON CONFLICT (document_id) DO NOTHING",
+        )
+        .bind(id)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn seed_live_hierarchy_task(
+    pool: &Pool<Postgres>,
+    task_id: Uuid,
+    name: &str,
+) -> anyhow::Result<()> {
+    seed_hierarchy_test_owner(pool).await?;
+    let task_id = task_id.to_string();
+    sqlx::query("INSERT INTO \"Document\" (id, name, owner) VALUES ($1, $2, 'hierarchy-test')")
+        .bind(&task_id)
+        .bind(name)
+        .execute(pool)
+        .await?;
+    sqlx::query("INSERT INTO document_sub_type (document_id, sub_type) VALUES ($1, 'task')")
+        .bind(&task_id)
+        .execute(pool)
+        .await?;
+    for property_definition_id in [
+        SystemPropertyKey::PARENT_TASK_UUID,
+        SystemPropertyKey::SUBTASKS_UUID,
+    ] {
+        sqlx::query(
+            "INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values, created_at, updated_at) VALUES ($1, $2, 'TASK', $3, NULL, NOW(), NOW())",
+        )
+        .bind(macro_uuid::generate_uuid_v7())
+        .bind(&task_id)
+        .bind(property_definition_id)
+        .execute(pool)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn hierarchy_property_row(
+    pool: &Pool<Postgres>,
+    task_id: Uuid,
+    property_definition_id: Uuid,
+) -> anyhow::Result<Option<Option<serde_json::Value>>> {
+    Ok(sqlx::query_scalar(
+        "SELECT values FROM entity_properties WHERE entity_id = $1 AND entity_type = 'TASK' AND property_definition_id = $2",
+    )
+    .bind(task_id.to_string())
+    .bind(property_definition_id)
+    .fetch_optional(pool)
+    .await?)
+}
+
+fn hierarchy_reference_value(ids: &[Uuid]) -> Option<serde_json::Value> {
+    (!ids.is_empty()).then(|| {
+        serde_json::json!({
+            "type": "EntityReference",
+            "value": ids.iter().map(|id| serde_json::json!({
+                "entity_id": id.to_string(),
+                "entity_type": "TASK",
+            })).collect::<Vec<_>>(),
+        })
+    })
+}
+
+async fn set_hierarchy_property(
+    pool: &Pool<Postgres>,
+    task_id: Uuid,
+    property_definition_id: Uuid,
+    value: Option<serde_json::Value>,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "UPDATE entity_properties SET values = $3, updated_at = NOW() WHERE entity_id = $1 AND entity_type = 'TASK' AND property_definition_id = $2",
+    )
+    .bind(task_id.to_string())
+    .bind(property_definition_id)
+    .bind(value)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 #[sqlx::test(
     migrator = "MACRO_DB_MIGRATIONS",
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_parent_task_set_parent_on_orphan(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // task-orphan has no parent, set it to task-parent-a
@@ -111,6 +240,7 @@ async fn link_parent_task_set_parent_on_orphan(pool: Pool<Postgres>) -> anyhow::
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_parent_task_change_parent(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // task-child-1 has parent task-parent-a, change to task-parent-b
@@ -148,6 +278,7 @@ async fn link_parent_task_change_parent(pool: Pool<Postgres>) -> anyhow::Result<
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_parent_task_clear_parent(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // task-child-1 has parent task-parent-a, clear it
@@ -180,6 +311,7 @@ async fn link_parent_task_clear_parent(pool: Pool<Postgres>) -> anyhow::Result<(
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_parent_task_set_same_parent_is_noop(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // task-child-1 has parent task-parent-a, set same parent
@@ -212,7 +344,10 @@ async fn link_parent_task_set_same_parent_is_noop(pool: Pool<Postgres>) -> anyho
     migrator = "MACRO_DB_MIGRATIONS",
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
-async fn link_parent_task_nonexistent_task_is_noop(pool: Pool<Postgres>) -> anyhow::Result<()> {
+async fn link_parent_task_nonexistent_task_is_unavailable(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // Try to set parent on a task that doesn't exist
@@ -223,9 +358,13 @@ async fn link_parent_task_nonexistent_task_is_noop(pool: Pool<Postgres>) -> anyh
     let initial_subtasks = get_subtasks(&pool, &parent_a_id.to_string()).await;
     assert!(!initial_subtasks.contains(&nonexistent_id.to_string()));
 
-    // Should not error, just no-op
-    repo.link_parent_task(nonexistent_id, Some(parent_a_id))
+    let outcome = repo
+        .link_parent_task(nonexistent_id, Some(parent_a_id))
         .await?;
+    assert!(matches!(
+        outcome,
+        crate::domain::model::TaskHierarchyMutationOutcome::Unavailable
+    ));
 
     // Verify: task-parent-a's subtasks unchanged
     let subtasks = get_subtasks(&pool, &parent_a_id.to_string()).await;
@@ -243,6 +382,7 @@ async fn link_parent_task_nonexistent_task_is_noop(pool: Pool<Postgres>) -> anyh
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_subtasks_add_subtask(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // task-parent-b has subtasks [task-child-3], add task-orphan
@@ -279,6 +419,7 @@ async fn link_subtasks_add_subtask(pool: Pool<Postgres>) -> anyhow::Result<()> {
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_subtasks_remove_subtask(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // task-parent-a has subtasks [task-child-1, task-child-2], remove task-child-1
@@ -319,6 +460,7 @@ async fn link_subtasks_remove_subtask(pool: Pool<Postgres>) -> anyhow::Result<()
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_subtasks_clear_all(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // task-parent-a has subtasks [task-child-1, task-child-2], clear all
@@ -354,6 +496,7 @@ async fn link_subtasks_clear_all(pool: Pool<Postgres>) -> anyhow::Result<()> {
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_subtasks_steal_from_other_parent(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // task-child-3 belongs to task-parent-b
@@ -400,6 +543,7 @@ async fn link_subtasks_steal_from_other_parent(pool: Pool<Postgres>) -> anyhow::
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_subtasks_replace_all(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // task-parent-a has subtasks [task-child-1, task-child-2]
@@ -455,6 +599,7 @@ async fn link_subtasks_replace_all(pool: Pool<Postgres>) -> anyhow::Result<()> {
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_subtasks_set_same_is_noop(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // task-parent-a has subtasks [task-child-1, task-child-2], set same
@@ -488,6 +633,348 @@ async fn link_subtasks_set_same_is_noop(pool: Pool<Postgres>) -> anyhow::Result<
     Ok(())
 }
 
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../fixtures", scripts("task_linking_seed"))
+)]
+async fn hierarchy_personal_project_replacement_is_allowed_and_ordered(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
+    let repo = PropertiesPgRepo::new(pool.clone());
+    let parent = task_uuid("task-parent-a");
+    let first = task_uuid("task-child-2");
+    let second = task_uuid("task-child-1");
+    let outcome = repo.link_subtasks(parent, vec![first, second]).await?;
+    assert!(matches!(
+        outcome,
+        crate::domain::model::TaskHierarchyMutationOutcome::Updated(_)
+    ));
+    assert_eq!(
+        get_subtasks(&pool, &parent.to_string()).await,
+        vec![first.to_string(), second.to_string()]
+    );
+    assert_eq!(
+        get_parent(&pool, &first.to_string()).await,
+        Some(parent.to_string())
+    );
+    assert_eq!(
+        get_parent(&pool, &second.to_string()).await,
+        Some(parent.to_string())
+    );
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../fixtures", scripts("task_linking_seed"))
+)]
+async fn hierarchy_unavailable_candidates_do_not_mutate(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
+    let repo = PropertiesPgRepo::new(pool.clone());
+    let source = task_uuid("task-parent-a");
+    let reciprocal = task_uuid("task-child-1");
+    let missing = Uuid::from_u128(0xD100);
+    let deleted = Uuid::from_u128(0xD101);
+    let non_task = Uuid::from_u128(0xD102);
+    let cross_project = Uuid::from_u128(0xD103);
+    for (id, is_task, deleted_at, project) in [
+        (deleted, true, true, None),
+        (non_task, false, false, None),
+        (cross_project, true, false, Some("hierarchy-other-project")),
+    ] {
+        if let Some(project_id) = project {
+            sqlx::query("INSERT INTO \"Project\" (id, name, \"userId\") VALUES ($1, 'hierarchy', 'hierarchy-test') ON CONFLICT (id) DO NOTHING")
+                .bind(project_id).execute(&pool).await?;
+        }
+        sqlx::query("INSERT INTO \"Document\" (id, name, owner, \"projectId\", \"deletedAt\") VALUES ($1, 'candidate', 'hierarchy-test', $2, CASE WHEN $3 THEN NOW() ELSE NULL END)")
+            .bind(id.to_string()).bind(project).bind(deleted_at).execute(&pool).await?;
+        if is_task {
+            sqlx::query(
+                "INSERT INTO document_sub_type (document_id, sub_type) VALUES ($1, 'task')",
+            )
+            .bind(id.to_string())
+            .execute(&pool)
+            .await?;
+        }
+    }
+    let before_parent = get_parent(&pool, &source.to_string()).await;
+    let before_subtasks = get_subtasks(&pool, &source.to_string()).await;
+    let before_reciprocal = get_parent(&pool, &reciprocal.to_string()).await;
+    for candidate in [missing, deleted, non_task, cross_project] {
+        let parent = repo.link_parent_task(source, Some(candidate)).await?;
+        assert!(matches!(
+            parent,
+            crate::domain::model::TaskHierarchyMutationOutcome::Unavailable
+        ));
+        let subtasks = repo.link_subtasks(source, vec![candidate]).await?;
+        assert!(matches!(
+            subtasks,
+            crate::domain::model::TaskHierarchyMutationOutcome::Unavailable
+        ));
+        assert_eq!(get_parent(&pool, &source.to_string()).await, before_parent);
+        assert_eq!(
+            get_subtasks(&pool, &source.to_string()).await,
+            before_subtasks
+        );
+        assert_eq!(
+            get_parent(&pool, &reciprocal.to_string()).await,
+            before_reciprocal
+        );
+    }
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../fixtures", scripts("task_linking_seed"))
+)]
+async fn hierarchy_reconciles_and_preserves_stale_reciprocals(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
+    let repo = PropertiesPgRepo::new(pool.clone());
+    let source = task_uuid("task-parent-a");
+    let old_parent = task_uuid("task-parent-b");
+    let listed = task_uuid("task-child-1");
+    let removed = task_uuid("task-child-2");
+    let retained = task_uuid("task-child-3");
+
+    // A listed child can have a stale parent; replacement must repair it and
+    // clean the live old parent's reciprocal list.
+    set_hierarchy_property(
+        &pool,
+        old_parent,
+        SystemPropertyKey::SUBTASKS_UUID,
+        hierarchy_reference_value(&[retained, listed]),
+    )
+    .await?;
+    set_hierarchy_property(
+        &pool,
+        listed,
+        SystemPropertyKey::PARENT_TASK_UUID,
+        hierarchy_reference_value(&[old_parent]),
+    )
+    .await?;
+    assert!(matches!(
+        repo.link_subtasks(source, vec![listed, removed]).await?,
+        crate::domain::model::TaskHierarchyMutationOutcome::Updated(_)
+    ));
+    assert_eq!(
+        get_parent(&pool, &listed.to_string()).await,
+        Some(source.to_string())
+    );
+    assert_eq!(
+        get_subtasks(&pool, &old_parent.to_string()).await,
+        vec![retained.to_string()]
+    );
+
+    // A removed child whose parent was independently repaired elsewhere must
+    // retain that parent: source replacement only clears canonical reciprocals.
+    set_hierarchy_property(
+        &pool,
+        removed,
+        SystemPropertyKey::PARENT_TASK_UUID,
+        hierarchy_reference_value(&[old_parent]),
+    )
+    .await?;
+    assert!(matches!(
+        repo.link_subtasks(source, vec![listed]).await?,
+        crate::domain::model::TaskHierarchyMutationOutcome::Updated(_)
+    ));
+    assert_eq!(
+        get_subtasks(&pool, &source.to_string()).await,
+        vec![listed.to_string()]
+    );
+    assert_eq!(
+        get_parent(&pool, &removed.to_string()).await,
+        Some(old_parent.to_string())
+    );
+    assert_eq!(
+        get_subtasks(&pool, &old_parent.to_string()).await,
+        vec![retained.to_string()]
+    );
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../fixtures", scripts("task_linking_seed"))
+)]
+async fn hierarchy_missing_required_reciprocal_row_rolls_back(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
+    let repo = PropertiesPgRepo::new(pool.clone());
+    let child = task_uuid("task-child-1");
+    let old_parent = task_uuid("task-parent-a");
+    let new_parent = task_uuid("task-parent-b");
+    let old_parent_before =
+        hierarchy_property_row(&pool, old_parent, SystemPropertyKey::SUBTASKS_UUID).await?;
+    let child_before =
+        hierarchy_property_row(&pool, child, SystemPropertyKey::PARENT_TASK_UUID).await?;
+    let child_subtasks_before =
+        hierarchy_property_row(&pool, child, SystemPropertyKey::SUBTASKS_UUID).await?;
+
+    // append_to_subtasks runs after old-parent cleanup and the primary Parent
+    // write. Its required row is deliberately absent, so this must roll back.
+    sqlx::query(
+        "DELETE FROM entity_properties WHERE entity_id = $1 AND entity_type = 'TASK' AND property_definition_id = $2",
+    )
+    .bind(new_parent.to_string())
+    .bind(SystemPropertyKey::SUBTASKS_UUID)
+    .execute(&pool)
+    .await?;
+    assert_eq!(
+        hierarchy_property_row(&pool, new_parent, SystemPropertyKey::SUBTASKS_UUID).await?,
+        None
+    );
+
+    let error = repo
+        .link_parent_task(child, Some(new_parent))
+        .await
+        .expect_err("missing reciprocal row must fail");
+    assert!(
+        error
+            .to_string()
+            .contains("required task hierarchy property missing")
+    );
+    assert_eq!(
+        hierarchy_property_row(&pool, old_parent, SystemPropertyKey::SUBTASKS_UUID).await?,
+        old_parent_before
+    );
+    assert_eq!(
+        hierarchy_property_row(&pool, child, SystemPropertyKey::PARENT_TASK_UUID).await?,
+        child_before
+    );
+    assert_eq!(
+        hierarchy_property_row(&pool, child, SystemPropertyKey::SUBTASKS_UUID).await?,
+        child_subtasks_before
+    );
+    assert_eq!(
+        hierarchy_property_row(&pool, new_parent, SystemPropertyKey::SUBTASKS_UUID).await?,
+        None
+    );
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../fixtures", scripts("task_linking_seed"))
+)]
+async fn hierarchy_supports_deep_chains_and_rejects_transitive_cycles(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let chain = (0..35)
+        .map(|offset| Uuid::from_u128(0xD200_0000_0000_0000_0000_0000_0000_0000 + offset))
+        .collect::<Vec<_>>();
+    for (index, task_id) in chain.iter().copied().enumerate() {
+        seed_live_hierarchy_task(&pool, task_id, &format!("deep-hierarchy-{index}")).await?;
+    }
+    for index in 1..34 {
+        set_hierarchy_property(
+            &pool,
+            chain[index],
+            SystemPropertyKey::PARENT_TASK_UUID,
+            hierarchy_reference_value(&[chain[index - 1]]),
+        )
+        .await?;
+        set_hierarchy_property(
+            &pool,
+            chain[index - 1],
+            SystemPropertyKey::SUBTASKS_UUID,
+            hierarchy_reference_value(&[chain[index]]),
+        )
+        .await?;
+    }
+
+    let repo = PropertiesPgRepo::new(pool.clone());
+    assert!(matches!(
+        repo.link_parent_task(chain[34], Some(chain[33])).await?,
+        crate::domain::model::TaskHierarchyMutationOutcome::Updated(_)
+    ));
+    assert_eq!(
+        get_parent(&pool, &chain[34].to_string()).await,
+        Some(chain[33].to_string())
+    );
+    assert_eq!(
+        get_subtasks(&pool, &chain[33].to_string()).await,
+        vec![chain[34].to_string()]
+    );
+
+    assert!(matches!(
+        repo.link_parent_task(chain[0], Some(chain[34])).await?,
+        crate::domain::model::TaskHierarchyMutationOutcome::Cycle
+    ));
+    assert_eq!(get_parent(&pool, &chain[0].to_string()).await, None);
+    assert!(matches!(
+        repo.link_subtasks(chain[34], vec![chain[0]]).await?,
+        crate::domain::model::TaskHierarchyMutationOutcome::Cycle
+    ));
+    assert!(get_subtasks(&pool, &chain[34].to_string()).await.is_empty());
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../fixtures", scripts("task_linking_seed"))
+)]
+async fn hierarchy_concurrent_opposing_writes_serialize(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let a = Uuid::from_u128(0xD300_0000_0000_0000_0000_0000_0000_0001);
+    let b = Uuid::from_u128(0xD300_0000_0000_0000_0000_0000_0000_0002);
+    seed_live_hierarchy_task(&pool, a, "concurrent-a").await?;
+    seed_live_hierarchy_task(&pool, b, "concurrent-b").await?;
+
+    let a_to_b = {
+        let repo = PropertiesPgRepo::new(pool.clone());
+        tokio::spawn(async move { repo.link_parent_task(a, Some(b)).await })
+    };
+    let b_to_a = {
+        let repo = PropertiesPgRepo::new(pool.clone());
+        tokio::spawn(async move { repo.link_parent_task(b, Some(a)).await })
+    };
+    let a_to_b = a_to_b.await??;
+    let b_to_a = b_to_a.await??;
+    assert_eq!(
+        [&a_to_b, &b_to_a]
+            .iter()
+            .filter(|outcome| matches!(
+                outcome,
+                crate::domain::model::TaskHierarchyMutationOutcome::Updated(_)
+            ))
+            .count(),
+        1
+    );
+    assert_eq!(
+        [&a_to_b, &b_to_a]
+            .iter()
+            .filter(|outcome| matches!(
+                outcome,
+                crate::domain::model::TaskHierarchyMutationOutcome::Cycle
+            ))
+            .count(),
+        1
+    );
+
+    let a_parent = get_parent(&pool, &a.to_string()).await;
+    let b_parent = get_parent(&pool, &b.to_string()).await;
+    assert!(
+        (a_parent == Some(b.to_string())
+            && b_parent.is_none()
+            && get_subtasks(&pool, &b.to_string()).await == vec![a.to_string()]
+            && get_subtasks(&pool, &a.to_string()).await.is_empty())
+            || (b_parent == Some(a.to_string())
+                && a_parent.is_none()
+                && get_subtasks(&pool, &a.to_string()).await == vec![b.to_string()]
+                && get_subtasks(&pool, &b.to_string()).await.is_empty())
+    );
+    Ok(())
+}
+
 // ============================================================================
 // Validation tests - circular reference prevention
 // ============================================================================
@@ -497,19 +984,17 @@ async fn link_subtasks_set_same_is_noop(pool: Pool<Postgres>) -> anyhow::Result<
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_parent_task_rejects_self_as_parent(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     let task_id = task_uuid("task-orphan");
 
-    // Try to set self as parent - should fail
+    // Try to set self as parent - should reject before mutation.
     let result = repo.link_parent_task(task_id, Some(task_id)).await;
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("cannot be its own parent")
-    );
+    assert!(matches!(
+        result,
+        Ok(crate::domain::model::TaskHierarchyMutationOutcome::Cycle)
+    ));
 
     Ok(())
 }
@@ -519,19 +1004,17 @@ async fn link_parent_task_rejects_self_as_parent(pool: Pool<Postgres>) -> anyhow
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_subtasks_rejects_self_as_subtask(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     let task_id = task_uuid("task-orphan");
 
-    // Try to include self in subtasks - should fail
+    // Try to include self in subtasks - should reject before mutation.
     let result = repo.link_subtasks(task_id, vec![task_id]).await;
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("cannot be its own subtask")
-    );
+    assert!(matches!(
+        result,
+        Ok(crate::domain::model::TaskHierarchyMutationOutcome::Cycle)
+    ));
 
     Ok(())
 }
@@ -541,6 +1024,7 @@ async fn link_subtasks_rejects_self_as_subtask(pool: Pool<Postgres>) -> anyhow::
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_parent_task_rejects_subtask_as_parent(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // task-parent-a has subtasks [task-child-1, task-child-2]
@@ -549,13 +1033,10 @@ async fn link_parent_task_rejects_subtask_as_parent(pool: Pool<Postgres>) -> any
 
     // Try to set a subtask as parent - should fail
     let result = repo.link_parent_task(parent_a_id, Some(child_1_id)).await;
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("circular reference")
-    );
+    assert!(matches!(
+        result,
+        Ok(crate::domain::model::TaskHierarchyMutationOutcome::Cycle)
+    ));
 
     Ok(())
 }
@@ -565,6 +1046,7 @@ async fn link_parent_task_rejects_subtask_as_parent(pool: Pool<Postgres>) -> any
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_subtasks_rejects_parent_as_subtask(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // task-child-1 has parent task-parent-a
@@ -573,13 +1055,10 @@ async fn link_subtasks_rejects_parent_as_subtask(pool: Pool<Postgres>) -> anyhow
 
     // Try to set parent as subtask - should fail
     let result = repo.link_subtasks(child_1_id, vec![parent_a_id]).await;
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("circular reference")
-    );
+    assert!(matches!(
+        result,
+        Ok(crate::domain::model::TaskHierarchyMutationOutcome::Cycle)
+    ));
 
     Ok(())
 }
@@ -591,6 +1070,7 @@ async fn link_subtasks_rejects_parent_as_subtask(pool: Pool<Postgres>) -> anyhow
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_parent_then_add_as_subtask_fails(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // Use two unrelated tasks
@@ -605,13 +1085,10 @@ async fn link_parent_then_add_as_subtask_fails(pool: Pool<Postgres>) -> anyhow::
     // Step 2: Now try to add task-standalone as a subtask of task-orphan
     // This should fail because task-standalone is already task-orphan's parent
     let result = repo.link_subtasks(task_orphan, vec![task_standalone]).await;
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("circular reference")
-    );
+    assert!(matches!(
+        result,
+        Ok(crate::domain::model::TaskHierarchyMutationOutcome::Cycle)
+    ));
 
     Ok(())
 }
@@ -621,6 +1098,7 @@ async fn link_parent_then_add_as_subtask_fails(pool: Pool<Postgres>) -> anyhow::
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn link_subtask_then_set_as_parent_fails(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // Use two unrelated tasks
@@ -637,13 +1115,10 @@ async fn link_subtask_then_set_as_parent_fails(pool: Pool<Postgres>) -> anyhow::
     let result = repo
         .link_parent_task(task_orphan, Some(task_standalone))
         .await;
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("circular reference")
-    );
+    assert!(matches!(
+        result,
+        Ok(crate::domain::model::TaskHierarchyMutationOutcome::Cycle)
+    ));
 
     Ok(())
 }
@@ -653,6 +1128,7 @@ async fn link_subtask_then_set_as_parent_fails(pool: Pool<Postgres>) -> anyhow::
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn mutual_parent_link_fails(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // Use two unrelated tasks
@@ -669,13 +1145,10 @@ async fn mutual_parent_link_fails(pool: Pool<Postgres>) -> anyhow::Result<()> {
     let result = repo
         .link_parent_task(task_standalone, Some(task_orphan))
         .await;
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("circular reference")
-    );
+    assert!(matches!(
+        result,
+        Ok(crate::domain::model::TaskHierarchyMutationOutcome::Cycle)
+    ));
 
     Ok(())
 }
@@ -685,6 +1158,7 @@ async fn mutual_parent_link_fails(pool: Pool<Postgres>) -> anyhow::Result<()> {
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))
 )]
 async fn mutual_subtask_link_fails(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    seed_live_fixture_tasks(&pool).await?;
     let repo = PropertiesPgRepo::new(pool.clone());
 
     // Use two unrelated tasks
@@ -699,13 +1173,10 @@ async fn mutual_subtask_link_fails(pool: Pool<Postgres>) -> anyhow::Result<()> {
     // Step 2: Now try to add task-orphan as subtask of task-standalone
     // This should fail because task-orphan is already task-standalone's parent
     let result = repo.link_subtasks(task_standalone, vec![task_orphan]).await;
-    assert!(result.is_err());
-    assert!(
-        result
-            .unwrap_err()
-            .to_string()
-            .contains("circular reference")
-    );
+    assert!(matches!(
+        result,
+        Ok(crate::domain::model::TaskHierarchyMutationOutcome::Cycle)
+    ));
 
     Ok(())
 }

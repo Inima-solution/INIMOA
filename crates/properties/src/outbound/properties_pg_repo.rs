@@ -392,8 +392,7 @@ impl PropertiesRepo for PropertiesPgRepo {
         &self,
         task_id: Uuid,
         parent_task_id: Option<Uuid>,
-    ) -> Result<Option<models_properties::service::entity_property::EntityProperty>, Self::Err>
-    {
+    ) -> Result<crate::domain::model::TaskHierarchyMutationOutcome, Self::Err> {
         task_property_queries::link_parent_task(&self.pool, task_id, parent_task_id).await
     }
 
@@ -402,8 +401,7 @@ impl PropertiesRepo for PropertiesPgRepo {
         &self,
         task_id: Uuid,
         subtask_ids: Vec<Uuid>,
-    ) -> Result<Option<models_properties::service::entity_property::EntityProperty>, Self::Err>
-    {
+    ) -> Result<crate::domain::model::TaskHierarchyMutationOutcome, Self::Err> {
         task_property_queries::link_subtasks(&self.pool, task_id, subtask_ids).await
     }
 

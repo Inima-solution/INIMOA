@@ -317,6 +317,16 @@ pub enum TaskDependencyMutationOutcome {
     BlockedWithReadiness(TaskDependencyReadiness),
 }
 
+/// Result of an atomic canonical task hierarchy replacement.
+#[derive(Debug, Clone)]
+pub enum TaskHierarchyMutationOutcome {
+    Updated(EntityProperty),
+    /// The source, a proposed task, or a required reciprocal row was unavailable.
+    Unavailable,
+    /// The proposed canonical parent edge would make the hierarchy cyclic.
+    Cycle,
+}
+
 /// Result of an atomic canonical task Status mutation.
 #[derive(Debug, Clone)]
 pub enum TaskStatusMutationOutcome {
