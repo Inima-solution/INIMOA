@@ -12,7 +12,11 @@ const mocks = vi.hoisted(() => ({
         activeStatusTaskId?: string;
         canEdit?: boolean;
         error?: boolean;
+        fetching?: boolean;
+        fetchingNextPage?: boolean;
+        hasNextPage?: boolean;
         loading?: boolean;
+        onLoadMore?: () => void;
         onMoveTaskStatus?: (task: { id: string }, statusId: string) => void;
         onOpenTask: (task: { id: string }, event: MouseEvent) => void;
         onRetry?: () => void;
@@ -44,6 +48,8 @@ const mocks = vi.hoisted(() => ({
   sourceFetchNextPage: vi.fn(),
   sourceRefresh: vi.fn(() => Promise.resolve()),
   sourceFetching: false,
+  sourceFetchingNextPage: false,
+  sourceHasNextPage: false,
   sourceLoading: false,
   sourcePlaceholderData: false,
   statusMutation: vi.fn(),
@@ -121,7 +127,9 @@ vi.mock('@app/features/next-soup/soup-view/soup-view-context', () => ({
       data: () => mocks.source,
       error: () => mocks.sourceError,
       fetchNextPage: mocks.sourceFetchNextPage,
+      hasNextPage: () => mocks.sourceHasNextPage,
       isFetching: () => mocks.sourceFetching,
+      isFetchingNextPage: () => mocks.sourceFetchingNextPage,
       isLoading: () => mocks.sourceLoading,
       isPlaceholderData: () => mocks.sourcePlaceholderData,
       refresh: mocks.sourceRefresh,
@@ -264,6 +272,8 @@ beforeEach(() => {
   mocks.sourceRefresh.mockReset();
   mocks.sourceRefresh.mockResolvedValue(undefined);
   mocks.sourceFetching = false;
+  mocks.sourceFetchingNextPage = false;
+  mocks.sourceHasNextPage = false;
   mocks.sourceLoading = false;
   mocks.sourcePlaceholderData = false;
   mocks.statusMutation.mockReset();
@@ -298,7 +308,7 @@ describe('project task dependency relation batching', () => {
     expect(mocks.soupViewProviderCount).toBe(1);
   });
 
-  it('keeps the board and Milestones control on one project provider without paging', () => {
+  it('keeps the board and Milestones control on one project provider without automatic paging', () => {
     mocks.viewMode = 'board';
     mocks.source = [
       { id: 'milestone-task', subType: { type: 'task' }, type: 'document' },
@@ -309,6 +319,50 @@ describe('project task dependency relation batching', () => {
     expect(mocks.soupViewProviderCount).toBe(1);
     expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
     expect(mocks.boardProps).toBeDefined();
+  });
+
+  it('threads bounded continuation state and invokes the active Soup source once', () => {
+    mocks.viewMode = 'board';
+    mocks.searchText = 'follow up';
+    mocks.sourceHasNextPage = true;
+    mocks.source = [
+      { id: 'task-a', subType: { type: 'task' }, type: 'document' },
+    ];
+
+    render(() => <Block />);
+
+    expect(mocks.boardProps).toMatchObject({
+      fetching: false,
+      fetchingNextPage: false,
+      hasNextPage: true,
+      searching: true,
+    });
+    expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
+
+    mocks.sourceFetchNextPage.mockImplementation(() => {
+      mocks.sourceFetchingNextPage = true;
+    });
+    mocks.boardProps?.onLoadMore?.();
+    mocks.boardProps?.onLoadMore?.();
+
+    expect(mocks.sourceFetchNextPage).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not continue when the active Soup source has no page or is fetching', () => {
+    mocks.viewMode = 'board';
+    mocks.sourceHasNextPage = false;
+    render(() => <Block />);
+    mocks.boardProps?.onLoadMore?.();
+
+    mocks.sourceHasNextPage = true;
+    mocks.sourceFetching = true;
+    mocks.boardProps?.onLoadMore?.();
+
+    mocks.sourceFetching = false;
+    mocks.sourceFetchingNextPage = true;
+    mocks.boardProps?.onLoadMore?.();
+
+    expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
   });
 
   it('defaults to the existing list with the project-local entry key', () => {

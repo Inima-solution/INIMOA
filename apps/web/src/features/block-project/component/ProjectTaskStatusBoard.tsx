@@ -7,7 +7,7 @@ import {
 } from '@entity/utils/task-properties';
 import { TaskDependencyRelations } from '@property/task-dependency-relations';
 import type { Property } from '@property/types';
-import { EmptyStatePanel } from '@ui';
+import { Button, EmptyStatePanel } from '@ui';
 import { For, Show } from 'solid-js';
 
 type TaskStatusBucket = {
@@ -49,6 +49,10 @@ export function ProjectTaskStatusBoard(props: {
   searching?: boolean;
   onOpenTask: (task: TaskEntityWithProperties, event: MouseEvent) => void;
   onRetry?: () => void;
+  hasNextPage?: boolean;
+  fetching?: boolean;
+  fetchingNextPage?: boolean;
+  onLoadMore?: () => void;
   canEdit?: boolean;
   statusProperty?: Property;
   statusPending?: boolean;
@@ -60,10 +64,15 @@ export function ProjectTaskStatusBoard(props: {
     props.canEdit === true &&
     props.statusProperty?.valueType === 'SELECT_STRING' &&
     props.onMoveTaskStatus !== undefined;
+  const loadMoreLabel = () => {
+    if (props.fetchingNextPage) return 'Loading more…';
+    if (props.error) return 'Retry loading more';
+    return 'Load more tasks';
+  };
 
   return (
     <Show
-      when={props.tasks.length > 0}
+      when={props.tasks.length > 0 || props.hasNextPage}
       fallback={
         <Show when={!props.loading} fallback={<LoadingBlock />}>
           <Show
@@ -191,6 +200,18 @@ export function ProjectTaskStatusBoard(props: {
             )}
           </For>
         </div>
+        <Show when={props.hasNextPage}>
+          <div class="flex shrink-0 justify-center pt-2">
+            <Button
+              size="sm"
+              disabled={props.fetching || props.fetchingNextPage}
+              aria-busy={props.fetchingNextPage || undefined}
+              onClick={() => props.onLoadMore?.()}
+            >
+              {loadMoreLabel()}
+            </Button>
+          </div>
+        </Show>
       </section>
     </Show>
   );

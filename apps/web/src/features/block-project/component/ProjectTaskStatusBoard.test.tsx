@@ -282,6 +282,115 @@ describe('ProjectTaskStatusBoard', () => {
     expect(retained.queryByText('No tasks in this project')).toBeNull();
   });
 
+  it('offers one bounded continuation below the board with loading and retry states', async () => {
+    const first = task(
+      'Original task',
+      selectedStatus(PROPERTY_OPTION_IDS.STATUS.NOT_STARTED)
+    );
+    const second = task(
+      'Appended task',
+      selectedStatus(PROPERTY_OPTION_IDS.STATUS.NOT_STARTED)
+    );
+    const onLoadMore = vi.fn();
+    let appendTasks = () => {};
+    const view = render(() => {
+      const [tasks, setTasks] = createSignal([first]);
+      appendTasks = () => setTasks([first, second]);
+      return (
+        <ProjectTaskStatusBoard
+          tasks={tasks()}
+          hasNextPage
+          onLoadMore={onLoadMore}
+          onOpenTask={() => {}}
+        />
+      );
+    });
+    const loadMore = view.getByRole('button', { name: 'Load more tasks' });
+
+    expect(
+      view.getAllByRole('button', { name: 'Load more tasks' })
+    ).toHaveLength(1);
+    expect(
+      view
+        .getByRole('region', { name: 'Project task status board' })
+        .contains(loadMore)
+    ).toBe(true);
+    expect(loadMore.closest('section[aria-label$=" tasks"]')).toBeNull();
+    fireEvent.click(loadMore);
+    const user = userEvent.setup();
+    loadMore.focus();
+    await user.keyboard('{Enter}');
+    expect(onLoadMore).toHaveBeenCalledTimes(2);
+    appendTasks();
+    expect(
+      Array.from(
+        view
+          .getByRole('region', { name: 'Not Started tasks' })
+          .querySelectorAll('button')
+      ).map((button) => button.textContent)
+    ).toEqual(['Original task', 'Appended task']);
+    view.unmount();
+
+    const loading = render(() => (
+      <ProjectTaskStatusBoard
+        tasks={[first]}
+        hasNextPage
+        fetchingNextPage
+        onLoadMore={onLoadMore}
+        onOpenTask={() => {}}
+      />
+    ));
+    const loadingButton = loading.getByRole('button', {
+      name: 'Loading more…',
+    });
+    expect(loadingButton.hasAttribute('disabled')).toBe(true);
+    expect(loadingButton.getAttribute('aria-busy')).toBe('true');
+    loading.unmount();
+
+    const retry = render(() => (
+      <ProjectTaskStatusBoard
+        tasks={[first]}
+        error
+        hasNextPage
+        onLoadMore={onLoadMore}
+        onOpenTask={() => {}}
+      />
+    ));
+    const retryButton = retry.getByRole('button', {
+      name: 'Retry loading more',
+    });
+    expect(retry.queryByText('Couldn’t load tasks')).toBeNull();
+    expect(retry.queryByText('source unavailable')).toBeNull();
+    const callsBeforeRetry = onLoadMore.mock.calls.length;
+    fireEvent.click(retryButton);
+    expect(onLoadMore).toHaveBeenCalledTimes(callsBeforeRetry + 1);
+    retry.unmount();
+
+    const onEmptyLoadMore = vi.fn();
+    const emptyContinuation = render(() => (
+      <ProjectTaskStatusBoard
+        tasks={[]}
+        hasNextPage
+        onLoadMore={onEmptyLoadMore}
+        onOpenTask={() => {}}
+      />
+    ));
+    expect(
+      emptyContinuation.queryByText('No tasks in this project')
+    ).toBeNull();
+    fireEvent.click(
+      emptyContinuation.getByRole('button', { name: 'Load more tasks' })
+    );
+    expect(onEmptyLoadMore).toHaveBeenCalledTimes(1);
+    emptyContinuation.unmount();
+
+    const finalPage = render(() => (
+      <ProjectTaskStatusBoard tasks={[]} onOpenTask={() => {}} />
+    ));
+    expect(finalPage.getByText('No tasks in this project')).toBeTruthy();
+    expect(finalPage.queryByRole('button', { name: /more tasks/i })).toBeNull();
+  });
+
   it('offers only canonical status moves and keeps open and status controls separate', async () => {
     const noStatusTask = task('Move from no status');
     const currentTask = task(

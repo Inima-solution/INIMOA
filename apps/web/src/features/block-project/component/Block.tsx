@@ -291,6 +291,16 @@ const ProjectSoupViewList = (props: {
   const retryBoard = () => {
     void source.refresh().catch(() => {});
   };
+  const loadMoreTasks = () => {
+    if (
+      !source.hasNextPage() ||
+      source.isFetching() ||
+      source.isFetchingNextPage()
+    ) {
+      return;
+    }
+    source.fetchNextPage();
+  };
   const openTask = (task: TaskEntityWithProperties, event: MouseEvent) => {
     if (
       !event.shiftKey &&
@@ -366,6 +376,10 @@ const ProjectSoupViewList = (props: {
             searching={searchText().trim().length > 0}
             onOpenTask={openTask}
             onRetry={retryBoard}
+            hasNextPage={source.hasNextPage()}
+            fetching={source.isFetching()}
+            fetchingNextPage={source.isFetchingNextPage()}
+            onLoadMore={loadMoreTasks}
             canEdit={canEdit()}
             statusProperty={statusProperty()}
             statusPending={statusMutation.isPending}
