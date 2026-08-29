@@ -1,6 +1,7 @@
 import { useMaybeSoupView } from '@app/features/next-soup/soup-view/soup-view-context';
 import { formatCallDuration } from '@block-call/utils';
 import { EntityRowTags } from '@property/tags';
+import { TaskDependencyRelations } from '@property/task-dependency-relations';
 import { TaskSubtaskProgressIndicator } from '@property/task-subtask-progress';
 import { EntityType } from '@service-properties/generated/schemas/entityType';
 import type { SoupProperty } from '@service-storage/generated/schemas/soupProperty';
@@ -265,6 +266,7 @@ export function WideLayout(props: LayoutProps) {
             <>
               <Entity.Properties entity={entity()} />
               <TaskSubtaskProgressIndicator taskId={entity().id} mode="row" />
+              <TaskDependencyRelations taskId={entity().id} mode="row" />
             </>
           )}
         </Show>

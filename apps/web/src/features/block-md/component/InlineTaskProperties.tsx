@@ -16,6 +16,10 @@ import {
 import { useEntityProperties } from '@property/hooks';
 import { InlineFetchedEntityTagsPill } from '@property/tags';
 import {
+  TaskDependencyRelations,
+  TaskDependencyRelationsProvider,
+} from '@property/task-dependency-relations';
+import {
   TaskSubtaskProgressIndicator,
   TaskSubtaskProgressProvider,
 } from '@property/task-subtask-progress';
@@ -109,6 +113,9 @@ export function InlineTaskProperties() {
             <TaskSubtaskProgressProvider taskIds={() => [blockId]}>
               <TaskSubtaskProgressIndicator taskId={blockId} />
             </TaskSubtaskProgressProvider>
+            <TaskDependencyRelationsProvider taskIds={() => [blockId]}>
+              <TaskDependencyRelations taskId={blockId} />
+            </TaskDependencyRelationsProvider>
           </Show>
           <Modals />
         </PropertiesProvider>

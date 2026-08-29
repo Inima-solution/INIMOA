@@ -26,6 +26,7 @@ import {
   uploadFiles,
 } from '@core/util/upload';
 import { isTaskEntity } from '@entity/types/entity';
+import { TaskDependencyRelationsProvider } from '@property/task-dependency-relations';
 import { TaskSubtaskProgressProvider } from '@property/task-subtask-progress';
 import { refetchSoupEntity } from '@queries/soup/cache';
 import { refetchResources } from '@service-storage/util/refetchResources';
@@ -197,7 +198,9 @@ const ProjectSoupViewList = (props: {
 
   return (
     <TaskSubtaskProgressProvider taskIds={taskIds}>
-      <SoupViewList customScrollbarHidden={true} scopeId={props.scopeId} />
+      <TaskDependencyRelationsProvider taskIds={taskIds}>
+        <SoupViewList customScrollbarHidden={true} scopeId={props.scopeId} />
+      </TaskDependencyRelationsProvider>
     </TaskSubtaskProgressProvider>
   );
 };

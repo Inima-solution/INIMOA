@@ -1,3 +1,4 @@
+import { TaskDependencyRelations } from '@property/task-dependency-relations';
 import { TaskSubtaskProgressIndicator } from '@property/task-subtask-progress';
 import { Show } from 'solid-js';
 import { Entity } from '../../entity';
@@ -50,8 +51,9 @@ export function NarrowLayout(props: LayoutProps) {
         </Show>
         <Show when={isTaskEntity(props.entity) && props.entity}>
           {(entity) => (
-            <div class="shrink-0">
+            <div class="shrink-0 flex items-center gap-2">
               <TaskSubtaskProgressIndicator taskId={entity().id} mode="row" />
+              <TaskDependencyRelations taskId={entity().id} mode="row" />
             </div>
           )}
         </Show>

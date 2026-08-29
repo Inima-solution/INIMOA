@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   blockName: 'task',
   progressStats: undefined as { completed: number; total: number } | undefined,
   providerTaskIds: [] as Array<() => readonly string[]>,
+  dependencyProviderTaskIds: [] as Array<() => readonly string[]>,
 }));
 
 vi.mock('@core/block', () => ({
@@ -51,6 +52,18 @@ vi.mock('@property/task-subtask-progress', () => ({
     <span data-subtask-progress-for={props.taskId}>Subtask progress</span>
   ),
 }));
+vi.mock('@property/task-dependency-relations', () => ({
+  TaskDependencyRelationsProvider: (props: {
+    children: unknown;
+    taskIds: () => readonly string[];
+  }) => {
+    mocks.dependencyProviderTaskIds.push(props.taskIds);
+    return props.children;
+  },
+  TaskDependencyRelations: (props: { taskId: string }) => (
+    <span data-dependency-relations-for={props.taskId}>Task relations</span>
+  ),
+}));
 vi.mock('../signal/markdownBlockData', () => ({
   mdStore: {
     get: {
@@ -68,6 +81,7 @@ beforeEach(() => {
   mocks.blockName = 'task';
   mocks.progressStats = undefined;
   mocks.providerTaskIds = [];
+  mocks.dependencyProviderTaskIds = [];
 });
 
 afterEach(cleanup);
@@ -81,6 +95,12 @@ describe('InlineTaskProperties', () => {
     expect(
       view.container.querySelector(`[data-subtask-progress-for="${taskId}"]`)
     ).toBeTruthy();
+    expect(mocks.dependencyProviderTaskIds[0]?.()).toEqual([taskId]);
+    expect(
+      view.container.querySelector(
+        `[data-dependency-relations-for="${taskId}"]`
+      )
+    ).toBeTruthy();
   });
 
   it('does not provide or render subtask progress for non-task markdown', () => {
@@ -88,7 +108,9 @@ describe('InlineTaskProperties', () => {
     const view = render(() => <InlineTaskProperties />);
 
     expect(mocks.providerTaskIds).toEqual([]);
+    expect(mocks.dependencyProviderTaskIds).toEqual([]);
     expect(view.queryByText('Subtask progress')).toBeNull();
+    expect(view.queryByText('Task relations')).toBeNull();
   });
 
   it('keeps markdown checklist progress separate from backend subtask progress', () => {

@@ -22,6 +22,7 @@ import {
   type PropertySaveHandler,
 } from '@property/context/PropertiesContext';
 import { EntityRowTags } from '@property/tags';
+import { TaskDependencyRelations } from '@property/task-dependency-relations';
 import type { Property, PropertyApiValues } from '@property/types';
 import { useUserId } from '@queries/auth';
 import { useBulkSaveEntityPropertiesMutation } from '@queries/properties/entity';
@@ -171,6 +172,7 @@ export function TaskGridLayout(props: LayoutProps) {
           <span class="truncate min-w-0">
             <Entity.Title entity={props.entity} />
           </span>
+          <TaskDependencyRelations taskId={props.entity.id} mode="row" />
           <Show when={isProjectContainedEntity(props.entity) && props.entity}>
             {(entity) => (
               <span class="ph-no-capture text-ink text-xs shrink-0 truncate border border-edge-muted px-2 rounded-sm py-0.5">
