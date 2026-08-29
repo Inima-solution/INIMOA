@@ -1647,8 +1647,138 @@ async fn purge_returns_outputs_and_removes_access_and_permissions(
     migrator = "MACRO_DB_MIGRATIONS",
     fixtures(path = "../../../fixtures", scripts("projects_test_data"))
 )]
+async fn project_purge_removes_task_sources_and_repairs_within_and_cross_tree_hierarchy(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    let source = "20000000-0000-0000-0000-000000000102";
+    let peer = "20000000-0000-0000-0000-000000000107";
+    let external = "20000000-0000-0000-0000-000000000108";
+    for (id, project_id) in [
+        (source, ROOT_ID),
+        (peer, ROOT_ID),
+        (external, "10000000-0000-0000-0000-000000000005"),
+    ] {
+        sqlx::query("INSERT INTO \"Document\" (id, name, owner, \"fileType\", \"projectId\") VALUES ($1, $2, 'macro|owner@test.com', 'docx', $3)")
+            .bind(id)
+            .bind(format!("task-{id}"))
+            .bind(project_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("INSERT INTO document_sub_type (document_id, sub_type) VALUES ($1, 'task')")
+            .bind(id)
+            .execute(&pool)
+            .await?;
+    }
+    let source_edge =
+        serde_json::json!({"entity_id":source,"entity_type":"TASK","specific_message_id":"drop"});
+    let keep =
+        serde_json::json!({"entity_id":external,"entity_type":"TASK","specific_message_id":"keep"});
+    for (entity_id, definition, value) in [
+        (
+            source,
+            system_properties::SystemPropertyKey::STATUS_UUID,
+            serde_json::json!({"type":"SelectOption","value":[]}),
+        ),
+        (
+            peer,
+            system_properties::SystemPropertyKey::SUBTASKS_UUID,
+            serde_json::json!({"type":"EntityReference","value":[source_edge.clone(),keep.clone()]}),
+        ),
+        (
+            external,
+            system_properties::SystemPropertyKey::PARENT_TASK_UUID,
+            serde_json::json!({"type":"EntityReference","value":[source_edge]}),
+        ),
+    ] {
+        sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)")
+            .bind(uuid::Uuid::new_v4())
+            .bind(entity_id)
+            .bind(definition)
+            .bind(value)
+            .execute(&pool)
+            .await?;
+    }
+
+    repo.soft_delete_project(ROOT_ID).await?;
+    let token = repo
+        .get_basic_project(ROOT_ID)
+        .await?
+        .and_then(|project| project.deleted_at)
+        .expect("soft-delete token");
+    assert!(
+        repo.purge_deleted_project_tree_if_token(ROOT_ID, token)
+            .await?
+            .is_some()
+    );
+
+    let source_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM entity_properties WHERE entity_id = $1 AND entity_type = 'TASK'",
+    )
+    .bind(source)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(source_rows, 0);
+    let cross_tree: Option<serde_json::Value> = sqlx::query_scalar(
+        "SELECT values FROM entity_properties WHERE entity_id = $1 AND property_definition_id = $2",
+    )
+    .bind(external)
+    .bind(system_properties::SystemPropertyKey::PARENT_TASK_UUID)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(cross_tree, None);
+    let within_tree: Option<serde_json::Value> = sqlx::query_scalar(
+        "SELECT values FROM entity_properties WHERE entity_id = $1 AND property_definition_id = $2",
+    )
+    .bind(peer)
+    .bind(system_properties::SystemPropertyKey::SUBTASKS_UUID)
+    .fetch_optional(&pool)
+    .await?;
+    assert_eq!(
+        within_tree, None,
+        "within-tree task rows are removed with their source"
+    );
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
 async fn purge_rolls_back_all_deletions(pool: Pool<Postgres>) -> anyhow::Result<()> {
     let repo = PgProjectRepo::new(pool.clone());
+    let source = "20000000-0000-0000-0000-000000000110";
+    let survivor = "20000000-0000-0000-0000-000000000111";
+    for (id, project_id) in [
+        (source, ROOT_ID),
+        (survivor, "10000000-0000-0000-0000-000000000005"),
+    ] {
+        sqlx::query("INSERT INTO \"Document\" (id, name, owner, \"fileType\", \"projectId\") VALUES ($1, $2, 'macro|owner@test.com', 'docx', $3)")
+            .bind(id)
+            .bind(format!("rollback-task-{id}"))
+            .bind(project_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("INSERT INTO document_sub_type (document_id, sub_type) VALUES ($1, 'task')")
+            .bind(id)
+            .execute(&pool)
+            .await?;
+    }
+    let reverse = serde_json::json!({"type":"EntityReference","value":[{"entity_id":source,"entity_type":"TASK","extra":"rollback"}]});
+    sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)")
+        .bind(uuid::Uuid::new_v4())
+        .bind(source)
+        .bind(system_properties::SystemPropertyKey::STATUS_UUID)
+        .bind(serde_json::json!({"type":"SelectOption","value":[]}))
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)")
+        .bind(uuid::Uuid::new_v4())
+        .bind(survivor)
+        .bind(system_properties::SystemPropertyKey::SUBTASKS_UUID)
+        .bind(reverse.clone())
+        .execute(&pool)
+        .await?;
     repo.soft_delete_project(ROOT_ID).await?;
     let deleted_at = repo
         .get_basic_project(ROOT_ID)
@@ -1684,6 +1814,21 @@ async fn purge_rolls_back_all_deletions(pool: Pool<Postgres>) -> anyhow::Result<
             .fetch_one(&pool)
             .await?;
     assert_eq!(operation_count, 1);
+    let restored_reverse: serde_json::Value = sqlx::query_scalar(
+        "SELECT values FROM entity_properties WHERE entity_id = $1 AND property_definition_id = $2",
+    )
+    .bind(survivor)
+    .bind(system_properties::SystemPropertyKey::SUBTASKS_UUID)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(restored_reverse, reverse);
+    let restored_source_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM entity_properties WHERE entity_id = $1 AND entity_type = 'TASK'",
+    )
+    .bind(source)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(restored_source_rows, 1);
     Ok(())
 }
 
@@ -1695,6 +1840,38 @@ async fn purge_exact_token_rejects_stale_missing_and_live_subtree_rows(
     pool: Pool<Postgres>,
 ) -> anyhow::Result<()> {
     let repo = PgProjectRepo::new(pool.clone());
+    let source = "20000000-0000-0000-0000-000000000112";
+    let survivor = "20000000-0000-0000-0000-000000000113";
+    for (id, project_id) in [
+        (source, ROOT_ID),
+        (survivor, "10000000-0000-0000-0000-000000000005"),
+    ] {
+        sqlx::query("INSERT INTO \"Document\" (id, name, owner, \"fileType\", \"projectId\") VALUES ($1, $2, 'macro|owner@test.com', 'docx', $3)")
+            .bind(id)
+            .bind(format!("stale-task-{id}"))
+            .bind(project_id)
+            .execute(&pool)
+            .await?;
+        sqlx::query("INSERT INTO document_sub_type (document_id, sub_type) VALUES ($1, 'task')")
+            .bind(id)
+            .execute(&pool)
+            .await?;
+    }
+    let reverse = serde_json::json!({"type":"EntityReference","value":[{"entity_id":source,"entity_type":"TASK","extra":"stale"}]});
+    sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)")
+        .bind(uuid::Uuid::new_v4())
+        .bind(source)
+        .bind(system_properties::SystemPropertyKey::STATUS_UUID)
+        .bind(serde_json::json!({"type":"SelectOption","value":[]}))
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)")
+        .bind(uuid::Uuid::new_v4())
+        .bind(survivor)
+        .bind(system_properties::SystemPropertyKey::PARENT_TASK_UUID)
+        .bind(reverse.clone())
+        .execute(&pool)
+        .await?;
     repo.soft_delete_project(ROOT_ID).await?;
     let token = repo
         .get_basic_project(ROOT_ID)
@@ -1738,6 +1915,21 @@ async fn purge_exact_token_rejects_stale_missing_and_live_subtree_rows(
             .execute(&pool)
             .await?;
     }
+    let unchanged_reverse: serde_json::Value = sqlx::query_scalar(
+        "SELECT values FROM entity_properties WHERE entity_id = $1 AND property_definition_id = $2",
+    )
+    .bind(survivor)
+    .bind(system_properties::SystemPropertyKey::PARENT_TASK_UUID)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(unchanged_reverse, reverse);
+    let unchanged_source_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM entity_properties WHERE entity_id = $1 AND entity_type = 'TASK'",
+    )
+    .bind(source)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(unchanged_source_rows, 1);
     Ok(())
 }
 
@@ -1767,6 +1959,45 @@ async fn purge_rejects_live_root_without_deleting_source_rows(
             .is_none()
     );
     assert!(repo.get_basic_project(ROOT_ID).await?.is_some());
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn project_purge_serializes_behind_taskhier_lock(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    repo.soft_delete_project(ROOT_ID).await?;
+    let token = repo
+        .get_basic_project(ROOT_ID)
+        .await?
+        .and_then(|project| project.deleted_at)
+        .expect("soft-delete token");
+    let mut hierarchy_lock = pool.begin().await?;
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKHIER")
+    )
+    .fetch_one(&mut *hierarchy_lock)
+    .await?;
+    let purge_repo = repo.clone();
+    let mut purge = tokio::spawn(async move {
+        purge_repo
+            .purge_deleted_project_tree_if_token(ROOT_ID, token)
+            .await
+    });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(25), &mut purge)
+            .await
+            .is_err()
+    );
+    hierarchy_lock.commit().await?;
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(1), purge)
+            .await???
+            .is_some()
+    );
     Ok(())
 }
 

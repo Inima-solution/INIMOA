@@ -67,5 +67,80 @@ pub async fn reconcile_relocated_task_hierarchy(
     Ok(())
 }
 
+/// Remove hierarchy properties for task documents that are about to be
+/// hard-purged. Callers hold `TASKDEPS` followed by `TASKHIER`, have already
+/// authoritatively confirmed their deletion, and run this in that transaction.
+///
+/// The query deliberately discovers task sources from the still-locked
+/// documents. This keeps non-task documents and all non-hierarchy properties
+/// out of the cleanup, while deleting every TASK property row owned by a
+/// confirmed task source.
+pub async fn purge_confirmed_task_hierarchy(
+    transaction: &mut PgConnection,
+    confirmed_document_ids: &[String],
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+        WITH purged_tasks AS (
+            SELECT d.id
+            FROM "Document" d
+            JOIN document_sub_type dst
+              ON dst.document_id = d.id AND dst.sub_type = 'task'
+            WHERE d.id = ANY($1)
+            FOR UPDATE OF d
+        ), replacements AS (
+            SELECT ep.id,
+                CASE
+                    WHEN filtered.references IS NULL
+                      OR jsonb_array_length(filtered.references) = 0 THEN NULL
+                    ELSE jsonb_set(ep.values, '{value}', filtered.references, false)
+                END AS values
+            FROM entity_properties ep
+            JOIN "Document" survivor
+              ON survivor.id = ep.entity_id
+            JOIN document_sub_type survivor_sub_type
+              ON survivor_sub_type.document_id = survivor.id
+             AND survivor_sub_type.sub_type = 'task'
+            CROSS JOIN LATERAL (
+                SELECT jsonb_agg(reference ORDER BY ordinality) AS references
+                FROM jsonb_array_elements(
+                    CASE WHEN jsonb_typeof(ep.values->'value') = 'array'
+                         THEN ep.values->'value' ELSE '[]'::jsonb END
+                ) WITH ORDINALITY refs(reference, ordinality)
+                WHERE reference->>'entity_id' IS NULL
+                   OR reference->>'entity_id' <> ALL(ARRAY(SELECT id FROM purged_tasks))
+            ) filtered
+            WHERE ep.entity_type = 'TASK'
+              AND ep.property_definition_id IN ($2, $3)
+              AND survivor.id = ep.entity_id
+              AND ep.entity_id <> ALL(ARRAY(SELECT id FROM purged_tasks))
+              AND EXISTS (
+                  SELECT 1
+                  FROM jsonb_array_elements(
+                      CASE WHEN jsonb_typeof(ep.values->'value') = 'array'
+                           THEN ep.values->'value' ELSE '[]'::jsonb END
+                  ) reference
+                  WHERE reference->>'entity_id' = ANY(ARRAY(SELECT id FROM purged_tasks))
+              )
+        ), surviving_updates AS (
+            UPDATE entity_properties ep
+            SET values = replacements.values,
+                updated_at = NOW()
+            FROM replacements
+            WHERE ep.id = replacements.id
+        )
+        DELETE FROM entity_properties ep
+        WHERE ep.entity_type = 'TASK'
+          AND ep.entity_id = ANY(ARRAY(SELECT id FROM purged_tasks))
+        "#,
+        confirmed_document_ids,
+        SystemPropertyKey::PARENT_TASK_UUID,
+        SystemPropertyKey::SUBTASKS_UUID,
+    )
+    .execute(&mut *transaction)
+    .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod test;

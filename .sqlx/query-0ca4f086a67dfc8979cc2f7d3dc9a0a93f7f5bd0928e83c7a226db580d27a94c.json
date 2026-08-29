@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH purged_tasks AS (\n            SELECT d.id\n            FROM \"Document\" d\n            JOIN document_sub_type dst\n              ON dst.document_id = d.id AND dst.sub_type = 'task'\n            WHERE d.id = ANY($1)\n            FOR UPDATE OF d\n        ), replacements AS (\n            SELECT ep.id,\n                CASE\n                    WHEN filtered.references IS NULL\n                      OR jsonb_array_length(filtered.references) = 0 THEN NULL\n                    ELSE jsonb_set(ep.values, '{value}', filtered.references, false)\n                END AS values\n            FROM entity_properties ep\n            JOIN \"Document\" survivor\n              ON survivor.id = ep.entity_id\n            JOIN document_sub_type survivor_sub_type\n              ON survivor_sub_type.document_id = survivor.id\n             AND survivor_sub_type.sub_type = 'task'\n            CROSS JOIN LATERAL (\n                SELECT jsonb_agg(reference ORDER BY ordinality) AS references\n                FROM jsonb_array_elements(\n                    CASE WHEN jsonb_typeof(ep.values->'value') = 'array'\n                         THEN ep.values->'value' ELSE '[]'::jsonb END\n                ) WITH ORDINALITY refs(reference, ordinality)\n                WHERE reference->>'entity_id' IS NULL\n                   OR reference->>'entity_id' <> ALL(ARRAY(SELECT id FROM purged_tasks))\n            ) filtered\n            WHERE ep.entity_type = 'TASK'\n              AND ep.property_definition_id IN ($2, $3)\n              AND survivor.id = ep.entity_id\n              AND ep.entity_id <> ALL(ARRAY(SELECT id FROM purged_tasks))\n              AND EXISTS (\n                  SELECT 1\n                  FROM jsonb_array_elements(\n                      CASE WHEN jsonb_typeof(ep.values->'value') = 'array'\n                           THEN ep.values->'value' ELSE '[]'::jsonb END\n                  ) reference\n                  WHERE reference->>'entity_id' = ANY(ARRAY(SELECT id FROM purged_tasks))\n              )\n        ), surviving_updates AS (\n            UPDATE entity_properties ep\n            SET values = replacements.values,\n                updated_at = NOW()\n            FROM replacements\n            WHERE ep.id = replacements.id\n        )\n        DELETE FROM entity_properties ep\n        WHERE ep.entity_type = 'TASK'\n          AND ep.entity_id = ANY(ARRAY(SELECT id FROM purged_tasks))\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "TextArray",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0ca4f086a67dfc8979cc2f7d3dc9a0a93f7f5bd0928e83c7a226db580d27a94c"
+}

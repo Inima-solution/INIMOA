@@ -10,6 +10,15 @@ pub(super) async fn purge_deleted_project_tree_if_token(
     project_id: &str,
     deleted_at: DateTime<Utc>,
 ) -> Result<Option<PurgedProjectTreeWithRoot>, sqlx::Error> {
+    // The repository has already acquired TASKDEPS for this purge. Keep the
+    // shared hierarchy order before validating and deleting the locked tree.
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKHIER")
+    )
+    .fetch_one(transaction.as_mut())
+    .await?;
+
     let root = sqlx::query!(
         r#"
         SELECT id, "userId" AS user_id, name, "parentId" AS parent_id,
@@ -94,6 +103,15 @@ pub(super) async fn purge_deleted_project_tree_if_token(
         .map(|document| (document.id, document.owner))
         .collect::<Vec<_>>();
     let chat_ids = chats.into_iter().map(|chat| chat.id).collect::<Vec<_>>();
+    let document_ids = documents
+        .iter()
+        .map(|(id, _)| id.clone())
+        .collect::<Vec<_>>();
+    system_properties::outbound::task_hierarchy_lifecycle::purge_confirmed_task_hierarchy(
+        transaction.as_mut(),
+        &document_ids,
+    )
+    .await?;
     let tree = purge_locked_project_tree(transaction, project_ids, documents, chat_ids).await?;
     Ok(Some(PurgedProjectTreeWithRoot { root, tree }))
 }

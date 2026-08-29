@@ -2,7 +2,7 @@ use serde_json::{Value, json};
 use sqlx::{PgPool, Row};
 use uuid::Uuid;
 
-use super::reconcile_relocated_task_hierarchy;
+use super::{purge_confirmed_task_hierarchy, reconcile_relocated_task_hierarchy};
 use crate::SystemPropertyKey;
 
 async fn schema(pool: &PgPool) -> anyhow::Result<()> {
@@ -170,6 +170,119 @@ async fn zero_remaining_malformed_source_and_non_task_source_are_safe(
     assert_eq!(
         values(&pool, &peer, SystemPropertyKey::PARENT_TASK_UUID).await?,
         Some(original)
+    );
+    Ok(())
+}
+
+#[sqlx::test]
+async fn purging_confirmed_tasks_repairs_reverse_edges_and_deletes_all_source_rows(
+    pool: PgPool,
+) -> anyhow::Result<()> {
+    schema(&pool).await?;
+    let source = Uuid::new_v4().to_string();
+    let peer = Uuid::new_v4().to_string();
+    let other = Uuid::new_v4().to_string();
+    let non_task = Uuid::new_v4().to_string();
+    for id in [&source, &peer, &other, &non_task] {
+        sqlx::query("INSERT INTO \"Document\" (id) VALUES ($1)")
+            .bind(id)
+            .execute(&pool)
+            .await?;
+    }
+    for id in [&source, &peer, &other] {
+        sqlx::query("INSERT INTO document_sub_type (document_id, sub_type) VALUES ($1, 'task')")
+            .bind(id)
+            .execute(&pool)
+            .await?;
+    }
+    let keep_first = json!({"entity_id":other,"entity_type":"TASK","specific_message_id":"keep-first","extra":{"exact":true}});
+    let keep_second = json!({"entity_id":peer,"entity_type":"TASK","specific_message_id":"keep-second","extra":[1,2]});
+    property(
+        &pool,
+        &source,
+        SystemPropertyKey::STATUS_UUID,
+        json!({"type":"SelectOption","value":[]}),
+    )
+    .await?;
+    property(
+        &pool,
+        &source,
+        SystemPropertyKey::PARENT_TASK_UUID,
+        json!({"type":"EntityReference","value":[{"entity_id":peer,"entity_type":"TASK"}]}),
+    )
+    .await?;
+    property(
+        &pool,
+        &peer,
+        SystemPropertyKey::SUBTASKS_UUID,
+        json!({"type":"EntityReference","value":[{"entity_id":source,"entity_type":"TASK","extra":"remove"},keep_first.clone(),{"entity_id":source,"entity_type":"TASK"},keep_second.clone()]}),
+    )
+    .await?;
+    property(
+        &pool,
+        &other,
+        SystemPropertyKey::PARENT_TASK_UUID,
+        json!({"malformed":true}),
+    )
+    .await?;
+    property(
+        &pool,
+        &other,
+        SystemPropertyKey::DEPENDS_ON_UUID,
+        json!({"type":"EntityReference","value":[{"entity_id":source,"entity_type":"TASK"}]}),
+    )
+    .await?;
+    property(
+        &pool,
+        &peer,
+        SystemPropertyKey::PARENT_TASK_UUID,
+        json!({"type":"EntityReference","value":[{"entity_id":non_task,"entity_type":"TASK"}]}),
+    )
+    .await?;
+    sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'DOCUMENT', $3, $4)")
+        .bind(Uuid::new_v4())
+        .bind(&source)
+        .bind(SystemPropertyKey::STATUS_UUID)
+        .bind(json!({"preserve":"non-task source row"}))
+        .execute(&pool)
+        .await?;
+
+    let mut transaction = pool.begin().await?;
+    purge_confirmed_task_hierarchy(&mut transaction, &[source.clone(), non_task.clone()]).await?;
+    transaction.commit().await?;
+
+    let source_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM entity_properties WHERE entity_id = $1 AND entity_type = 'TASK'",
+    )
+    .bind(&source)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(source_rows, 0);
+    assert_eq!(
+        values(&pool, &peer, SystemPropertyKey::SUBTASKS_UUID).await?,
+        Some(json!({"type":"EntityReference","value":[keep_first,keep_second]}))
+    );
+    let non_task_source_rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM entity_properties WHERE entity_id = $1 AND entity_type = 'DOCUMENT'",
+    )
+    .bind(&source)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(non_task_source_rows, 1);
+    assert!(
+        values(&pool, &other, SystemPropertyKey::PARENT_TASK_UUID)
+            .await?
+            .is_some()
+    );
+    assert!(
+        values(&pool, &other, SystemPropertyKey::DEPENDS_ON_UUID)
+            .await?
+            .is_some()
+    );
+    assert!(
+        values(&pool, &peer, SystemPropertyKey::PARENT_TASK_UUID)
+            .await?
+            .is_some()
     );
     Ok(())
 }

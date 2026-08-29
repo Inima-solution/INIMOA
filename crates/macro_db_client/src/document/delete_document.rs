@@ -38,6 +38,12 @@ pub async fn purge_deleted_document(
     )
     .fetch_one(&mut *transaction)
     .await?;
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKHIER")
+    )
+    .fetch_one(&mut *transaction)
+    .await?;
 
     let document = sqlx::query!(
         r#"
@@ -70,6 +76,11 @@ pub async fn purge_deleted_document(
     .fetch_all(&mut *transaction)
     .await?;
 
+    system_properties::outbound::task_hierarchy_lifecycle::purge_confirmed_task_hierarchy(
+        &mut transaction,
+        &[document_id.to_owned()],
+    )
+    .await?;
     delete_document_rows(&mut transaction, document_id, &document_uuid).await?;
     transaction.commit().await?;
 
@@ -141,6 +152,23 @@ async fn delete_document_rows(
 #[tracing::instrument(skip(db))]
 pub async fn delete_document(db: &Pool<Postgres>, document_id: &str) -> anyhow::Result<()> {
     let mut transaction = db.begin().await?;
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKDEPS")
+    )
+    .fetch_one(&mut *transaction)
+    .await?;
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKHIER")
+    )
+    .fetch_one(&mut *transaction)
+    .await?;
+    system_properties::outbound::task_hierarchy_lifecycle::purge_confirmed_task_hierarchy(
+        &mut transaction,
+        &[document_id.to_owned()],
+    )
+    .await?;
     delete_document_rows(
         &mut transaction,
         document_id,
@@ -329,6 +357,29 @@ mod tests {
         .execute(pool)
         .await?;
         insert_deleted_document(pool, token).await?;
+        sqlx::query("INSERT INTO document_sub_type (document_id, sub_type) VALUES ($1, 'task')")
+            .bind(PURGE_ID)
+            .execute(pool)
+            .await?;
+        sqlx::query("INSERT INTO \"Document\" (id, name, owner, \"fileType\") VALUES ('purge-hierarchy-peer', 'purge hierarchy peer', 'macro|user@user.com', 'docx')")
+            .execute(pool)
+            .await?;
+        sqlx::query("INSERT INTO document_sub_type (document_id, sub_type) VALUES ('purge-hierarchy-peer', 'task')")
+            .execute(pool)
+            .await?;
+        sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)")
+            .bind(uuid::Uuid::new_v4())
+            .bind(PURGE_ID)
+            .bind(system_properties::SystemPropertyKey::STATUS_UUID)
+            .bind(serde_json::json!({"type":"SelectOption","value":[]}))
+            .execute(pool)
+            .await?;
+        sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, 'purge-hierarchy-peer', 'TASK', $2, $3)")
+            .bind(uuid::Uuid::new_v4())
+            .bind(system_properties::SystemPropertyKey::SUBTASKS_UUID)
+            .bind(serde_json::json!({"type":"EntityReference","value":[{"entity_id":PURGE_ID,"entity_type":"TASK"}]}))
+            .execute(pool)
+            .await?;
         sqlx::query!(
             r#"UPDATE "Document" SET "projectId" = 'purge-project' WHERE id = $1"#,
             PURGE_ID
@@ -478,6 +529,20 @@ mod tests {
                 deleted_at: None
             }
         );
+        let hierarchy_value: Option<serde_json::Value> = sqlx::query_scalar(
+            "SELECT values FROM entity_properties WHERE entity_id = 'purge-hierarchy-peer' AND property_definition_id = $1",
+        )
+        .bind(system_properties::SystemPropertyKey::SUBTASKS_UUID)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(hierarchy_value, None);
+        let source_rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM entity_properties WHERE entity_id = $1 AND entity_type = 'TASK'",
+        )
+        .bind(PURGE_ID)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(source_rows, 0);
         assert_eq!(
             purge_deleted_document(&pool, PURGE_ID, fixture.token).await?,
             DocumentPurgeOutcome::StaleOrUnavailable
@@ -510,6 +575,23 @@ mod tests {
                 deleted_at: Some(fixture.token)
             }
         );
+        let hierarchy_value: serde_json::Value = sqlx::query_scalar(
+            "SELECT values FROM entity_properties WHERE entity_id = 'purge-hierarchy-peer' AND property_definition_id = $1",
+        )
+        .bind(system_properties::SystemPropertyKey::SUBTASKS_UUID)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(
+            hierarchy_value,
+            serde_json::json!({"type":"EntityReference","value":[{"entity_id":PURGE_ID,"entity_type":"TASK"}]})
+        );
+        let source_rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM entity_properties WHERE entity_id = $1 AND entity_type = 'TASK'",
+        )
+        .bind(PURGE_ID)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(source_rows, 1);
         Ok(())
     }
 
@@ -559,6 +641,33 @@ mod tests {
                 deleted_at: None
             }
         );
+        Ok(())
+    }
+
+    #[sqlx::test(fixtures(path = "../../fixtures", scripts("basic_user_with_document")))]
+    async fn purge_serializes_behind_taskhier_lock(pool: Pool<Postgres>) -> anyhow::Result<()> {
+        let fixture = purge_fixture(&pool).await?;
+        let mut hierarchy_lock = pool.begin().await?;
+        sqlx::query_scalar!(
+            r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+            i64::from_be_bytes(*b"TASKHIER")
+        )
+        .fetch_one(&mut *hierarchy_lock)
+        .await?;
+        let purge_pool = pool.clone();
+        let mut purge = tokio::spawn(async move {
+            purge_deleted_document(&purge_pool, PURGE_ID, fixture.token).await
+        });
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(25), &mut purge)
+                .await
+                .is_err()
+        );
+        hierarchy_lock.commit().await?;
+        assert!(matches!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), purge).await???,
+            DocumentPurgeOutcome::Purged(_)
+        ));
         Ok(())
     }
 
@@ -614,6 +723,170 @@ mod tests {
         .await?
         .deleted_at;
         assert_eq!(deleted_at, Some(fresh));
+        Ok(())
+    }
+
+    #[sqlx::test(fixtures(path = "../../fixtures", scripts("basic_user_with_document")))]
+    async fn purge_wrong_token_leaves_task_hierarchy_unchanged(
+        pool: Pool<Postgres>,
+    ) -> anyhow::Result<()> {
+        let fixture = purge_fixture(&pool).await?;
+        assert_eq!(
+            purge_deleted_document(
+                &pool,
+                PURGE_ID,
+                fixture.token - chrono::Duration::seconds(1)
+            )
+            .await?,
+            DocumentPurgeOutcome::StaleOrUnavailable
+        );
+        let peer_value: serde_json::Value = sqlx::query_scalar(
+            "SELECT values FROM entity_properties WHERE entity_id = 'purge-hierarchy-peer' AND property_definition_id = $1",
+        )
+        .bind(system_properties::SystemPropertyKey::SUBTASKS_UUID)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(
+            peer_value,
+            serde_json::json!({"type":"EntityReference","value":[{"entity_id":PURGE_ID,"entity_type":"TASK"}]})
+        );
+        let source_rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM entity_properties WHERE entity_id = $1 AND entity_type = 'TASK'",
+        )
+        .bind(PURGE_ID)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(source_rows, 1);
+        Ok(())
+    }
+
+    #[sqlx::test(fixtures(path = "../../fixtures", scripts("basic_user_with_document")))]
+    async fn last_version_delete_converges_on_task_hierarchy_cleanup(
+        pool: Pool<Postgres>,
+    ) -> anyhow::Result<()> {
+        let token = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")?
+            .with_timezone(&chrono::Utc);
+        insert_deleted_document(&pool, token).await?;
+        sqlx::query("INSERT INTO document_sub_type (document_id, sub_type) VALUES ($1, 'task')")
+            .bind(PURGE_ID)
+            .execute(&pool)
+            .await?;
+        let instance_id: i64 = sqlx::query_scalar(
+            "INSERT INTO \"DocumentInstance\" (\"documentId\", \"revisionName\", sha) VALUES ($1, 'only', 'only-sha') RETURNING id",
+        )
+        .bind(PURGE_ID)
+        .fetch_one(&pool)
+        .await?;
+        sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)")
+            .bind(uuid::Uuid::new_v4())
+            .bind(PURGE_ID)
+            .bind(system_properties::SystemPropertyKey::STATUS_UUID)
+            .bind(serde_json::json!({"type":"SelectOption","value":[]}))
+            .execute(&pool)
+            .await?;
+        sqlx::query("INSERT INTO \"Document\" (id, name, owner, \"fileType\") VALUES ('last-version-peer', 'last version peer', 'macro|user@user.com', 'docx')")
+            .execute(&pool)
+            .await?;
+        sqlx::query("INSERT INTO document_sub_type (document_id, sub_type) VALUES ('last-version-peer', 'task')")
+            .execute(&pool)
+            .await?;
+        sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, 'last-version-peer', 'TASK', $2, $3)")
+            .bind(uuid::Uuid::new_v4())
+            .bind(system_properties::SystemPropertyKey::PARENT_TASK_UUID)
+            .bind(serde_json::json!({"type":"EntityReference","value":[{"entity_id":PURGE_ID,"entity_type":"TASK"}]}))
+            .execute(&pool)
+            .await?;
+
+        delete_document_version(&pool, PURGE_ID, instance_id, "pdf").await?;
+
+        let peer_value: Option<serde_json::Value> = sqlx::query_scalar(
+            "SELECT values FROM entity_properties WHERE entity_id = 'last-version-peer' AND property_definition_id = $1",
+        )
+        .bind(system_properties::SystemPropertyKey::PARENT_TASK_UUID)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(peer_value, None);
+        let document_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM \"Document\" WHERE id = $1")
+                .bind(PURGE_ID)
+                .fetch_one(&pool)
+                .await?;
+        assert_eq!(document_count, 0);
+        Ok(())
+    }
+
+    #[sqlx::test(fixtures(path = "../../fixtures", scripts("basic_user_with_document")))]
+    async fn legacy_delete_document_cleans_task_hierarchy_once(
+        pool: Pool<Postgres>,
+    ) -> anyhow::Result<()> {
+        let token = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")?
+            .with_timezone(&chrono::Utc);
+        insert_deleted_document(&pool, token).await?;
+        for id in [PURGE_ID, "legacy-delete-peer"] {
+            if id != PURGE_ID {
+                sqlx::query("INSERT INTO \"Document\" (id, name, owner, \"fileType\") VALUES ($1, 'legacy delete peer', 'macro|user@user.com', 'docx')")
+                    .bind(id)
+                    .execute(&pool)
+                    .await?;
+            }
+            sqlx::query(
+                "INSERT INTO document_sub_type (document_id, sub_type) VALUES ($1, 'task')",
+            )
+            .bind(id)
+            .execute(&pool)
+            .await?;
+        }
+        sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)")
+            .bind(uuid::Uuid::new_v4())
+            .bind(PURGE_ID)
+            .bind(system_properties::SystemPropertyKey::STATUS_UUID)
+            .bind(serde_json::json!({"type":"SelectOption","value":[]}))
+            .execute(&pool)
+            .await?;
+        let edge = serde_json::json!({"type":"EntityReference","value":[{"entity_id":PURGE_ID,"entity_type":"TASK","extra":"remove"}]});
+        let unrelated = serde_json::json!({"type":"EntityReference","value":[{"entity_id":"unrelated-task","entity_type":"TASK","extra":"keep"}]});
+        for (definition, value) in [
+            (
+                system_properties::SystemPropertyKey::PARENT_TASK_UUID,
+                edge.clone(),
+            ),
+            (
+                system_properties::SystemPropertyKey::DEPENDS_ON_UUID,
+                unrelated.clone(),
+            ),
+        ] {
+            sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, 'legacy-delete-peer', 'TASK', $2, $3)")
+                .bind(uuid::Uuid::new_v4())
+                .bind(definition)
+                .bind(value)
+                .execute(&pool)
+                .await?;
+        }
+
+        delete_document(&pool, PURGE_ID).await?;
+        delete_document(&pool, PURGE_ID).await?;
+
+        let repaired: Option<serde_json::Value> = sqlx::query_scalar(
+            "SELECT values FROM entity_properties WHERE entity_id = 'legacy-delete-peer' AND property_definition_id = $1",
+        )
+        .bind(system_properties::SystemPropertyKey::PARENT_TASK_UUID)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(repaired, None);
+        let preserved: serde_json::Value = sqlx::query_scalar(
+            "SELECT values FROM entity_properties WHERE entity_id = 'legacy-delete-peer' AND property_definition_id = $1",
+        )
+        .bind(system_properties::SystemPropertyKey::DEPENDS_ON_UUID)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(preserved, unrelated);
+        let source_rows: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM entity_properties WHERE entity_id = $1 AND entity_type = 'TASK'",
+        )
+        .bind(PURGE_ID)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(source_rows, 0);
         Ok(())
     }
 
