@@ -1,3 +1,4 @@
+import { TaskSubtaskProgressIndicator } from '@property/task-subtask-progress';
 import { Show } from 'solid-js';
 import { Entity } from '../../entity';
 import {
@@ -46,6 +47,13 @@ export function NarrowLayout(props: LayoutProps) {
           fallback={<Entity.Title entity={props.entity} />}
         >
           {(entity) => <ChannelMessageSingleLine entity={entity()} />}
+        </Show>
+        <Show when={isTaskEntity(props.entity) && props.entity}>
+          {(entity) => (
+            <div class="shrink-0">
+              <TaskSubtaskProgressIndicator taskId={entity().id} mode="row" />
+            </div>
+          )}
         </Show>
         <Show when={isEmailEntity(props.entity) && props.entity}>
           {(entity) => <EmailInboxChip entity={entity()} class="ml-auto" />}

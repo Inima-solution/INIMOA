@@ -7,7 +7,10 @@ import { defineQueryFilters } from '@app/features/next-soup/filters/filter-store
 import { soupItemMatchesProjectMembership } from '@app/features/next-soup/filters/query-filters';
 import { SoupContextProvider } from '@app/features/next-soup/soup-context';
 import { SoupViewList } from '@app/features/next-soup/soup-view/soup-view';
-import { SoupViewContextProvider } from '@app/features/next-soup/soup-view/soup-view-context';
+import {
+  SoupViewContextProvider,
+  useSoupView,
+} from '@app/features/next-soup/soup-view/soup-view-context';
 import { getIsSpecialProject } from '@block-project/isSpecial';
 import { SidePanel } from '@components/app/side-panel';
 import { useBlockId } from '@core/block';
@@ -22,9 +25,11 @@ import {
   type UploadInput,
   uploadFiles,
 } from '@core/util/upload';
+import { isTaskEntity } from '@entity/types/entity';
+import { TaskSubtaskProgressProvider } from '@property/task-subtask-progress';
 import { refetchSoupEntity } from '@queries/soup/cache';
 import { refetchResources } from '@service-storage/util/refetchResources';
-import { type Component, createSignal, Show } from 'solid-js';
+import { type Component, createMemo, createSignal, Show } from 'solid-js';
 import { ModalsProvider } from './ModalsProvider';
 import { ProjectSidePanelSections } from './sidepanel/ProjectSidePanelSections';
 import { TopBar } from './TopBar';
@@ -167,9 +172,33 @@ const ProjectEntityList = (props: {
           emailView: 'all',
         })}
       >
-        <SoupViewList customScrollbarHidden={true} scopeId={props.scopeId} />
+        <ProjectSoupViewList
+          isSpecialProject={getIsSpecialProject(props.projectId)}
+          scopeId={props.scopeId}
+        />
       </SoupViewContextProvider>
     </SoupContextProvider>
+  );
+};
+
+const ProjectSoupViewList = (props: {
+  isSpecialProject: boolean;
+  scopeId: string;
+}) => {
+  const soupView = useSoupView();
+  const taskIds = createMemo(() => {
+    if (props.isSpecialProject) return [];
+
+    return soupView.rows().flatMap((row) => {
+      if (row.getIsGrouped() || row.getIsLoadMore()) return [];
+      return isTaskEntity(row.original) ? [row.original.id] : [];
+    });
+  });
+
+  return (
+    <TaskSubtaskProgressProvider taskIds={taskIds}>
+      <SoupViewList customScrollbarHidden={true} scopeId={props.scopeId} />
+    </TaskSubtaskProgressProvider>
   );
 };
 

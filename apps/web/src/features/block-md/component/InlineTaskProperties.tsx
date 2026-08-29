@@ -15,6 +15,10 @@ import {
 } from '@property/context/PropertiesContext';
 import { useEntityProperties } from '@property/hooks';
 import { InlineFetchedEntityTagsPill } from '@property/tags';
+import {
+  TaskSubtaskProgressIndicator,
+  TaskSubtaskProgressProvider,
+} from '@property/task-subtask-progress';
 import type { Property, PropertyApiValues } from '@property/types';
 import { useBulkSaveEntityPropertiesMutation } from '@queries/properties/entity';
 import type { EntityType } from '@service-properties/generated/schemas/entityType';
@@ -100,6 +104,11 @@ export function InlineTaskProperties() {
                 <ProgressChip stats={progressStats()} />
               </Show>
             )}
+          </Show>
+          <Show when={blockName === 'task'}>
+            <TaskSubtaskProgressProvider taskIds={() => [blockId]}>
+              <TaskSubtaskProgressIndicator taskId={blockId} />
+            </TaskSubtaskProgressProvider>
           </Show>
           <Modals />
         </PropertiesProvider>
