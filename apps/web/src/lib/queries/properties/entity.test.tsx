@@ -1,3 +1,4 @@
+import { PROPERTY_OPTION_IDS, SYSTEM_PROPERTY_IDS } from '@property/constants';
 import type { Property } from '@property/types';
 import {
   onlineManager,
@@ -222,12 +223,12 @@ function restStatusProperty(value: string) {
   return {
     property: {
       id: 'assignment-1',
-      property_definition_id: 'status-def',
+      property_definition_id: SYSTEM_PROPERTY_IDS.STATUS,
       created_at: '2026-08-29T00:00:00.000Z',
       updated_at: '2026-08-29T00:00:00.000Z',
     },
     definition: {
-      id: 'status-def',
+      id: SYSTEM_PROPERTY_IDS.STATUS,
       display_name: 'Status',
       data_type: 'SELECT_STRING',
       is_multi_select: false,
@@ -946,20 +947,97 @@ describe('useBulkSaveEntityPropertiesMutation dispositions', () => {
     expect(testQueryClient.invalidateQueries).toHaveBeenCalledTimes(3);
   });
 
-  it('keeps the existing TanStack lifecycle when GraphQL Soup is disabled', async () => {
+  it('rolls back a Task Status REST CONFLICT without reporting optimistic success', async () => {
+    const taskStatusProperty = {
+      propertyId: 'assignment-1',
+      propertyDefinitionId: SYSTEM_PROPERTY_IDS.STATUS,
+      displayName: 'Status',
+      valueType: 'SELECT_STRING',
+      isMultiSelect: false,
+      isSystemProperty: true,
+    } as unknown as Property;
+    const taskStatusVariables = {
+      properties: [
+        {
+          entityId: 'task-1',
+          entityType: 'TASK' as const,
+          property: taskStatusProperty,
+          apiValues: {
+            valueType: 'SELECT_STRING' as const,
+            values: [PROPERTY_OPTION_IDS.STATUS.IN_PROGRESS],
+          },
+        },
+      ],
+    };
     graphqlSoupEnabledMock.mockReturnValue(false);
+    setGraphqlFlagEnabled(false);
+    createGraphqlEntityPropertiesQueryMock.mockReturnValue({
+      isEnabled: () => false,
+      result: {
+        data: undefined,
+        error: null,
+        isLoading: false,
+        isFetching: false,
+      },
+      refetch: vi.fn(),
+    });
     setRestEntityPropertyMock.mockResolvedValue(
-      err([{ code: 'SERVER_ERROR', message: 'invalid property' }])
+      err([{ code: 'CONFLICT', message: 'Status was changed elsewhere' }])
+    );
+    getRestEntityPropertiesMock.mockResolvedValue(
+      ok({
+        properties: [
+          restStatusProperty(PROPERTY_OPTION_IDS.STATUS.NOT_STARTED),
+        ],
+      })
+    );
+    const savedTaskKey = propertiesKeys.entity({
+      entityType: 'TASK',
+      entityId: 'task-1',
+    }).queryKey;
+    const otherTaskKey = propertiesKeys.entity({
+      entityType: 'TASK',
+      entityId: 'task-2',
+    }).queryKey;
+    testQueryClient.setQueryData(otherTaskKey, ['other-task-value']);
+
+    dispose?.();
+    renderWithQueryClient(() => {
+      mutation = useBulkSaveEntityPropertiesMutation();
+      entityQuery = useEntityPropertiesQuery(
+        () => 'TASK',
+        () => 'task-1',
+        false
+      );
+    });
+    await vi.waitFor(() =>
+      expect(entityQuery.data?.[0]?.value).toEqual([
+        PROPERTY_OPTION_IDS.STATUS.NOT_STARTED,
+      ])
     );
 
-    await expect(mutation.mutateAsync(variables)).rejects.toThrow(
+    await expect(mutation.mutateAsync(taskStatusVariables)).rejects.toThrow(
       'One or more properties permanently failed to save'
     );
 
+    await vi.waitFor(() =>
+      expect(getRestEntityPropertiesMock).toHaveBeenCalledTimes(2)
+    );
     expect(optimisticUpdateSoupEntityMock).toHaveBeenCalledOnce();
     expect(rollbackMock).toHaveBeenCalledOnce();
+    expect(invalidateSoupEntityMock).toHaveBeenCalledOnce();
     expect(invalidateSoupEntityMock).toHaveBeenCalledWith('task-1');
-    expect(testQueryClient.invalidateQueries).toHaveBeenCalled();
+    expect(testQueryClient.invalidateQueries).toHaveBeenCalledOnce();
+    expect(testQueryClient.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: savedTaskKey,
+    });
+    expect(entityQuery.data?.[0]?.value).toEqual([
+      PROPERTY_OPTION_IDS.STATUS.NOT_STARTED,
+    ]);
+    expect(testQueryClient.getQueryData(otherTaskKey)).toEqual([
+      'other-task-value',
+    ]);
+    expect(trackMock).not.toHaveBeenCalled();
     expect(toastFailureMock).toHaveBeenCalledOnce();
   });
 
