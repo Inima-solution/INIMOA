@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n            SELECT d.id, d.\"deletedAt\"::timestamptz AS \"deleted_at!\"\n            FROM \"Document\" d\n            WHERE d.\"deletedAt\" IS NOT NULL AND d.\"deletedAt\" <= $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "deleted_at!",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Timestamp"
+      ]
+    },
+    "nullable": [
+      false,
+      null
+    ]
+  },
+  "hash": "fb275747f5e4672f07f4850f380bc3bdf0eec41bfbc0054f54614c321577cfaa"
+}

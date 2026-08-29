@@ -9,7 +9,8 @@ mod save_document;
 pub mod v2;
 
 pub use delete_document::{
-    delete_document, delete_document_bulk_tsx, delete_document_version, get_shas_for_deletion,
+    DocumentPurgeMetadata, DocumentPurgeOutcome, delete_document, delete_document_bulk_tsx,
+    delete_document_version, get_shas_for_deletion, purge_deleted_document,
 };
 pub use get_document::{
     get_basic_document, get_basic_documents, get_bom_parts, get_bom_parts_bulk_tsx,

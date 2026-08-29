@@ -106,93 +106,24 @@ impl MacroEventBroker for FakeEventBroker {
     }
 }
 
-#[tokio::test]
-async fn publish_document_purge_events_publishes_separately_keyed_events() {
-    let event_broker = FakeEventBroker::default();
-    let document_ids = vec!["document-one".to_string(), "document-two".to_string()];
-
-    publish_document_purge_events(&event_broker, &document_ids)
-        .await
-        .unwrap();
-
-    let published = event_broker.published();
-    assert_eq!(published.len(), document_ids.len());
-
-    for (event, document_id) in published.iter().zip(&document_ids) {
-        assert_eq!(event.topic, "macro.documents");
-        assert_eq!(event.key, *document_id);
-        assert_eq!(event.envelope["schema_version"], json!(1));
-        assert_eq!(event.envelope["event_type"], json!("document.purged"));
-        assert_eq!(
-            event.envelope["metadata"]["document_id"],
-            json!(document_id)
-        );
-    }
-}
-
-#[tokio::test]
-async fn publish_document_purge_events_returns_immediate_send_failures() {
-    let event_broker = FakeEventBroker::failing_send();
-    let document_ids = vec!["document-one".to_string()];
-
-    let error = publish_document_purge_events(&event_broker, &document_ids)
-        .await
-        .expect_err("immediate send failure should be returned");
-
-    assert!(format!("{error:#}").contains("event enqueue rejected"));
-}
-
-#[tokio::test]
-async fn publish_document_purge_events_returns_delivery_failures() {
-    let event_broker = FakeEventBroker::failing_delivery();
-    let document_ids = vec!["document-one".to_string()];
-
-    let error = publish_document_purge_events(&event_broker, &document_ids)
-        .await
-        .expect_err("delivery failure should be returned");
-
-    assert!(format!("{error:#}").contains("publisher unavailable"));
-}
-
-#[tokio::test]
-async fn publish_document_purge_events_returns_delivery_join_failures() {
-    let event_broker = FakeEventBroker::failing_join();
-    let document_ids = vec!["document-one".to_string()];
-
-    let error = publish_document_purge_events(&event_broker, &document_ids)
-        .await
-        .expect_err("delivery join failure should be returned");
-
-    assert!(
-        format!("{error:#}").contains("document purge event publication task failed"),
-        "unexpected error: {error:#}"
+#[test]
+fn document_purge_candidates_round_trip_exact_rfc3339_tokens_without_events() {
+    let deleted_at = chrono::DateTime::parse_from_rfc3339("2026-07-01T02:03:04.123456+00:00")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let entries = document_purge_queue_entries(vec![
+        macro_db_client::document::get_all_documents::DocumentPurgeCandidate {
+            document_id: "document-old".into(),
+            deleted_at,
+        },
+    ]);
+    assert_eq!(
+        entries,
+        vec![(
+            "document-old".into(),
+            "2026-07-01T02:03:04.123456+00:00".into()
+        )]
     );
-}
-
-#[tokio::test]
-async fn publish_document_purge_events_waits_for_every_delivery() {
-    let delivery_gate = Arc::new(Semaphore::new(0));
-    let event_broker = FakeEventBroker::waiting_for_delivery(delivery_gate.clone());
-    let document_ids = vec!["document-one".to_string(), "document-two".to_string()];
-
-    let publication_task = tokio::spawn({
-        let event_broker = event_broker.clone();
-        let document_ids = document_ids.clone();
-        async move { publish_document_purge_events(&event_broker, &document_ids).await }
-    });
-
-    while event_broker.published().len() < document_ids.len() {
-        tokio::task::yield_now().await;
-    }
-
-    assert!(!publication_task.is_finished());
-
-    delivery_gate.add_permits(1);
-    tokio::task::yield_now().await;
-    assert!(!publication_task.is_finished());
-
-    delivery_gate.add_permits(1);
-    publication_task.await.unwrap().unwrap();
 }
 
 #[tokio::test]

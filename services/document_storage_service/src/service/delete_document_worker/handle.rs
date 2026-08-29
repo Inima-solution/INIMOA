@@ -3,7 +3,52 @@ use documents_hex::domain::ports::editing::EditingWorkerService;
 use entity_access::domain::models::EntityType;
 use properties::{EditReceipt, PropertiesService as _};
 
+use crate::service::document_event_publisher::publish_document_purged_event;
+
 use super::DeleteDocumentWorkerContext;
+
+pub(super) enum MessageRoute {
+    OwnerCleanup,
+    LegacyRetention,
+    PollerCandidate(chrono::DateTime<chrono::Utc>),
+    AckOnly,
+}
+
+pub(super) enum PurgeRoute {
+    AckOnly,
+    PostCommitCleanup(macro_db_client::document::DocumentPurgeMetadata),
+}
+
+pub(super) fn parse_purge_token(token: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    chrono::DateTime::parse_from_rfc3339(token)
+        .ok()
+        .map(|value| value.with_timezone(&chrono::Utc))
+}
+
+pub(super) fn classify_message(has_owner: bool, token: Option<&str>) -> MessageRoute {
+    if has_owner {
+        // Existing owner messages own external cleanup; an unexpected token cannot
+        // upgrade them into a database purge candidate.
+        return MessageRoute::OwnerCleanup;
+    }
+    match token {
+        None => MessageRoute::LegacyRetention,
+        Some(token) => {
+            parse_purge_token(token).map_or(MessageRoute::AckOnly, MessageRoute::PollerCandidate)
+        }
+    }
+}
+
+pub(super) fn route_purge_outcome(
+    outcome: macro_db_client::document::DocumentPurgeOutcome,
+) -> PurgeRoute {
+    match outcome {
+        macro_db_client::document::DocumentPurgeOutcome::Purged(metadata) => {
+            PurgeRoute::PostCommitCleanup(metadata)
+        }
+        _ => PurgeRoute::AckOnly,
+    }
+}
 
 #[tracing::instrument(skip(ctx, message), fields(message_id=message.message_id), err)]
 pub async fn handle(
@@ -12,12 +57,14 @@ pub async fn handle(
 ) -> anyhow::Result<()> {
     tracing::debug!("processing delete document message");
 
-    let (document_id, mut user_id) = if let Some(attributes) = message.message_attributes.as_ref() {
+    let (document_id, mut user_id, deleted_at_token) = if let Some(attributes) =
+        message.message_attributes.as_ref()
+    {
         let document_id = attributes
             .get("document_id")
             .map(|document_id| {
                 tracing::trace!(document_id=?document_id, "found document_id in message attributes");
-                document_id.string_value().unwrap_or_default()
+                document_id.string_value().unwrap_or_default().to_string()
             })
             .context("document_id should be a message attribute")?;
 
@@ -26,17 +73,48 @@ pub async fn handle(
             user_id.string_value().unwrap_or_default().to_string()
         });
 
-        (document_id, user_id)
+        let deleted_at_token = attributes
+            .get("deleted_at")
+            .and_then(|deleted_at| deleted_at.string_value().map(ToString::to_string));
+        (document_id, user_id, deleted_at_token)
     } else {
         ctx.worker.cleanup_message(message).await?;
         anyhow::bail!("message attributes not found")
     };
 
-    // Only need to get and delete document from macrodb if the user_id is not present in the message attributes
-    if user_id.is_none() {
+    // A tokenized ownerless message is a poller candidate. Its exact timestamp
+    // means a restored, missing, or re-deleted row is acknowledged as stale
+    // without touching Redis, storage, sync, editing, mentions, properties, or events.
+    let message_route = classify_message(user_id.is_some(), deleted_at_token.as_deref());
+    if let MessageRoute::AckOnly = message_route {
+        ctx.worker.cleanup_message(message).await?;
+        return Ok(());
+    }
+    if let MessageRoute::PollerCandidate(deleted_at) = message_route {
+        let outcome =
+            macro_db_client::document::purge_deleted_document(&ctx.db, &document_id, deleted_at)
+                .await?;
+        let metadata = match route_purge_outcome(outcome) {
+            PurgeRoute::PostCommitCleanup(metadata) => metadata,
+            PurgeRoute::AckOnly => {
+                ctx.worker.cleanup_message(message).await?;
+                return Ok(());
+            }
+        };
+        if metadata.file_type.as_deref() == Some("docx") {
+            ctx.redis_client
+                .decrement_counts(&count_occurrences(metadata.bom_shas))
+                .await?;
+        }
+        publish_document_purged_event(&ctx.macro_event_broker, &metadata.document_id)?;
+        return cleanup_after_purge(ctx, message, &metadata.document_id, &metadata.owner).await;
+    }
+
+    // Legacy ownerless retention messages deliberately retain their old path.
+    if matches!(message_route, MessageRoute::LegacyRetention) {
         tracing::info!(document_id=%document_id, "starting delete process for document");
 
-        let document = macro_db_client::document::get_deleted_document_info(&ctx.db, document_id)
+        let document = macro_db_client::document::get_deleted_document_info(&ctx.db, &document_id)
             .await
             .inspect_err(
                 |e| tracing::error!(error=?e, document_id=%document_id, "unable to get document"),
@@ -71,27 +149,26 @@ pub async fn handle(
         tracing::trace!(document_id=%document.document_id, "deleted document");
     }
 
-    // delete entity mentions where this doc is the source
+    let user_id = user_id.context("user_id should be some")?;
+    cleanup_after_purge(ctx, message, &document_id, &user_id).await
+}
+
+async fn cleanup_after_purge(
+    ctx: &DeleteDocumentWorkerContext,
+    message: &aws_sdk_sqs::types::Message,
+    document_id: &str,
+    user_id: &str,
+) -> anyhow::Result<()> {
     let _ = comms_db_client::entity_mentions::delete_entity_mentions_by_source(
         &ctx.db,
         vec![document_id.to_string()],
     )
     .await
-    .inspect_err(|e| {
-        tracing::warn!(error=?e, "could not delete entity mentions for document");
-    });
-
-    let user_id = user_id.context("user_id should be some")?;
-
-    // Delete files from s3
-    tracing::trace!(user_id=%user_id, document_id=%document_id, "deleting files from s3");
+    .inspect_err(|e| tracing::warn!(error=?e, "could not delete entity mentions for document"));
     ctx.s3_client
-        .delete_document(&user_id, document_id)
+        .delete_document(user_id, document_id)
         .await
         .context("failed to delete files from s3")?;
-    tracing::trace!(document_id=%document_id, "deleted files from s3");
-
-    // Delete files from sync service
     let _ = ctx
         .sync_service_client
         .delete(document_id)
@@ -99,8 +176,6 @@ pub async fn handle(
         .inspect_err(|e| {
             tracing::trace!(error=?e, "could not delete file from sync service");
         });
-
-    // Delete AI edit traces (they hold full document content)
     let _ = ctx
         .editing_worker_client
         .delete_traces(document_id)
@@ -108,22 +183,17 @@ pub async fn handle(
         .inspect_err(|e| {
             tracing::trace!(error=?e, "could not delete ai edit traces");
         });
-
-    // Delete document properties
-    tracing::trace!(document_id=%document_id, "deleting document properties");
-
-    let cleanup_receipt = document_cleanup_receipt(document_id);
+    let receipt = document_cleanup_receipt(document_id);
     let _ = ctx
         .properties_service
-        .delete_entity_properties(&cleanup_receipt)
+        .delete_entity_properties(&receipt)
         .await
-        .inspect_err(|e| tracing::error!(error=?e, "failed to delete entity properties"));
-    tracing::trace!(document_id=%document_id, "deleted document properties");
-
+        .inspect_err(|e| {
+            tracing::error!(error=?e, "failed to delete entity properties");
+        });
     let _ = ctx.worker.cleanup_message(message).await.inspect_err(|e| {
         tracing::error!(error=?e, "failed to cleanup message");
     });
-
     Ok(())
 }
 

@@ -33,6 +33,17 @@ fn row_error(error: sqlx::Error) -> LifecycleError {
     }
 }
 
+pub(crate) fn require_purged(
+    outcome: macro_db_client::document::DocumentPurgeOutcome,
+) -> Result<macro_db_client::document::DocumentPurgeMetadata, LifecycleError> {
+    match outcome {
+        macro_db_client::document::DocumentPurgeOutcome::Purged(metadata) => Ok(metadata),
+        macro_db_client::document::DocumentPurgeOutcome::StaleOrUnavailable => {
+            Err(LifecycleError::NotFound)
+        }
+    }
+}
+
 /// Production lifecycle adapter backed by the legacy persistence clients.
 pub struct DssEntityLifecycleAdapter<B: MacroEventBroker> {
     db: PgPool,
@@ -114,20 +125,22 @@ impl<B: MacroEventBroker> EntityLifecycleService for DssEntityLifecycleAdapter<B
         let document = macro_db_client::document::get_basic_document(&self.db, &entity.entity_id)
             .await
             .map_err(row_error)?;
-        if document.file_type.as_deref() == Some("docx") {
-            let bom_parts = macro_db_client::document::get_bom_parts(&self.db, &entity.entity_id)
-                .await
-                .map_err(|error| internal!(error))?;
+        let deleted_at = document.deleted_at.ok_or(LifecycleError::NotFound)?;
+        let metadata = macro_db_client::document::purge_deleted_document(
+            &self.db,
+            &entity.entity_id,
+            deleted_at,
+        )
+        .await
+        .map_err(|error| internal!(error))?;
+        let metadata = require_purged(metadata)?;
+        let project_id = metadata.project_id.clone();
+        if metadata.file_type.as_deref() == Some("docx") {
             self.redis
-                .decrement_counts(&count_occurrences(
-                    bom_parts.into_iter().map(|part| part.sha).collect(),
-                ))
+                .decrement_counts(&count_occurrences(metadata.bom_shas))
                 .await
                 .map_err(|error| internal!(error))?;
         }
-        macro_db_client::document::delete_document(&self.db, &entity.entity_id)
-            .await
-            .map_err(|error| internal!(error))?;
         comms_db_client::entity_mentions::delete_entity_mentions_by_source(
             &self.db,
             vec![entity.entity_id.to_string()],
@@ -136,13 +149,12 @@ impl<B: MacroEventBroker> EntityLifecycleService for DssEntityLifecycleAdapter<B
         .inspect_err(|error| tracing::error!(error = ?error, "unable to delete entity mentions"))
         .ok();
         self.sqs
-            .enqueue_document_delete(document.owner.as_ref(), &entity.entity_id)
+            .enqueue_document_delete(&metadata.owner, &entity.entity_id)
             .await
             .map_err(|error| internal!(error))?;
         publish_document_purged_event(&self.event_broker, &entity.entity_id)
             .map_err(|error| internal!(error))?;
-        Ok(document
-            .project_id
+        Ok(project_id
             .into_iter()
             .map(|id| EntityType::Project.with_entity_string(id))
             .collect())

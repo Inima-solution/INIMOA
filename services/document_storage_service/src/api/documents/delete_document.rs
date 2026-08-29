@@ -17,9 +17,21 @@ use model::response::{
 use models_permissions::share_permission::access_level::OwnerAccessLevel;
 use serde::Deserialize;
 
+#[cfg(test)]
+mod test;
+
 #[derive(Deserialize)]
 pub struct Params {
     pub document_id: String,
+}
+
+fn require_purged(
+    outcome: macro_db_client::document::DocumentPurgeOutcome,
+) -> Option<macro_db_client::document::DocumentPurgeMetadata> {
+    match outcome {
+        macro_db_client::document::DocumentPurgeOutcome::Purged(metadata) => Some(metadata),
+        macro_db_client::document::DocumentPurgeOutcome::StaleOrUnavailable => None,
+    }
 }
 
 /// Permanently deletes a document.
@@ -48,35 +60,44 @@ pub async fn permanently_delete_document_handler(
 ) -> Result<Response, Response> {
     tracing::info!("permanently_delete_document");
 
-    // Decrement sha counts for docx files
-    if let Some(file_type) = document_context.file_type.as_deref()
-        && file_type == "docx"
-    {
-        let bom_parts = macro_db_client::document::get_bom_parts(&state.db, &document_id)
+    let deleted_at = document_context.deleted_at.ok_or_else(|| {
+        (
+            StatusCode::NOT_FOUND,
+            Json(ErrorResponse {
+                message: "document not found".into(),
+            }),
+        )
+            .into_response()
+    })?;
+    let metadata =
+        macro_db_client::document::purge_deleted_document(&state.db, &document_id, deleted_at)
             .await
             .map_err(|e| {
-                tracing::error!(error=?e, "unable to get bom parts");
+                tracing::error!(error=?e, "unable to purge document");
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     Json(ErrorResponse {
-                        message: "unable to get bom parts".into(),
+                        message: "unable to delete document".into(),
                     }),
                 )
                     .into_response()
             })?;
-
-        // Transform bom parts into Vec<(sha, count)>
-        let sha_counts = count_occurrences(
-            bom_parts
-                .iter()
-                .map(|bp| bp.sha.clone())
-                .collect::<Vec<String>>(),
-        );
-
-        tracing::trace!("decrementing sha ref count");
+    let metadata = match require_purged(metadata) {
+        Some(metadata) => metadata,
+        None => {
+            return Err((
+                StatusCode::NOT_FOUND,
+                Json(ErrorResponse {
+                    message: "document not found".into(),
+                }),
+            )
+                .into_response());
+        }
+    };
+    if metadata.file_type.as_deref() == Some("docx") {
         state
             .redis_client
-            .decrement_counts(&sha_counts)
+            .decrement_counts(&count_occurrences(metadata.bom_shas))
             .await
             .map_err(|e| {
                 tracing::error!(error=?e, "unable to decrement sha ref counts");
@@ -89,20 +110,6 @@ pub async fn permanently_delete_document_handler(
                     .into_response()
             })?;
     }
-
-    // Delete document info from db
-    macro_db_client::document::delete_document(&state.db, &document_id)
-        .await
-        .map_err(|e| {
-            tracing::error!(error=?e, "unable to delete document");
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(ErrorResponse {
-                    message: "unable to delete document".into(),
-                }),
-            )
-                .into_response()
-        })?;
 
     // Delete entity mentions where this doc is the source
     if let Err(e) = comms_db_client::entity_mentions::delete_entity_mentions_by_source(
@@ -117,7 +124,7 @@ pub async fn permanently_delete_document_handler(
     // Queue document for deletion
     state
         .sqs_client
-        .enqueue_document_delete(document_context.owner.as_ref(), &document_id)
+        .enqueue_document_delete(&metadata.owner, &document_id)
         .await
         .map_err(|e| {
             tracing::error!(error=?e, "unable to enqueue document delete");

@@ -3,9 +3,13 @@ use std::collections::HashMap;
 
 use crate::{MAX_BATCH_SIZE, message_attribute::build_string_message_attribute};
 
+#[cfg(test)]
+mod test;
+
 fn construct_message_attributes(
     user_id: Option<&str>,
     document_id: &str,
+    deleted_at: Option<&str>,
 ) -> anyhow::Result<HashMap<String, aws_sdk_sqs::types::MessageAttributeValue>> {
     let mut message_attributes = HashMap::new();
 
@@ -20,6 +24,12 @@ fn construct_message_attributes(
         "document_id".to_string(),
         build_string_message_attribute(document_id)?,
     );
+    if let Some(deleted_at) = deleted_at {
+        message_attributes.insert(
+            "deleted_at".to_string(),
+            build_string_message_attribute(deleted_at)?,
+        );
+    }
 
     Ok(message_attributes)
 }
@@ -34,7 +44,7 @@ pub(crate) async fn bulk_enqueue_document_delete(
     let mut entries: Vec<SendMessageBatchRequestEntry> = vec![];
     for document_id in documents {
         tracing::trace!(document_id=?document_id, "enqueueing document delete");
-        let message_attributes = construct_message_attributes(None, document_id.as_str())?;
+        let message_attributes = construct_message_attributes(None, document_id.as_str(), None)?;
         let batch_requesst = SendMessageBatchRequestEntry::builder()
             .id(&document_id)
             .message_body(&document_id)
@@ -65,6 +75,40 @@ pub(crate) async fn bulk_enqueue_document_delete(
     Ok(())
 }
 
+/// Bulk enqueues tokenized hard-purge candidates. The token is an RFC3339
+/// representation of the exact `Document.deletedAt` value selected by poller.
+#[tracing::instrument(skip(sqs_client, candidates))]
+pub(crate) async fn bulk_enqueue_document_purge_candidates(
+    sqs_client: &aws_sdk_sqs::Client,
+    queue_url: &str,
+    candidates: Vec<(String, String)>,
+) -> anyhow::Result<()> {
+    let mut entries = Vec::new();
+    for (document_id, deleted_at) in candidates {
+        let message_attributes =
+            construct_message_attributes(None, &document_id, Some(&deleted_at))?;
+        entries.push(
+            SendMessageBatchRequestEntry::builder()
+                .id(&document_id)
+                .message_body(&document_id)
+                .set_message_attributes(Some(message_attributes))
+                .build()?,
+        );
+    }
+    if entries.is_empty() {
+        return Ok(());
+    }
+    for chunk in entries.chunks(MAX_BATCH_SIZE) {
+        sqs_client
+            .send_message_batch()
+            .set_entries(Some(chunk.to_vec()))
+            .queue_url(queue_url)
+            .send()
+            .await?;
+    }
+    Ok(())
+}
+
 #[tracing::instrument(skip(sqs_client, documents))]
 pub(crate) async fn bulk_enqueue_document_delete_with_owner(
     sqs_client: &aws_sdk_sqs::Client,
@@ -75,7 +119,7 @@ pub(crate) async fn bulk_enqueue_document_delete_with_owner(
     for (document_id, user_id) in documents {
         tracing::trace!(document_id=?document_id, "enqueueing document delete");
         let message_attributes =
-            construct_message_attributes(Some(user_id.as_str()), document_id.as_str())?;
+            construct_message_attributes(Some(user_id.as_str()), document_id.as_str(), None)?;
         let batch_requesst = SendMessageBatchRequestEntry::builder()
             .id(&document_id)
             .message_body(&document_id)
@@ -114,7 +158,7 @@ pub(crate) async fn enqueue_document_delete(
     user_id: &str,
     document_id: &str,
 ) -> anyhow::Result<()> {
-    let message_attributes = construct_message_attributes(Some(user_id), document_id)?;
+    let message_attributes = construct_message_attributes(Some(user_id), document_id, None)?;
 
     sqs_client
         .send_message()

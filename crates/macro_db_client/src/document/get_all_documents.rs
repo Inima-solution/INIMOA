@@ -139,20 +139,29 @@ pub async fn get_all_documents(
 pub async fn get_documents_to_delete(
     db: &Pool<Postgres>,
     date: &chrono::NaiveDateTime,
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<Vec<DocumentPurgeCandidate>> {
     let result = sqlx::query!(
         r#"
-            SELECT d.id
+            SELECT d.id, d."deletedAt"::timestamptz AS "deleted_at!"
             FROM "Document" d
             WHERE d."deletedAt" IS NOT NULL AND d."deletedAt" <= $1
         "#,
         date
     )
-    .map(|row| row.id)
+    .map(|row| DocumentPurgeCandidate {
+        document_id: row.id,
+        deleted_at: row.deleted_at,
+    })
     .fetch_all(db)
     .await?;
 
     Ok(result)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocumentPurgeCandidate {
+    pub document_id: String,
+    pub deleted_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Returns a paginated list of document IDs, sorting by ascending so we don't miss new ones
@@ -196,6 +205,40 @@ mod tests {
         assert_eq!(documents.1, 7);
         assert_eq!(documents.0.len(), 3);
 
+        Ok(())
+    }
+
+    #[sqlx::test(fixtures(path = "../../fixtures", scripts("basic_user_with_document")))]
+    async fn delete_candidates_preserve_exact_timestamp_and_cutoff(
+        pool: Pool<Postgres>,
+    ) -> anyhow::Result<()> {
+        let selected = chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00.123Z")?
+            .with_timezone(&chrono::Utc);
+        let newer = chrono::DateTime::parse_from_rfc3339("2026-02-01T00:00:00Z")?
+            .with_timezone(&chrono::Utc);
+        sqlx::query!(
+            r#"
+            INSERT INTO "Document" (id, name, owner, "deletedAt")
+            VALUES
+                ('00000000-0000-0000-0000-000000000201', 'selected', 'macro|user@user.com', $1),
+                ('00000000-0000-0000-0000-000000000202', 'newer', 'macro|user@user.com', $2),
+                ('00000000-0000-0000-0000-000000000203', 'live', 'macro|user@user.com', NULL)
+            "#,
+            selected.naive_utc(),
+            newer.naive_utc()
+        )
+        .execute(&pool)
+        .await?;
+        let cutoff = chrono::DateTime::parse_from_rfc3339("2026-01-15T00:00:00Z")?.naive_utc();
+        let mut candidates = get_documents_to_delete(&pool, &cutoff).await?;
+        candidates.sort_by(|left, right| left.document_id.cmp(&right.document_id));
+        assert_eq!(
+            candidates,
+            vec![DocumentPurgeCandidate {
+                document_id: "00000000-0000-0000-0000-000000000201".into(),
+                deleted_at: selected
+            }]
+        );
         Ok(())
     }
 }

@@ -1341,6 +1341,7 @@ async fn run() -> anyhow::Result<()> {
             sync_service_client: api_context.sync_service_client.clone(),
             editing_worker_client,
             properties_service: api_context.properties_service.clone(),
+            macro_event_broker: macro_event_broker.clone(),
         };
 
         tokio::spawn(async move {

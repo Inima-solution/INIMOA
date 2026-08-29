@@ -1,4 +1,29 @@
 use super::*;
+use crate::outbound::entity_mutation::require_purged;
+
+#[test]
+fn stale_purge_is_not_found_before_effects() {
+    assert!(matches!(
+        require_purged(macro_db_client::document::DocumentPurgeOutcome::StaleOrUnavailable),
+        Err(LifecycleError::NotFound)
+    ));
+}
+
+#[test]
+fn purged_metadata_passes_through_exactly() {
+    let metadata = macro_db_client::document::DocumentPurgeMetadata {
+        document_id: "document-id".into(),
+        owner: "macro|owner@example.com".into(),
+        project_id: Some("project-id".into()),
+        file_type: Some("docx".into()),
+        bom_shas: vec!["sha-a".into(), "sha-b".into()],
+    };
+    let actual = require_purged(macro_db_client::document::DocumentPurgeOutcome::Purged(
+        metadata.clone(),
+    ))
+    .unwrap();
+    assert_eq!(actual, metadata);
+}
 
 #[test]
 fn success_preserves_domain_effect_order_and_kind() {
