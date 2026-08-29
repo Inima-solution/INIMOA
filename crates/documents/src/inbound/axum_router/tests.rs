@@ -125,6 +125,8 @@ struct FakeDocumentService {
     team_slug_calls: Mutex<Vec<TeamSlugCall>>,
     team_slug_result: Mutex<Option<TeamSlugResult>>,
     get_document_calls: Mutex<Vec<String>>,
+    edit_conflict: Mutex<bool>,
+    edit_calls: Mutex<Vec<EditDocumentServiceArgs>>,
 }
 
 impl FakeDocumentService {
@@ -182,6 +184,20 @@ impl FakeDocumentService {
             .lock()
             .expect("get document calls lock poisoned")
             .clone()
+    }
+
+    fn set_edit_hierarchy_conflict(&self) {
+        *self
+            .edit_conflict
+            .lock()
+            .expect("edit conflict lock poisoned") = true;
+    }
+
+    fn edit_call_count(&self) -> usize {
+        self.edit_calls
+            .lock()
+            .expect("edit calls lock poisoned")
+            .len()
     }
 }
 
@@ -353,9 +369,23 @@ impl DocumentService for FakeDocumentService {
         &self,
         _entity_access_receipt: EntityAccessReceipt<entity_access::domain::models::EditAccessLevel>,
         _document_context: DocumentBasic,
-        _args: EditDocumentServiceArgs,
+        args: EditDocumentServiceArgs,
     ) -> Result<(), DocumentError> {
-        panic!("unexpected edit_document call")
+        self.edit_calls
+            .lock()
+            .expect("edit calls lock poisoned")
+            .push(args);
+        if *self
+            .edit_conflict
+            .lock()
+            .expect("edit conflict lock poisoned")
+        {
+            Err(DocumentError::Conflict(
+                "task hierarchy must be cleared before moving this task".to_string(),
+            ))
+        } else {
+            Ok(())
+        }
     }
 
     async fn update_task_status(
@@ -563,6 +593,7 @@ struct DocumentAccessCall {
 struct FakeEntityAccessService {
     team_info: Arc<Mutex<Option<UserTeamInfo>>>,
     deny_document_access: Arc<Mutex<bool>>,
+    allow_project_access: Arc<Mutex<bool>>,
     document_access_calls: Arc<Mutex<Vec<DocumentAccessCall>>>,
 }
 
@@ -571,6 +602,7 @@ impl Default for FakeEntityAccessService {
         Self {
             team_info: Arc::new(Mutex::new(None)),
             deny_document_access: Arc::new(Mutex::new(false)),
+            allow_project_access: Arc::new(Mutex::new(false)),
             document_access_calls: Arc::new(Mutex::new(Vec::new())),
         }
     }
@@ -586,6 +618,13 @@ impl FakeEntityAccessService {
             .deny_document_access
             .lock()
             .expect("document access result lock poisoned") = true;
+    }
+
+    fn allow_project_access(&self) {
+        *self
+            .allow_project_access
+            .lock()
+            .expect("project access lock poisoned") = true;
     }
 
     fn document_access_calls(&self) -> Vec<DocumentAccessCall> {
@@ -649,8 +688,16 @@ impl EntityAccessService for FakeEntityAccessService {
         &self,
         _user_id: Option<&MacroUserId<Lowercase<'_>>>,
         _entity_id: &str,
-        _entity_type: EntityType,
+        entity_type: EntityType,
     ) -> Result<Option<AccessLevel>, AccessError> {
+        if entity_type == EntityType::Project
+            && *self
+                .allow_project_access
+                .lock()
+                .expect("project access lock poisoned")
+        {
+            return Ok(Some(AccessLevel::Owner));
+        }
         panic!("unexpected get_access_level call")
     }
 
@@ -1041,6 +1088,33 @@ async fn get_document_by_team_slug_preserves_domain_error_statuses() {
     assert!(access_service.document_access_calls().is_empty());
     assert!(document_service.get_document_calls().is_empty());
     assert!(document_service.internal_get_calls().is_empty());
+}
+
+#[tokio::test]
+async fn edit_document_hierarchy_conflict_returns_exact_public_json() {
+    let (router, document_service, access_service, _authorization_service) = test_router();
+    document_service.set_edit_hierarchy_conflict();
+    access_service.allow_project_access();
+    let request = Request::patch("/task-document")
+        .header("authorization", format!("Bearer {JWT_TOKEN}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "projectId": uuid::Uuid::new_v4().to_string()
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    let (status, body) = send(&router, request).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(
+        body,
+        json!({
+            "message": "conflict: task hierarchy must be cleared before moving this task"
+        })
+    );
+    assert_eq!(document_service.edit_call_count(), 1);
 }
 
 #[tokio::test]

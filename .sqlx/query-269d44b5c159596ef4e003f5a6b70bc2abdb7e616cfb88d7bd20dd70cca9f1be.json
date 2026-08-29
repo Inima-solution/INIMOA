@@ -1,0 +1,25 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH source AS (\n            SELECT d.id, d.\"projectId\",\n                   EXISTS (\n                       SELECT 1 FROM document_sub_type dst\n                       WHERE dst.document_id = d.id AND dst.sub_type = 'task'\n                   ) AS is_task\n            FROM \"Document\" d\n            WHERE d.id = $1\n            FOR UPDATE OF d\n        ), requested AS (\n            SELECT NULLIF($2, '') AS project_id\n        )\n        SELECT EXISTS (\n            SELECT 1\n            FROM source s\n            CROSS JOIN requested r\n            WHERE s.is_task\n              AND s.\"projectId\" IS DISTINCT FROM r.project_id\n              AND (\n                  EXISTS (\n                      SELECT 1\n                      FROM entity_properties ep\n                      WHERE ep.entity_id = s.id\n                        AND ep.entity_type = 'TASK'\n                        AND ep.property_definition_id IN ($3::uuid, $4::uuid)\n                        AND ep.values IS NOT NULL\n                        AND CASE\n                            WHEN ep.values->>'type' = 'EntityReference'\n                                AND jsonb_typeof(ep.values->'value') = 'array'\n                                THEN jsonb_array_length(ep.values->'value') > 0\n                            ELSE true\n                        END\n                  )\n                  OR EXISTS (\n                      SELECT 1\n                      FROM entity_properties ep\n                      CROSS JOIN LATERAL jsonb_array_elements(\n                          CASE WHEN jsonb_typeof(ep.values->'value') = 'array'\n                              THEN ep.values->'value' ELSE '[]'::jsonb END\n                      ) reference\n                      WHERE ep.entity_type = 'TASK'\n                        AND ep.property_definition_id IN ($3::uuid, $4::uuid)\n                        AND reference->>'entity_id' = s.id\n                  )\n              )\n        ) AS \"conflict!\"\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "conflict!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "269d44b5c159596ef4e003f5a6b70bc2abdb7e616cfb88d7bd20dd70cca9f1be"
+}

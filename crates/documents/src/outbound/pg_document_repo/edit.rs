@@ -6,6 +6,87 @@ use models_permissions::share_permission::access_level::AccessLevel;
 use models_permissions::share_permission::channel_share_permission::UpdateOperation;
 use sqlx::{Postgres, QueryBuilder, Transaction};
 
+const PARENT_TASK_PROPERTY_ID: uuid::Uuid = uuid::uuid!("00000001-0000-0000-0000-000000000005");
+const SUBTASKS_PROPERTY_ID: uuid::Uuid = uuid::uuid!("00000001-0000-0000-0000-000000000006");
+
+/// Serialize task hierarchy mutations and project moves in the same order.
+pub(super) async fn lock_task_hierarchy(
+    transaction: &mut Transaction<'_, Postgres>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKHIER")
+    )
+    .fetch_one(transaction.as_mut())
+    .await?;
+    Ok(())
+}
+
+/// Lock the source document and conservatively reject a task move that would
+/// leave either direction of its canonical hierarchy relationship behind.
+pub(super) async fn task_move_conflicts_with_hierarchy(
+    transaction: &mut Transaction<'_, Postgres>,
+    document_id: &str,
+    requested_project_id: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"
+        WITH source AS (
+            SELECT d.id, d."projectId",
+                   EXISTS (
+                       SELECT 1 FROM document_sub_type dst
+                       WHERE dst.document_id = d.id AND dst.sub_type = 'task'
+                   ) AS is_task
+            FROM "Document" d
+            WHERE d.id = $1
+            FOR UPDATE OF d
+        ), requested AS (
+            SELECT NULLIF($2, '') AS project_id
+        )
+        SELECT EXISTS (
+            SELECT 1
+            FROM source s
+            CROSS JOIN requested r
+            WHERE s.is_task
+              AND s."projectId" IS DISTINCT FROM r.project_id
+              AND (
+                  EXISTS (
+                      SELECT 1
+                      FROM entity_properties ep
+                      WHERE ep.entity_id = s.id
+                        AND ep.entity_type = 'TASK'
+                        AND ep.property_definition_id IN ($3::uuid, $4::uuid)
+                        AND ep.values IS NOT NULL
+                        AND CASE
+                            WHEN ep.values->>'type' = 'EntityReference'
+                                AND jsonb_typeof(ep.values->'value') = 'array'
+                                THEN jsonb_array_length(ep.values->'value') > 0
+                            ELSE true
+                        END
+                  )
+                  OR EXISTS (
+                      SELECT 1
+                      FROM entity_properties ep
+                      CROSS JOIN LATERAL jsonb_array_elements(
+                          CASE WHEN jsonb_typeof(ep.values->'value') = 'array'
+                              THEN ep.values->'value' ELSE '[]'::jsonb END
+                      ) reference
+                      WHERE ep.entity_type = 'TASK'
+                        AND ep.property_definition_id IN ($3::uuid, $4::uuid)
+                        AND reference->>'entity_id' = s.id
+                  )
+              )
+        ) AS "conflict!"
+        "#,
+        document_id,
+        requested_project_id,
+        PARENT_TASK_PROPERTY_ID,
+        SUBTASKS_PROPERTY_ID,
+    )
+    .fetch_one(transaction.as_mut())
+    .await
+}
+
 pub(super) async fn get_document_owner(
     transaction: &mut Transaction<'_, Postgres>,
     document_id: &str,

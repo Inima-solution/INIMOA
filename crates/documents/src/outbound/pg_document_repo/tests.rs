@@ -22,6 +22,51 @@ const SECOND_TEAM_ID: uuid::Uuid = uuid::uuid!("a0000000-0000-0000-0000-00000000
 const TEST_DOCUMENT_ID: &str = "d0000000-0000-0000-0000-000000000001";
 const TEST_DOCUMENT_OWNER_ID: &str = "macro|user@user.com";
 const TEST_DOCUMENT_NON_OWNER_ID: &str = "macro|teammate1@user.com";
+const PARENT_TASK_PROPERTY_ID: &str = "00000001-0000-0000-0000-000000000005";
+const SUBTASKS_PROPERTY_ID: &str = "00000001-0000-0000-0000-000000000006";
+const TEST_PROJECT_ID: &str = "d0000000-0000-0000-0000-100000000001";
+
+async fn set_task_relation(
+    pool: &Pool<Postgres>,
+    task_id: &str,
+    property_id: &str,
+    value: serde_json::Value,
+) {
+    sqlx::query(
+        r#"
+        INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values)
+        VALUES ($1, $2, 'TASK', $3::uuid, $4)
+        "#,
+    )
+    .bind(uuid::Uuid::new_v4())
+    .bind(task_id)
+    .bind(property_id)
+    .bind(value)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn assert_edit_updated(repo: &PgDocumentRepo, args: EditDocumentRepoArgs) {
+    assert_eq!(
+        repo.edit_document(args).await.unwrap(),
+        crate::domain::models::EditDocumentOutcome::Updated
+    );
+}
+
+async fn insert_project(pool: &Pool<Postgres>, project_id: &str) {
+    sqlx::query(
+        r#"
+        INSERT INTO "Project" (id, name, "userId")
+        VALUES ($1, 'task move guard project', $2)
+        "#,
+    )
+    .bind(project_id)
+    .bind(TEST_DOCUMENT_OWNER_ID)
+    .execute(pool)
+    .await
+    .unwrap();
+}
 
 fn user_id(user_id: &str) -> macro_user_id::user_id::MacroUserIdStr<'static> {
     macro_user_id::user_id::MacroUserIdStr::parse_from_str(user_id)
@@ -531,16 +576,18 @@ async fn test_edit_document_clear_file_type(pool: Pool<Postgres>) {
 async fn test_edit_document_project(pool: Pool<Postgres>) {
     let repo = PgDocumentRepo::new(pool.clone());
 
-    repo.edit_document(EditDocumentRepoArgs {
-        document_id: "d0000000-0000-0000-0000-000000000001".to_string(),
-        document_name: None,
-        project_id: Some("d0000000-0000-0000-0000-100000000001".to_string()),
-        share_permission: None,
-        revoke_non_owner_user_access: false,
-        file_type: None,
-    })
-    .await
-    .unwrap();
+    assert_edit_updated(
+        &repo,
+        EditDocumentRepoArgs {
+            document_id: "d0000000-0000-0000-0000-000000000001".to_string(),
+            document_name: None,
+            project_id: Some("d0000000-0000-0000-0000-100000000001".to_string()),
+            share_permission: None,
+            revoke_non_owner_user_access: false,
+            file_type: None,
+        },
+    )
+    .await;
 
     let doc = repo
         .get_basic_document("d0000000-0000-0000-0000-000000000001")
@@ -550,6 +597,400 @@ async fn test_edit_document_project(pool: Pool<Postgres>) {
         doc.project_id,
         Some("d0000000-0000-0000-0000-100000000001".to_string())
     );
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("documents_test_data"))
+)]
+async fn task_move_guard_allows_relation_free_project_and_root_moves(pool: Pool<Postgres>) {
+    let repo = PgDocumentRepo::new(pool.clone());
+    let task = create_task_for_team(&repo, TEST_DOCUMENT_OWNER_ID, TEST_TEAM_ID).await;
+    let first_project = TEST_PROJECT_ID.to_string();
+    let second_project = uuid::Uuid::new_v4().to_string();
+    insert_project(&pool, &second_project).await;
+
+    assert_edit_updated(
+        &repo,
+        EditDocumentRepoArgs {
+            document_id: task.document_id.clone(),
+            document_name: None,
+            project_id: Some(first_project.clone()),
+            share_permission: None,
+            revoke_non_owner_user_access: false,
+            file_type: None,
+        },
+    )
+    .await;
+    assert_eq!(
+        repo.get_basic_document(&task.document_id)
+            .await
+            .unwrap()
+            .project_id
+            .as_deref(),
+        Some(first_project.as_str())
+    );
+    assert_edit_updated(
+        &repo,
+        EditDocumentRepoArgs {
+            document_id: task.document_id.clone(),
+            document_name: None,
+            project_id: Some(second_project.clone()),
+            share_permission: None,
+            revoke_non_owner_user_access: false,
+            file_type: None,
+        },
+    )
+    .await;
+    assert_eq!(
+        repo.get_basic_document(&task.document_id)
+            .await
+            .unwrap()
+            .project_id
+            .as_deref(),
+        Some(second_project.as_str())
+    );
+    assert_edit_updated(
+        &repo,
+        EditDocumentRepoArgs {
+            document_id: task.document_id.clone(),
+            document_name: None,
+            project_id: Some(String::new()),
+            share_permission: None,
+            revoke_non_owner_user_access: false,
+            file_type: None,
+        },
+    )
+    .await;
+    assert_eq!(
+        repo.get_basic_document(&task.document_id)
+            .await
+            .unwrap()
+            .project_id,
+        None
+    );
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("documents_test_data"))
+)]
+async fn task_move_guard_rejects_own_and_reverse_hierarchy_values(pool: Pool<Postgres>) {
+    let repo = PgDocumentRepo::new(pool.clone());
+    for property_id in [PARENT_TASK_PROPERTY_ID, SUBTASKS_PROPERTY_ID] {
+        let task = create_task_for_team(&repo, TEST_DOCUMENT_OWNER_ID, TEST_TEAM_ID).await;
+        let related = create_task_for_team(&repo, TEST_DOCUMENT_OWNER_ID, TEST_TEAM_ID).await;
+        set_task_relation(
+            &pool,
+            &task.document_id,
+            property_id,
+            serde_json::json!({
+                "type": "EntityReference", "value": [{"entity_id": related.document_id, "entity_type": "TASK"}]
+            }),
+        )
+        .await;
+        assert_eq!(
+            repo.edit_document(EditDocumentRepoArgs {
+                document_id: task.document_id,
+                document_name: None,
+                project_id: Some(uuid::Uuid::new_v4().to_string()),
+                share_permission: None,
+                revoke_non_owner_user_access: false,
+                file_type: None,
+            })
+            .await
+            .unwrap(),
+            crate::domain::models::EditDocumentOutcome::TaskHierarchyConflict
+        );
+    }
+
+    let source = create_task_for_team(&repo, TEST_DOCUMENT_OWNER_ID, TEST_TEAM_ID).await;
+    let holder = create_task_for_team(&repo, TEST_DOCUMENT_OWNER_ID, TEST_TEAM_ID).await;
+    set_task_relation(
+        &pool,
+        &holder.document_id,
+        PARENT_TASK_PROPERTY_ID,
+        serde_json::json!({
+            "type": "EntityReference", "value": [{"entity_id": source.document_id, "entity_type": "TASK"}]
+        }),
+    )
+    .await;
+    assert_eq!(
+        repo.edit_document(EditDocumentRepoArgs {
+            document_id: source.document_id,
+            document_name: None,
+            project_id: Some(uuid::Uuid::new_v4().to_string()),
+            share_permission: None,
+            revoke_non_owner_user_access: false,
+            file_type: None,
+        })
+        .await
+        .unwrap(),
+        crate::domain::models::EditDocumentOutcome::TaskHierarchyConflict
+    );
+
+    let source = create_task_for_team(&repo, TEST_DOCUMENT_OWNER_ID, TEST_TEAM_ID).await;
+    let deleted_parent = create_task_for_team(&repo, TEST_DOCUMENT_OWNER_ID, TEST_TEAM_ID).await;
+    set_task_relation(
+        &pool,
+        &source.document_id,
+        PARENT_TASK_PROPERTY_ID,
+        serde_json::json!({
+            "type": "EntityReference", "value": [{"entity_id": deleted_parent.document_id, "entity_type": "TASK"}]
+        }),
+    )
+    .await;
+    repo.soft_delete_document(&deleted_parent.document_id)
+        .await
+        .unwrap();
+    assert_eq!(
+        repo.edit_document(EditDocumentRepoArgs {
+            document_id: source.document_id,
+            document_name: None,
+            project_id: Some(uuid::Uuid::new_v4().to_string()),
+            share_permission: None,
+            revoke_non_owner_user_access: false,
+            file_type: None,
+        })
+        .await
+        .unwrap(),
+        crate::domain::models::EditDocumentOutcome::TaskHierarchyConflict
+    );
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("documents_test_data"))
+)]
+async fn task_move_guard_same_project_allows_unrelated_edit_and_conflict_rolls_back_all_fields(
+    pool: Pool<Postgres>,
+) {
+    let repo = PgDocumentRepo::new(pool.clone());
+    let task = create_task_for_team(&repo, TEST_DOCUMENT_OWNER_ID, TEST_TEAM_ID).await;
+    let related = create_task_for_team(&repo, TEST_DOCUMENT_OWNER_ID, TEST_TEAM_ID).await;
+    let project = TEST_PROJECT_ID.to_string();
+    assert_edit_updated(
+        &repo,
+        EditDocumentRepoArgs {
+            document_id: task.document_id.clone(),
+            document_name: None,
+            project_id: Some(project.clone()),
+            share_permission: None,
+            revoke_non_owner_user_access: false,
+            file_type: None,
+        },
+    )
+    .await;
+    set_task_relation(
+        &pool,
+        &task.document_id,
+        PARENT_TASK_PROPERTY_ID,
+        serde_json::json!({
+            "type": "EntityReference", "value": [{"entity_id": related.document_id, "entity_type": "TASK"}]
+        }),
+    )
+    .await;
+    assert_edit_updated(
+        &repo,
+        EditDocumentRepoArgs {
+            document_id: task.document_id.clone(),
+            document_name: Some("same-project-edit".to_string()),
+            project_id: Some(project),
+            share_permission: None,
+            revoke_non_owner_user_access: false,
+            file_type: None,
+        },
+    )
+    .await;
+    let before = repo.get_basic_document(&task.document_id).await.unwrap();
+    let share_before = share_permission_columns(&pool, &task.document_id).await;
+    assert_eq!(share_before.link_share.as_deref(), Some("PUBLIC"));
+    assert_eq!(
+        share_before.link_share_access_level.as_deref(),
+        Some("edit")
+    );
+    assert_eq!(
+        repo.edit_document(EditDocumentRepoArgs {
+            document_id: task.document_id.clone(),
+            document_name: Some("must-not-write".to_string()),
+            project_id: Some(uuid::Uuid::new_v4().to_string()),
+            share_permission: Some(UpdateSharePermissionRequestV2 {
+                link_share: Some(None),
+                link_share_access_level: Some(None),
+                channel_share_permissions: None
+            }),
+            revoke_non_owner_user_access: false,
+            file_type: None,
+        })
+        .await
+        .unwrap(),
+        crate::domain::models::EditDocumentOutcome::TaskHierarchyConflict
+    );
+    let after = repo.get_basic_document(&task.document_id).await.unwrap();
+    let share_after = share_permission_columns(&pool, &task.document_id).await;
+    assert_eq!(after.document_name, before.document_name);
+    assert_eq!(after.project_id, before.project_id);
+    assert_eq!(share_after.link_share, share_before.link_share);
+    assert_eq!(
+        share_after.link_share_access_level,
+        share_before.link_share_access_level
+    );
+    assert_eq!(share_after.link_share.as_deref(), Some("PUBLIC"));
+    assert_eq!(share_after.link_share_access_level.as_deref(), Some("edit"));
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("documents_test_data"))
+)]
+async fn task_move_guard_rejects_malformed_non_null_own_relation(pool: Pool<Postgres>) {
+    let repo = PgDocumentRepo::new(pool.clone());
+    let task = create_task_for_team(&repo, TEST_DOCUMENT_OWNER_ID, TEST_TEAM_ID).await;
+    sqlx::query("ALTER TABLE entity_properties DROP CONSTRAINT check_values_structure")
+        .execute(&pool)
+        .await
+        .unwrap();
+    for (source, malformed) in [
+        (
+            task,
+            serde_json::json!({"type": "EntityReference", "value": "not-an-array"}),
+        ),
+        (
+            create_task_for_team(&repo, TEST_DOCUMENT_OWNER_ID, TEST_TEAM_ID).await,
+            serde_json::json!({"type": "String", "value": []}),
+        ),
+    ] {
+        set_task_relation(
+            &pool,
+            &source.document_id,
+            PARENT_TASK_PROPERTY_ID,
+            malformed,
+        )
+        .await;
+        assert_eq!(
+            repo.edit_document(EditDocumentRepoArgs {
+                document_id: source.document_id,
+                document_name: None,
+                project_id: Some(uuid::Uuid::new_v4().to_string()),
+                share_permission: None,
+                revoke_non_owner_user_access: false,
+                file_type: None,
+            })
+            .await
+            .unwrap(),
+            crate::domain::models::EditDocumentOutcome::TaskHierarchyConflict
+        );
+    }
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("documents_test_data"))
+)]
+async fn task_move_guard_waits_for_taskhier_and_observes_committed_relation(pool: Pool<Postgres>) {
+    let repo = PgDocumentRepo::new(pool.clone());
+    let task = create_task_for_team(&repo, TEST_DOCUMENT_OWNER_ID, TEST_TEAM_ID).await;
+    let parent = create_task_for_team(&repo, TEST_DOCUMENT_OWNER_ID, TEST_TEAM_ID).await;
+    let source_id = task.document_id.clone();
+    let parent_id = parent.document_id.clone();
+    let (locked_tx, locked_rx) = tokio::sync::oneshot::channel();
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+    let hierarchy_pool = pool.clone();
+    let hierarchy_source_id = source_id.clone();
+    let hierarchy_parent_id = parent_id.clone();
+    let hierarchy = tokio::spawn(async move {
+        let mut transaction = hierarchy_pool.begin().await.unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock($1::bigint)")
+            .bind(i64::from_be_bytes(*b"TASKHIER"))
+            .execute(transaction.as_mut())
+            .await
+            .unwrap();
+        locked_tx.send(()).unwrap();
+        release_rx.await.unwrap();
+        sqlx::query(
+            r#"
+            INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values)
+            VALUES ($1, $2, 'TASK', $3::uuid, $4)
+            "#,
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(&hierarchy_source_id)
+        .bind(PARENT_TASK_PROPERTY_ID)
+        .bind(serde_json::json!({
+            "type": "EntityReference", "value": [{"entity_id": hierarchy_parent_id, "entity_type": "TASK"}]
+        }))
+        .execute(transaction.as_mut())
+        .await
+        .unwrap();
+        sqlx::query(
+            r#"
+            INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values)
+            VALUES ($1, $2, 'TASK', $3::uuid, $4)
+            "#,
+        )
+        .bind(uuid::Uuid::new_v4())
+        .bind(&hierarchy_parent_id)
+        .bind(SUBTASKS_PROPERTY_ID)
+        .bind(serde_json::json!({
+            "type": "EntityReference", "value": [{"entity_id": hierarchy_source_id, "entity_type": "TASK"}]
+        }))
+        .execute(transaction.as_mut())
+        .await
+        .unwrap();
+        transaction.commit().await.unwrap();
+    });
+    locked_rx.await.unwrap();
+
+    let move_repo = repo.clone();
+    let moving_source_id = source_id.clone();
+    let mut moving = tokio::spawn(async move {
+        move_repo
+            .edit_document(EditDocumentRepoArgs {
+                document_id: moving_source_id,
+                document_name: None,
+                project_id: Some(uuid::Uuid::new_v4().to_string()),
+                share_permission: None,
+                revoke_non_owner_user_access: false,
+                file_type: None,
+            })
+            .await
+            .unwrap()
+    });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(25), &mut moving)
+            .await
+            .is_err(),
+        "move must wait for TASKHIER"
+    );
+    release_tx.send(()).unwrap();
+    hierarchy.await.unwrap();
+    assert_eq!(
+        moving.await.unwrap(),
+        crate::domain::models::EditDocumentOutcome::TaskHierarchyConflict
+    );
+    assert_eq!(
+        repo.get_basic_document(&source_id)
+            .await
+            .unwrap()
+            .project_id,
+        None
+    );
+    let reciprocal_count: i64 = sqlx::query_scalar(
+        r#"
+        SELECT COUNT(*)
+        FROM entity_properties ep
+        CROSS JOIN LATERAL jsonb_array_elements(ep.values->'value') reference
+        WHERE ep.entity_id = $1 AND ep.property_definition_id = $2::uuid
+          AND reference->>'entity_id' = $3
+        "#,
+    )
+    .bind(parent_id)
+    .bind(SUBTASKS_PROPERTY_ID)
+    .bind(source_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(reciprocal_count, 1);
 }
 
 #[sqlx::test(

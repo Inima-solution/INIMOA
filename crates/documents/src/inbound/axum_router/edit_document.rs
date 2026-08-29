@@ -44,6 +44,7 @@ pub struct EditDocumentResponse {
         (status = 200, body = EditDocumentResponse),
         (status = 400, body = model_error_response::ErrorResponse),
         (status = 401, body = model_error_response::ErrorResponse),
+        (status = 409, body = model_error_response::ErrorResponse),
         (status = 404, body = model_error_response::ErrorResponse),
         (status = 500, body = model_error_response::ErrorResponse),
     )
@@ -77,4 +78,31 @@ pub async fn edit_document_handler<
         error: false,
         data: GenericSuccessResponse::default(),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Value;
+    use utoipa::OpenApi;
+
+    #[derive(OpenApi)]
+    #[openapi(
+        paths(super::edit_document_handler),
+        components(schemas(
+            super::EditDocumentResponse,
+            crate::domain::models::EditDocumentServiceArgs,
+            model_error_response::ErrorResponse,
+        ))
+    )]
+    struct ApiDoc;
+
+    #[test]
+    fn edit_document_openapi_documents_error_response_for_conflict() {
+        let openapi = serde_json::to_value(ApiDoc::openapi()).expect("OpenAPI should serialize");
+        assert_eq!(
+            openapi.pointer("/paths/~1documents~1{document_id}/patch/responses/409/content/application~1json/schema/$ref")
+                .and_then(Value::as_str),
+            Some("#/components/schemas/ErrorResponse")
+        );
+    }
 }

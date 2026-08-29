@@ -29,7 +29,7 @@ use model_entity::Entity;
 use super::models::{
     BranchNameContext, CommentThread, CopyDocumentRepoArgs, CreateDocumentRepoArgs,
     CreateTaskRequest, DocumentError, DocumentTeamShare, DocumentTeamShareResponse,
-    EditDocumentRepoArgs, EditDocumentServiceArgs, EmailImportRepoOutcome,
+    EditDocumentOutcome, EditDocumentRepoArgs, EditDocumentServiceArgs, EmailImportRepoOutcome,
     GithubPullRequestsResponse, ImportEmailAttachmentRepoArgs, LocationQueryParams, TaskBranchName,
     TeamTaskMetadata,
 };
@@ -172,7 +172,7 @@ pub trait DocumentRepo: Send + Sync + 'static {
     fn edit_document(
         &self,
         args: EditDocumentRepoArgs,
-    ) -> impl Future<Output = Result<(), Self::Err>> + Send;
+    ) -> impl Future<Output = Result<EditDocumentOutcome, Self::Err>> + Send;
 
     /// Update a document's `updatedAt` timestamp.
     fn update_document_modified(

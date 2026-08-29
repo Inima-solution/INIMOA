@@ -53,10 +53,10 @@ use super::events::{
 };
 use super::models::{
     CloudFrontConfig, CommentThread, CopyDocumentRepoArgs, CreateDocumentRepoArgs,
-    CreateTaskRequest, DocumentError, DocumentTeamShareResponse, EditDocumentRepoArgs,
-    EditDocumentServiceArgs, EmailImportRepoOutcome, FileTypeUpdate, GithubPullRequest,
-    GithubPullRequestsResponse, ImportEmailAttachmentRepoArgs, LocationQueryParams, TaskBranchName,
-    TeamTaskMetadata,
+    CreateTaskRequest, DocumentError, DocumentTeamShareResponse, EditDocumentOutcome,
+    EditDocumentRepoArgs, EditDocumentServiceArgs, EmailImportRepoOutcome, FileTypeUpdate,
+    GithubPullRequest, GithubPullRequestsResponse, ImportEmailAttachmentRepoArgs,
+    LocationQueryParams, TaskBranchName, TeamTaskMetadata,
 };
 #[cfg(feature = "document_create")]
 use super::ports::create::DocumentCreationService;
@@ -1376,7 +1376,8 @@ impl<
         let revoke_non_owner_user_access =
             should_revoke_non_owner_user_access(args.share_permission.as_ref());
 
-        self.repo
+        match self
+            .repo
             .edit_document(EditDocumentRepoArgs {
                 document_id: entity_access_receipt.entity().entity_id.clone(),
                 document_name: document_name.clone(),
@@ -1386,7 +1387,15 @@ impl<
                 file_type: args.file_type.clone(),
             })
             .await
-            .map_err(|e| DocumentError::Internal(e.into()))?;
+            .map_err(|e| DocumentError::Internal(e.into()))?
+        {
+            EditDocumentOutcome::Updated => {}
+            EditDocumentOutcome::TaskHierarchyConflict => {
+                return Err(DocumentError::Conflict(
+                    "task hierarchy must be cleared before moving this task".into(),
+                ));
+            }
+        }
 
         // Update project modified timestamps. args.project_id of None means "no change",
         // so only move the document out of its old project when a different project (or

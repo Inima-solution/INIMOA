@@ -23,8 +23,8 @@ use sqlx::Row;
 use crate::domain::content::{DocumentContent, DocumentContentState};
 use crate::domain::models::{
     BranchNameContext, Comment, CommentThread, CopyDocumentRepoArgs, CreateDocumentRepoArgs,
-    DocumentTeamShare, EditDocumentRepoArgs, EmailImportRepoOutcome, ImportEmailAttachmentRepoArgs,
-    TeamTaskMetadata, Thread,
+    DocumentTeamShare, EditDocumentOutcome, EditDocumentRepoArgs, EmailImportRepoOutcome,
+    ImportEmailAttachmentRepoArgs, TeamTaskMetadata, Thread,
 };
 use crate::domain::ports::DocumentRepo;
 
@@ -493,8 +493,24 @@ impl DocumentRepo for PgDocumentRepo {
     }
 
     #[tracing::instrument(err, skip(self, args))]
-    async fn edit_document(&self, args: EditDocumentRepoArgs) -> Result<(), Self::Err> {
+    async fn edit_document(
+        &self,
+        args: EditDocumentRepoArgs,
+    ) -> Result<EditDocumentOutcome, Self::Err> {
         let mut transaction = self.pool.begin().await?;
+
+        if let Some(project_id) = args.project_id.as_deref() {
+            edit::lock_task_hierarchy(&mut transaction).await?;
+            if edit::task_move_conflicts_with_hierarchy(
+                &mut transaction,
+                &args.document_id,
+                project_id,
+            )
+            .await?
+            {
+                return Ok(EditDocumentOutcome::TaskHierarchyConflict);
+            }
+        }
 
         use crate::domain::models::FileTypeUpdate;
         let file_type_db = args.file_type.map(|update| match update {
@@ -532,7 +548,7 @@ impl DocumentRepo for PgDocumentRepo {
         }
 
         transaction.commit().await?;
-        Ok(())
+        Ok(EditDocumentOutcome::Updated)
     }
 
     #[tracing::instrument(err, skip(self))]

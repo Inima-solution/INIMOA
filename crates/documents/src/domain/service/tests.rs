@@ -200,6 +200,30 @@ impl ConnectionService for TestConnectionService {
 }
 
 #[derive(Clone, Default)]
+struct RecordingConnectionService {
+    invalidations: Arc<Mutex<usize>>,
+}
+
+impl ConnectionService for RecordingConnectionService {
+    async fn send_invalidation_event<'a, T: std::fmt::Debug + serde::Serialize + Send>(
+        &self,
+        _invalidation_event: InvalidationEvent<'a, T>,
+    ) -> Result<(), connection::domain::models::ConnectionError> {
+        *self.invalidations.lock().unwrap() += 1;
+        Ok(())
+    }
+
+    async fn send_channel_message<'a>(
+        &self,
+        _users: &[macro_user_id::user_id::MacroUserIdStr<'a>],
+        _message_type: &str,
+        _message: serde_json::Value,
+    ) -> Result<(), connection::domain::models::ConnectionError> {
+        Ok(())
+    }
+}
+
+#[derive(Clone, Default)]
 struct TestEntityAccessManagementService {
     added_to_projects: Arc<Mutex<Vec<uuid::Uuid>>>,
     removed_from_projects: Arc<Mutex<Vec<uuid::Uuid>>>,
@@ -1672,7 +1696,7 @@ async fn edit_document_sets_revocation_intent_from_link_share_target() {
                         .as_ref()
                         .is_some_and(|permission| permission.link_share == link_share)
             })
-            .return_once(|_| Box::pin(std::future::ready(Ok(()))));
+            .return_once(|_| Box::pin(std::future::ready(Ok(EditDocumentOutcome::Updated))));
 
         make_test_service(repo)
             .edit_document(
@@ -1699,7 +1723,7 @@ async fn test_edit_document_publishes_document_updated_event() {
     let mut repo = make_mock_repo();
     repo.expect_edit_document()
         .withf(|args| args.document_id == "doc-1" && !args.revoke_non_owner_user_access)
-        .returning(|_| Box::pin(std::future::ready(Ok(()))));
+        .returning(|_| Box::pin(std::future::ready(Ok(EditDocumentOutcome::Updated))));
 
     let (service, event_broker) = make_test_service_with_event_broker(repo);
 
@@ -1748,7 +1772,7 @@ async fn test_edit_document_rename_only_keeps_project_access() {
 
     let mut repo = make_mock_repo();
     repo.expect_edit_document()
-        .returning(|_| Box::pin(std::future::ready(Ok(()))));
+        .returning(|_| Box::pin(std::future::ready(Ok(EditDocumentOutcome::Updated))));
 
     let (service, entity_access) = make_test_service_with_entity_access(repo);
 
@@ -1787,7 +1811,7 @@ async fn test_edit_document_project_change_moves_project_access() {
 
     let mut repo = make_mock_repo();
     repo.expect_edit_document()
-        .returning(|_| Box::pin(std::future::ready(Ok(()))));
+        .returning(|_| Box::pin(std::future::ready(Ok(EditDocumentOutcome::Updated))));
     repo.expect_update_project_modified()
         .times(2)
         .returning(|_| Box::pin(std::future::ready(Ok(()))));
@@ -1819,6 +1843,69 @@ async fn test_edit_document_project_change_moves_project_access() {
         *entity_access.added_to_projects.lock().unwrap(),
         vec![new_project_id]
     );
+}
+
+#[tokio::test]
+async fn edit_document_task_hierarchy_conflict_has_no_downstream_side_effects() {
+    let document_id = uuid::Uuid::new_v4().to_string();
+    let old_project_id = uuid::Uuid::new_v4();
+    let new_project_id = uuid::Uuid::new_v4();
+    let mut repo = make_mock_repo();
+    repo.expect_edit_document().return_once(|_| {
+        Box::pin(std::future::ready(Ok(
+            EditDocumentOutcome::TaskHierarchyConflict,
+        )))
+    });
+    repo.expect_update_project_modified().times(0);
+
+    let entity_access = TestEntityAccessManagementService::default();
+    let event_broker = TestEventBroker::default();
+    let connection = RecordingConnectionService::default();
+    let service = DocumentServiceImpl::new(
+        repo,
+        test_cloudfront_config(),
+        sync_service_client::SyncServiceClient::new(
+            "test-sync-key".to_string(),
+            "http://sync-service.test".to_string(),
+        ),
+        TestUploadUrlPort,
+        TestTaskPropertiesPort,
+        connection.clone(),
+        entity_access.clone(),
+        TestForeignEntityService::default(),
+        event_broker.clone(),
+    );
+    let mut context = task_document_context(&document_id);
+    context.project_id = Some(old_project_id.to_string());
+
+    let result = service
+        .edit_document(
+            edit_receipt(&document_id),
+            context,
+            EditDocumentServiceArgs {
+                document_name: Some("must not persist".to_string()),
+                project_id: Some(new_project_id.to_string()),
+                share_permission: None,
+                file_type: None,
+            },
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(DocumentError::Conflict(message))
+            if message == "task hierarchy must be cleared before moving this task"
+    ));
+    assert!(entity_access.added_to_projects.lock().unwrap().is_empty());
+    assert!(
+        entity_access
+            .removed_from_projects
+            .lock()
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(*connection.invalidations.lock().unwrap(), 0);
+    assert!(event_broker.published().lock().unwrap().is_empty());
 }
 
 #[tokio::test]

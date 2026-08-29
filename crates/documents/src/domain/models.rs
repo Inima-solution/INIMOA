@@ -424,6 +424,15 @@ pub struct EditDocumentRepoArgs {
     pub file_type: Option<FileTypeUpdate>,
 }
 
+/// Result of a document edit transaction.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum EditDocumentOutcome {
+    /// The requested update committed.
+    Updated,
+    /// A task move would split an existing task hierarchy across projects.
+    TaskHierarchyConflict,
+}
+
 /// Arguments for the edit_document service call.
 #[derive(serde::Serialize, serde::Deserialize, Eq, PartialEq, Debug)]
 #[cfg_attr(feature = "axum", derive(utoipa::ToSchema))]
