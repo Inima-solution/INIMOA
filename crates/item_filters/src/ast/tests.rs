@@ -4,6 +4,7 @@ use super::*;
 use crate::{CallFilters, CallStatus, ForeignEntityFilters, PropertyFilter};
 use cool_asserts::assert_matches;
 use model_file_type::FileType;
+use non_empty::IsEmpty;
 use serde_json::json;
 use uuid::Uuid;
 
@@ -527,6 +528,169 @@ fn task_include_cbm_atm_nc_false_is_noop() {
 }
 
 #[test]
+fn property_filter_boolean_value_serde_defaults_and_round_trips() {
+    let missing: PropertyFilter = serde_json::from_value(json!({
+        "property_definition_id": "property-id"
+    }))
+    .unwrap();
+    assert_eq!(missing.boolean_value, None);
+    assert_eq!(
+        serde_json::to_value(&missing).unwrap(),
+        json!({
+            "property_definition_id": "property-id"
+        })
+    );
+
+    for value in [true, false] {
+        let filter: PropertyFilter = serde_json::from_value(json!({
+            "property_definition_id": "property-id",
+            "boolean_value": value
+        }))
+        .unwrap();
+        assert_eq!(filter.boolean_value, Some(value));
+        assert_eq!(
+            serde_json::to_value(filter).unwrap(),
+            json!({
+                "property_definition_id": "property-id",
+                "boolean_value": value
+            })
+        );
+    }
+}
+
+#[test]
+fn property_filter_is_empty_only_without_any_value() {
+    let base = PropertyFilter {
+        property_definition_id: "property-id".to_string(),
+        ..Default::default()
+    };
+    assert!(base.is_empty());
+
+    let false_value = PropertyFilter {
+        boolean_value: Some(false),
+        ..base
+    };
+    assert!(!false_value.is_empty());
+}
+
+#[test]
+fn it_expands_boolean_property_filter_for_task_true_and_false() {
+    for value in [true, false] {
+        let property_definition_id = Uuid::new_v4();
+        let f = EntityFilters {
+            property_filters: vec![PropertyFilter {
+                property_definition_id: property_definition_id.to_string(),
+                entity_type: Some("TASK".to_string()),
+                boolean_value: Some(value),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+
+        let ast = Arc::into_inner(
+            EntityFilterAst::new_from_filters(f)
+                .unwrap()
+                .unwrap()
+                .properties_filter
+                .unwrap(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(ast).unwrap(),
+            json!({
+                "l": {
+                    "pd": property_definition_id,
+                    "et": "TASK",
+                    "v": { "b": value }
+                }
+            })
+        );
+    }
+}
+
+#[test]
+fn it_ors_option_entity_ref_and_boolean_within_single_property_filter() {
+    let property_definition_id = Uuid::new_v4();
+    let option_id = Uuid::new_v4();
+    let entity_id = "macro|user@test.com";
+    let f = EntityFilters {
+        property_filters: vec![PropertyFilter {
+            property_definition_id: property_definition_id.to_string(),
+            entity_type: Some("TASK".to_string()),
+            option_ids: vec![option_id.to_string()],
+            entity_ids: vec![entity_id.to_string()],
+            boolean_value: Some(false),
+        }],
+        ..Default::default()
+    };
+
+    let ast = Arc::into_inner(
+        EntityFilterAst::new_from_filters(f)
+            .unwrap()
+            .unwrap()
+            .properties_filter
+            .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        serde_json::to_value(ast).unwrap(),
+        json!({
+            "|": [
+                { "|": [
+                    { "l": { "pd": property_definition_id, "et": "TASK", "v": { "so": option_id } } },
+                    { "l": { "pd": property_definition_id, "et": "TASK", "v": { "er": entity_id } } }
+                ] },
+                { "l": { "pd": property_definition_id, "et": "TASK", "v": { "b": false } } }
+            ]
+        })
+    );
+}
+
+#[test]
+fn it_ands_multiple_boolean_property_filters() {
+    let completed_property_id = Uuid::new_v4();
+    let archived_property_id = Uuid::new_v4();
+    let f = EntityFilters {
+        property_filters: vec![
+            PropertyFilter {
+                property_definition_id: completed_property_id.to_string(),
+                entity_type: Some("TASK".to_string()),
+                boolean_value: Some(false),
+                ..Default::default()
+            },
+            PropertyFilter {
+                property_definition_id: archived_property_id.to_string(),
+                entity_type: Some("TASK".to_string()),
+                boolean_value: Some(true),
+                ..Default::default()
+            },
+        ],
+        ..Default::default()
+    };
+
+    let ast = Arc::into_inner(
+        EntityFilterAst::new_from_filters(f)
+            .unwrap()
+            .unwrap()
+            .properties_filter
+            .unwrap(),
+    )
+    .unwrap();
+
+    assert_eq!(
+        serde_json::to_value(ast).unwrap(),
+        json!({
+            "&": [
+                { "l": { "pd": completed_property_id, "et": "TASK", "v": { "b": false } } },
+                { "l": { "pd": archived_property_id, "et": "TASK", "v": { "b": true } } }
+            ]
+        })
+    );
+}
+
+#[test]
 fn it_expands_single_property_select_option() {
     let prop_def_id = Uuid::new_v4();
     let option_id = Uuid::new_v4();
@@ -536,6 +700,7 @@ fn it_expands_single_property_select_option() {
             entity_type: Some("TASK".to_string()),
             option_ids: vec![option_id.to_string()],
             entity_ids: vec![],
+            boolean_value: None,
         }],
         ..Default::default()
     };
@@ -555,6 +720,7 @@ fn it_expands_multiple_option_ids_as_or() {
             entity_type: Some("TASK".to_string()),
             option_ids: vec![option_a.to_string(), option_b.to_string()],
             entity_ids: vec![],
+            boolean_value: None,
         }],
         ..Default::default()
     };
@@ -580,6 +746,7 @@ fn it_expands_entity_ref_filter() {
             entity_type: Some("TASK".to_string()),
             option_ids: vec![],
             entity_ids: vec![entity_id.clone()],
+            boolean_value: None,
         }],
         ..Default::default()
     };
@@ -612,12 +779,14 @@ fn it_ands_multiple_property_filters() {
                 entity_type: Some("TASK".to_string()),
                 option_ids: vec![option_a.to_string()],
                 entity_ids: vec![],
+                boolean_value: None,
             },
             PropertyFilter {
                 property_definition_id: priority_id.to_string(),
                 entity_type: Some("TASK".to_string()),
                 option_ids: vec![option_b.to_string()],
                 entity_ids: vec![],
+                boolean_value: None,
             },
         ],
         ..Default::default()
@@ -645,6 +814,7 @@ fn it_ors_mixed_option_and_entity_ref_within_single_filter() {
             entity_type: Some("TASK".to_string()),
             option_ids: vec![option_id.to_string()],
             entity_ids: vec![entity_id],
+            boolean_value: None,
         }],
         ..Default::default()
     };
@@ -682,6 +852,7 @@ fn property_filter_with_empty_values_produce_no_ast() {
             entity_type: Some("TASK".to_string()),
             option_ids: vec![],
             entity_ids: vec![],
+            boolean_value: None,
         }],
         ..Default::default()
     };
@@ -702,6 +873,7 @@ fn it_expands_property_filter_without_entity_type() {
             entity_type: None,
             option_ids: vec![option_id.to_string()],
             entity_ids: vec![],
+            boolean_value: None,
         }],
         ..Default::default()
     };
@@ -731,6 +903,7 @@ fn it_expands_property_filter_with_entity_type() {
             entity_type: Some("TASK".to_string()),
             option_ids: vec![option_id.to_string()],
             entity_ids: vec![],
+            boolean_value: None,
         }],
         ..Default::default()
     };
@@ -853,6 +1026,7 @@ fn invalid_entity_type_returns_error() {
             entity_type: Some("TASK'; DROP TABLE documents; --".to_string()),
             option_ids: vec![option_id.to_string()],
             entity_ids: vec![],
+            boolean_value: None,
         }],
         ..Default::default()
     };
@@ -872,6 +1046,7 @@ fn entity_ref_with_single_quote_returns_error() {
             entity_type: Some("TASK".to_string()),
             option_ids: vec![],
             entity_ids: vec!["x'); DROP TABLE documents; --".to_string()],
+            boolean_value: None,
         }],
         ..Default::default()
     };

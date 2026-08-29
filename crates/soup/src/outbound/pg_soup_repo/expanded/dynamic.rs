@@ -1011,6 +1011,9 @@ pub(in crate::outbound::pg_soup_repo) fn build_properties_filter(
                         "ep_prop.values->'value' @> jsonb_build_array(jsonb_build_object('entity_id', '{entity_id}'))"
                     )
                 }
+                PropertyMatchValue::Boolean(value) => {
+                    format!("ep_prop.values @> '{{\"type\":\"Boolean\",\"value\":{value}}}'::jsonb")
+                }
             };
             let entity_type_clause = match entity_type {
                 Some(et) => format!("AND ep_prop.entity_type = '{et}'"),

@@ -4810,6 +4810,7 @@ async fn test_property_filter_by_select_option(db: Pool<Postgres>) -> anyhow::Re
             entity_type: Some("DOCUMENT".to_string()),
             option_ids: vec!["00000001-0000-0000-0003-000000000001".to_string()], // Low
             entity_ids: vec![],
+            boolean_value: None,
         }],
         ..Default::default()
     };
@@ -4864,6 +4865,7 @@ async fn test_property_filter_by_status_completed(db: Pool<Postgres>) -> anyhow:
             entity_type: Some("DOCUMENT".to_string()),
             option_ids: vec!["00000001-0000-0000-0002-000000000004".to_string()], // Completed
             entity_ids: vec![],
+            boolean_value: None,
         }],
         ..Default::default()
     };
@@ -4919,12 +4921,14 @@ async fn test_property_filter_multiple_and(db: Pool<Postgres>) -> anyhow::Result
                 entity_type: Some("DOCUMENT".to_string()),
                 option_ids: vec!["00000001-0000-0000-0003-000000000001".to_string()], // Low
                 entity_ids: vec![],
+                boolean_value: None,
             },
             PropertyFilter {
                 property_definition_id: "00000001-0000-0000-0000-000000000002".to_string(), // Status
                 entity_type: Some("DOCUMENT".to_string()),
                 option_ids: vec!["00000001-0000-0000-0002-000000000004".to_string()], // Completed
                 entity_ids: vec![],
+                boolean_value: None,
             },
         ],
         ..Default::default()
@@ -4979,6 +4983,7 @@ async fn test_property_filter_no_match(db: Pool<Postgres>) -> anyhow::Result<()>
             entity_type: Some("DOCUMENT".to_string()),
             option_ids: vec!["00000001-0000-0000-0003-000000000004".to_string()], // Urgent
             entity_ids: vec![],
+            boolean_value: None,
         }],
         ..Default::default()
     };
@@ -5026,6 +5031,7 @@ async fn test_property_filter_multiple_options_or(db: Pool<Postgres>) -> anyhow:
                 "00000001-0000-0000-0003-000000000002".to_string(), // Medium
             ],
             entity_ids: vec![],
+            boolean_value: None,
         }],
         ..Default::default()
     };
@@ -5084,6 +5090,7 @@ async fn test_property_filter_without_entity_type(db: Pool<Postgres>) -> anyhow:
                 "00000001-0000-0000-0003-000000000002".to_string(), // Medium
             ],
             entity_ids: vec![],
+            boolean_value: None,
         }],
         ..Default::default()
     };
@@ -5138,6 +5145,7 @@ async fn test_property_filter_scoped_entity_type(db: Pool<Postgres>) -> anyhow::
             entity_type: Some("PROJECT".to_string()),
             option_ids: vec!["00000001-0000-0000-0003-000000000002".to_string()], // Medium
             entity_ids: vec![],
+            boolean_value: None,
         }],
         ..Default::default()
     };
@@ -5180,6 +5188,211 @@ async fn test_property_filter_scoped_entity_type(db: Pool<Postgres>) -> anyhow::
     assert_eq!(
         doc_count, 0,
         "No documents should match Priority = Medium on PROJECT entity_type"
+    );
+
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(
+        path = "../../../../../macro_db_client/fixtures",
+        scripts("soup_items_with_properties")
+    )
+)]
+async fn test_property_filter_by_task_milestone_boolean(db: Pool<Postgres>) -> anyhow::Result<()> {
+    let milestone_id = Uuid::parse_str("00000001-0000-0000-0000-000000000013")?;
+    let true_task_id = Uuid::parse_str("11111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa")?;
+    let false_task_id = Uuid::parse_str("11111111-bbbb-bbbb-bbbb-bbbbbbbbbbbb")?;
+    let personal_true_task_id = Uuid::new_v4();
+    let null_value_task_id = Uuid::new_v4();
+    let missing_value_task_id = Uuid::new_v4();
+    let inaccessible_true_task_id = Uuid::new_v4();
+    let corrupt_non_task_id = Uuid::new_v4();
+
+    sqlx::query(
+        r#"
+        INSERT INTO macro_user (id, username, email, stripe_customer_id)
+        VALUES ('a2222222-2222-2222-2222-222222222222', 'user-2@test.com', 'user-2@test.com', 'stripe_id_2')
+        "#,
+    )
+    .execute(&db)
+    .await?;
+    sqlx::query(
+        r#"
+        INSERT INTO "User" (id, email, "stripeCustomerId", "organizationId", macro_user_id)
+        VALUES ('macro|user-2@test.com', 'user-2@test.com', 'stripe_id_2', 1, 'a2222222-2222-2222-2222-222222222222')
+        "#,
+    )
+    .execute(&db)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO "Document" ("id", "name", "owner", "fileType", "createdAt", "updatedAt")
+        VALUES
+            ($1, 'Personal milestone task', 'macro|user-1@test.com', 'txt', NOW(), NOW()),
+            ($2, 'Null milestone task', 'macro|user-1@test.com', 'txt', NOW(), NOW()),
+            ($3, 'Missing milestone task', 'macro|user-1@test.com', 'txt', NOW(), NOW()),
+            ($4, 'Inaccessible milestone task', 'macro|user-2@test.com', 'txt', NOW(), NOW()),
+            ($5, 'Corrupt non-task milestone document', 'macro|user-1@test.com', 'txt', NOW(), NOW())
+        "#,
+    )
+    .bind(personal_true_task_id)
+    .bind(null_value_task_id)
+    .bind(missing_value_task_id)
+    .bind(inaccessible_true_task_id)
+    .bind(corrupt_non_task_id)
+    .execute(&db)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO "DocumentInstance" ("id", "documentId", "sha", "createdAt", "updatedAt")
+        VALUES
+            (90001, $1, 'milestone-personal-true', NOW(), NOW()),
+            (90002, $2, 'milestone-null-value', NOW(), NOW()),
+            (90003, $3, 'milestone-missing-value', NOW(), NOW()),
+            (90004, $4, 'milestone-inaccessible-true', NOW(), NOW()),
+            (90005, $5, 'milestone-corrupt-non-task', NOW(), NOW())
+        "#,
+    )
+    .bind(personal_true_task_id)
+    .bind(null_value_task_id)
+    .bind(missing_value_task_id)
+    .bind(inaccessible_true_task_id)
+    .bind(corrupt_non_task_id)
+    .execute(&db)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO document_sub_type (document_id, sub_type)
+        VALUES
+            ($1, 'task'), ($2, 'task'), ($3, 'task'),
+            ($4, 'task'), ($5, 'task'), ($6, 'task')
+        "#,
+    )
+    .bind(true_task_id)
+    .bind(false_task_id)
+    .bind(personal_true_task_id)
+    .bind(null_value_task_id)
+    .bind(missing_value_task_id)
+    .bind(inaccessible_true_task_id)
+    .execute(&db)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO entity_access ("entity_id", "entity_type", "source_id", "source_type", "access_level")
+        VALUES ($1, 'document', 'macro|user-1@test.com', 'user', 'view'),
+               ($2, 'document', 'macro|user-1@test.com', 'user', 'view'),
+               ($3, 'document', 'macro|user-1@test.com', 'user', 'view'),
+               ($4, 'document', 'macro|user-1@test.com', 'user', 'view')
+        "#,
+    )
+    .bind(personal_true_task_id)
+    .bind(null_value_task_id)
+    .bind(missing_value_task_id)
+    .bind(corrupt_non_task_id)
+    .execute(&db)
+    .await?;
+
+    sqlx::query(
+        r#"
+        INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values)
+        VALUES
+            (gen_random_uuid(), $1, 'TASK', $7, '{"type":"Boolean","value":true}'::jsonb),
+            (gen_random_uuid(), $2, 'TASK', $7, '{"type":"Boolean","value":false}'::jsonb),
+            (gen_random_uuid(), $3, 'TASK', $7, '{"type":"Boolean","value":true}'::jsonb),
+            (gen_random_uuid(), $4, 'TASK', $7, NULL),
+            (gen_random_uuid(), $5, 'TASK', $7, '{"type":"Boolean","value":true}'::jsonb),
+            (gen_random_uuid(), $6, 'TASK', $7, '{"type":"Boolean","value":true}'::jsonb)
+        "#,
+    )
+    .bind(true_task_id.to_string())
+    .bind(false_task_id.to_string())
+    .bind(personal_true_task_id.to_string())
+    .bind(null_value_task_id.to_string())
+    .bind(inaccessible_true_task_id.to_string())
+    .bind(corrupt_non_task_id.to_string())
+    .bind(milestone_id)
+    .execute(&db)
+    .await?;
+
+    let milestone_filter = |value| {
+        EntityFilterAst::new_from_filters(item_filters::EntityFilters {
+            document_filters: item_filters::DocumentFilters {
+                sub_types: vec!["task".to_string()],
+                ..Default::default()
+            },
+            property_filters: vec![PropertyFilter {
+                property_definition_id: milestone_id.to_string(),
+                entity_type: Some("TASK".to_string()),
+                boolean_value: Some(value),
+                ..Default::default()
+            }],
+            ..Default::default()
+        })
+        .expect("task milestone property filter must be valid")
+        .expect("task milestone property filter must produce an AST")
+    };
+
+    let true_ids: HashSet<Uuid> = dyn_fetch(
+        &db,
+        "macro|user-1@test.com",
+        100,
+        SimpleSortMethod::UpdatedAt,
+        milestone_filter(true),
+        false,
+    )
+    .await?
+    .into_iter()
+    .filter_map(|item| match item {
+        SoupItem::Document(document) => Some(document.id),
+        _ => None,
+    })
+    .collect();
+    assert_eq!(
+        true_ids,
+        HashSet::from([true_task_id, personal_true_task_id])
+    );
+
+    let false_ids: HashSet<Uuid> = dyn_fetch(
+        &db,
+        "macro|user-1@test.com",
+        100,
+        SimpleSortMethod::UpdatedAt,
+        milestone_filter(false),
+        false,
+    )
+    .await?
+    .into_iter()
+    .filter_map(|item| match item {
+        SoupItem::Document(document) => Some(document.id),
+        _ => None,
+    })
+    .collect();
+    assert_eq!(false_ids, HashSet::from([false_task_id]));
+    assert!(!true_ids.contains(&false_task_id));
+    assert!(!true_ids.contains(&null_value_task_id));
+    assert!(!true_ids.contains(&missing_value_task_id));
+    assert!(!true_ids.contains(&inaccessible_true_task_id));
+    assert!(!true_ids.contains(&corrupt_non_task_id));
+
+    let bounded = dyn_fetch(
+        &db,
+        "macro|user-1@test.com",
+        1,
+        SimpleSortMethod::UpdatedAt,
+        milestone_filter(true),
+        false,
+    )
+    .await?;
+    assert_eq!(
+        bounded.len(),
+        1,
+        "Boolean filtering must preserve the result limit"
     );
 
     Ok(())

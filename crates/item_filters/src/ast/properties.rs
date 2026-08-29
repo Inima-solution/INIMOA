@@ -130,6 +130,9 @@ pub enum PropertyMatchValue {
     /// Match an entity reference by entity_id. Uses the `@>` jsonb operator on `values->'value'`.
     #[serde(rename = "er")]
     EntityRef(EntityRefId),
+    /// Match a boolean property value.
+    #[serde(rename = "b")]
+    Boolean(bool),
 }
 
 /// A single property-based filter condition for the AST.
@@ -194,7 +197,15 @@ impl ExpandFrame<PropertiesLiteral> for Vec<PropertyFilter> {
                         Expr::or,
                     )?;
 
-                Ok([option_nodes, entity_ref_nodes]
+                let boolean_node = pf.boolean_value.map(|value| {
+                    Expr::Literal(PropertiesLiteral {
+                        property_definition_id: prop_def_id,
+                        entity_type,
+                        value: PropertyMatchValue::Boolean(value),
+                    })
+                });
+
+                Ok([option_nodes, entity_ref_nodes, boolean_node]
                     .into_iter()
                     .fold_with(Expr::or))
             })

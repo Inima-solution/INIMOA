@@ -2909,5 +2909,18 @@ async fn test_dynamic_query_thread_property_filter(pool: Pool<Postgres>) -> anyh
         dynamic::dynamic_email_thread_cursor(&pool, &[link_id], 50, &view, query, "", None).await?;
     assert!(results.is_empty(), "unknown tag option matches no threads");
 
+    let boolean = Arc::new(Expr::Literal(EmailLiteral::Property(PropertiesLiteral {
+        property_definition_id: definition_id,
+        entity_type: None,
+        value: PropertyMatchValue::Boolean(true),
+    })));
+    let query = Query::new(None, SimpleSortMethod::UpdatedAt, boolean);
+    let results =
+        dynamic::dynamic_email_thread_cursor(&pool, &[link_id], 50, &view, query, "", None).await?;
+    assert!(
+        results.is_empty(),
+        "Boolean properties never match email threads"
+    );
+
     Ok(())
 }

@@ -600,7 +600,7 @@ impl IsEmpty for ChannelThreadFilters {
 /// A single property-based filter condition.
 ///
 /// Each filter targets a specific property definition on entities of a given type,
-/// matching against select option UUIDs or entity reference IDs.
+/// matching against select option UUIDs, entity reference IDs, or a boolean value.
 /// Multiple values within a single filter are OR'd together.
 /// Multiple filters are AND'd together.
 #[derive(Debug, Serialize, Deserialize, Default, PartialEq, Clone)]
@@ -618,11 +618,14 @@ pub struct PropertyFilter {
     /// Entity reference IDs to match. Multiple values are OR'd together.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub entity_ids: Vec<String>,
+    /// Boolean value to match. None does not filter on a boolean value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub boolean_value: Option<bool>,
 }
 
 impl IsEmpty for PropertyFilter {
     fn is_empty(&self) -> bool {
-        self.option_ids.is_empty() && self.entity_ids.is_empty()
+        self.option_ids.is_empty() && self.entity_ids.is_empty() && self.boolean_value.is_none()
     }
 }
 
