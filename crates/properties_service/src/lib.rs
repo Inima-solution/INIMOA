@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 //! Properties Service Library - exposes API routes for integration into other services
 //!
 //! The routes themselves live in `properties::inbound::axum_router`; this crate

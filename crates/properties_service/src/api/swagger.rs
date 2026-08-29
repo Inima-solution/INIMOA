@@ -13,6 +13,10 @@ use properties::inbound::axum_router::{
         EnsureTagSetRequest, MergeTagRequest, PromoteTagRequest, TagPromotionConflictResponse,
         TagScope, TagSetResponse,
     },
+    task_dependency_relations::{
+        TaskDependencyRelationsBatchRequest, TaskDependencyRelationsErrorResponse,
+        TaskDependencyRelationsResponse,
+    },
     task_subtask_progress::{
         TaskSubtaskProgressBatchRequest, TaskSubtaskProgressErrorResponse,
         TaskSubtaskProgressResponse,
@@ -50,6 +54,7 @@ use utoipa::OpenApi;
         properties::inbound::axum_router::entities::bulk_update_entities_property_options,
         properties::inbound::axum_router::entities::delete_entity_property,
         properties::inbound::axum_router::task_subtask_progress::get_task_subtask_progress,
+        properties::inbound::axum_router::task_dependency_relations::get_task_dependency_relations,
     ),
     components(
         schemas(
@@ -69,6 +74,10 @@ use utoipa::OpenApi;
             TaskSubtaskProgressBatchRequest,
             TaskSubtaskProgressResponse,
             TaskSubtaskProgressErrorResponse,
+            TaskDependencyRelationsBatchRequest,
+            TaskDependencyRelationsResponse,
+            TaskDependencyRelationsErrorResponse,
+            properties::domain::model::TaskDependencyRelations,
             EntityQueryParams,
             BulkEntityPropertiesRequest,
             BulkUpdateEntityPropertyOptionsRequest,

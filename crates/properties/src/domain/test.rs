@@ -6390,3 +6390,209 @@ async fn task_subtask_progress_rejects_nonhuman_or_mismatched_source_receipts_be
         ));
     }
 }
+
+#[test]
+fn task_dependency_relations_serializes_exactly_the_seven_public_camel_case_fields() {
+    let task_id = Uuid::from_u128(0xE701);
+    let predecessor = Uuid::from_u128(0xE702);
+    let successor = Uuid::from_u128(0xE703);
+    assert_eq!(
+        serde_json::to_value(crate::domain::model::TaskDependencyRelations {
+            task_id,
+            readiness: crate::domain::model::TaskReadiness::Blocked,
+            depends_on_task_ids: vec![predecessor],
+            blocking_task_ids: vec![predecessor],
+            has_unavailable_dependencies: true,
+            successor_task_ids: vec![successor],
+            has_unavailable_successors: false,
+        })
+        .unwrap(),
+        serde_json::json!({
+            "taskId": task_id,
+            "readiness": "blocked",
+            "dependsOnTaskIds": [predecessor],
+            "blockingTaskIds": [predecessor],
+            "hasUnavailableDependencies": true,
+            "successorTaskIds": [successor],
+            "hasUnavailableSuccessors": false,
+        })
+    );
+}
+
+#[tokio::test]
+async fn task_dependency_relations_validate_source_order_actor_and_project_exactly() {
+    let first = Uuid::from_u128(0xE711);
+    let second = Uuid::from_u128(0xE712);
+    let other = MacroUserIdStr::parse_from_str("macro|other@test.com").unwrap();
+    for (sources, requested) in [
+        (
+            vec![ViewReceipt::dangerously_assert_internal_user(
+                &first.to_string(),
+                AccessEntityType::Document,
+            )],
+            vec![first],
+        ),
+        (
+            vec![ViewReceipt::dangerously_assert_bot(
+                BotId::new_from_uuid(Uuid::from_u128(0xE713)).into_storage_id(),
+                BotReceiptScope::User {
+                    acting_user: caller_user_id(),
+                },
+                &first.to_string(),
+                AccessEntityType::Document,
+            )],
+            vec![first],
+        ),
+        (
+            vec![
+                view_receipt(&first.to_string(), EntityType::Document),
+                ViewReceipt::dangerously_assert_authenticated_user(
+                    other.clone(),
+                    &second.to_string(),
+                    AccessEntityType::Document,
+                ),
+            ],
+            vec![first, second],
+        ),
+        (
+            vec![view_receipt(&second.to_string(), EntityType::Document)],
+            vec![first],
+        ),
+        (
+            vec![view_receipt(&first.to_string(), EntityType::Project)],
+            vec![first],
+        ),
+    ] {
+        assert!(matches!(
+            PropertiesServiceImpl::new(
+                MockPropertiesRepo::new(),
+                None::<MockPermissionService>,
+                None::<MockNotificationService>,
+            )
+            .get_task_dependency_relations(&sources, &requested)
+            .await,
+            Err(PropertiesErr::PermissionDenied)
+        ));
+    }
+}
+
+#[tokio::test]
+async fn task_dependency_relations_fail_closed_by_relation_direction_without_writes_or_events() {
+    use crate::domain::model::{
+        TaskDependencyReadiness, TaskDependencyRelationsSnapshot, TaskReadiness,
+    };
+
+    let task_id = Uuid::from_u128(0xE721);
+    let predecessor = Uuid::from_u128(0xE722);
+    let successor = Uuid::from_u128(0xE723);
+    for (deny_predecessor, deny_successor, expected) in [
+        (
+            false,
+            false,
+            TaskDependencyRelationsSnapshot {
+                readiness: TaskDependencyReadiness {
+                    task_id,
+                    readiness: TaskReadiness::Ready,
+                    depends_on_task_ids: vec![predecessor],
+                    blocking_task_ids: vec![],
+                    has_unavailable_dependencies: false,
+                },
+                successor_task_ids: vec![successor],
+                has_unavailable_successors: false,
+            },
+        ),
+        (
+            true,
+            false,
+            TaskDependencyRelationsSnapshot {
+                readiness: TaskDependencyReadiness {
+                    task_id,
+                    readiness: TaskReadiness::Ready,
+                    depends_on_task_ids: vec![predecessor],
+                    blocking_task_ids: vec![],
+                    has_unavailable_dependencies: false,
+                },
+                successor_task_ids: vec![successor],
+                has_unavailable_successors: false,
+            },
+        ),
+        (
+            false,
+            true,
+            TaskDependencyRelationsSnapshot {
+                readiness: TaskDependencyReadiness {
+                    task_id,
+                    readiness: TaskReadiness::Ready,
+                    depends_on_task_ids: vec![predecessor],
+                    blocking_task_ids: vec![],
+                    has_unavailable_dependencies: false,
+                },
+                successor_task_ids: vec![successor],
+                has_unavailable_successors: false,
+            },
+        ),
+    ] {
+        let snapshot = expected;
+        let mut repo = MockPropertiesRepo::new();
+        repo.expect_get_task_dependency_relations()
+            .once()
+            .return_once(move |_| Box::pin(async move { Ok(Some(vec![snapshot])) }));
+        let mut permission = MockPermissionService::new();
+        permission
+            .expect_mint_view_receipt()
+            .returning(move |_, id, _| {
+                let id = id.to_owned();
+                let denied = (deny_predecessor && id == predecessor.to_string())
+                    || (deny_successor && id == successor.to_string());
+                Box::pin(async move {
+                    if denied {
+                        Err(anyhow!("relation receipt backend sentinel"))
+                    } else {
+                        Ok(ViewReceipt::dangerously_assert_authenticated_user(
+                            caller_user_id(),
+                            &id,
+                            AccessEntityType::Document,
+                        ))
+                    }
+                })
+            });
+        let result =
+            PropertiesServiceImpl::new(repo, Some(permission), None::<MockNotificationService>)
+                .get_task_dependency_relations(
+                    &[view_receipt(&task_id.to_string(), EntityType::Document)],
+                    &[task_id],
+                )
+                .await
+                .unwrap();
+        assert_eq!(result.len(), 1);
+        let relation = &result[0];
+        assert_eq!(relation.task_id, task_id);
+        assert_eq!(
+            relation.depends_on_task_ids,
+            if deny_predecessor {
+                vec![]
+            } else {
+                vec![predecessor]
+            }
+        );
+        assert_eq!(relation.blocking_task_ids, Vec::<Uuid>::new());
+        assert_eq!(relation.has_unavailable_dependencies, deny_predecessor);
+        assert_eq!(
+            relation.readiness,
+            if deny_predecessor {
+                TaskReadiness::Blocked
+            } else {
+                TaskReadiness::Ready
+            }
+        );
+        assert_eq!(
+            relation.successor_task_ids,
+            if deny_successor {
+                vec![]
+            } else {
+                vec![successor]
+            }
+        );
+        assert_eq!(relation.has_unavailable_successors, deny_successor);
+    }
+}

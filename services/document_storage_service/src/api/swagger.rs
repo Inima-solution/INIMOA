@@ -139,6 +139,10 @@ use properties::inbound::axum_router::project_dependency_readiness::{
     GetProjectTaskDependencyReadinessResponse, TaskDependencyReadinessBatchRequest,
     TaskDependencyReadinessErrorResponse,
 };
+use properties::inbound::axum_router::task_dependency_relations::{
+    TaskDependencyRelationsBatchRequest, TaskDependencyRelationsErrorResponse,
+    TaskDependencyRelationsResponse,
+};
 use properties::inbound::axum_router::task_subtask_progress::{
     TaskSubtaskProgressBatchRequest, TaskSubtaskProgressErrorResponse, TaskSubtaskProgressResponse,
 };
@@ -322,6 +326,7 @@ use utoipa::OpenApi;
         projects_hex::inbound::axum_router::project_overview::get_project_overview_handler,
         properties::inbound::axum_router::project_dependency_readiness::get_project_task_dependency_readiness,
         properties::inbound::axum_router::task_subtask_progress::get_task_subtask_progress,
+        properties::inbound::axum_router::task_dependency_relations::get_task_dependency_relations,
 
         entity::get_entity_permission::handler,
 
@@ -661,6 +666,10 @@ use utoipa::OpenApi;
             TaskSubtaskProgressBatchRequest,
             TaskSubtaskProgressResponse,
             TaskSubtaskProgressErrorResponse,
+            TaskDependencyRelationsBatchRequest,
+            TaskDependencyRelationsResponse,
+            TaskDependencyRelationsErrorResponse,
+            properties::domain::model::TaskDependencyRelations,
 
             // Preview
             GetDocumentPermissionsResponseDataV2,

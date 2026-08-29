@@ -29,7 +29,7 @@ use super::error::PropertiesErr;
 use super::model::{
     EditReceipt, EntityOptionUpdateOutcome, EntityPropertyInfo, EntityPropertyOptionSelection,
     EntityPropertyOptionUpdate, PropertyTargetKey, TagScope, TagSet, TaskDependencyReadiness,
-    TaskSubtaskProgress, ViewReceipt,
+    TaskDependencyRelations, TaskSubtaskProgress, ViewReceipt,
 };
 
 /// The caller's team-membership proof, used to scope definition/option/tag
@@ -46,6 +46,13 @@ pub fn team_id_from_receipt(team: Option<&TeamReceipt>) -> Option<Uuid> {
 
 /// Service trait for property operations.
 pub trait PropertiesService: Send + Sync + 'static {
+    /// Read direct dependency relations from source task view receipts.
+    fn get_task_dependency_relations(
+        &self,
+        sources: &[ViewReceipt],
+        task_ids: &[Uuid],
+    ) -> impl Future<Output = Result<Vec<TaskDependencyRelations>, PropertiesErr>> + Send;
+
     /// Compute direct-subtask progress from source Task view receipts.
     fn get_task_subtask_progress(
         &self,

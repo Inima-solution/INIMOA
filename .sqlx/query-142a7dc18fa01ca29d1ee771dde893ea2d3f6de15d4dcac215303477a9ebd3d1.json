@@ -1,0 +1,67 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH requested AS (\n            SELECT task_id, ordinal FROM unnest($1::uuid[]) WITH ORDINALITY AS input(task_id, ordinal)\n        ), source_tasks AS (\n            SELECT requested.task_id, requested.ordinal, source.\"projectId\" AS project_id,\n                source.id IS NOT NULL AND source_type.document_id IS NOT NULL AS source_available,\n                dependency_property.values AS dependency_values\n            FROM requested\n            LEFT JOIN \"Document\" source ON source.id = requested.task_id::text AND source.\"deletedAt\" IS NULL\n            LEFT JOIN document_sub_type source_type ON source_type.document_id = source.id AND source_type.sub_type = 'task'::document_sub_type_value\n            LEFT JOIN entity_properties dependency_property ON dependency_property.entity_id = source.id AND dependency_property.entity_type = 'TASK' AND dependency_property.property_definition_id = $2\n        ), expanded_refs AS (\n            SELECT source_tasks.task_id, source_tasks.ordinal, refs.reference, refs.reference_ordinal,\n                dependency_values IS NOT NULL AND NOT COALESCE(jsonb_typeof(dependency_values) = 'object' AND dependency_values->>'type' = 'EntityReference' AND jsonb_typeof(dependency_values->'value') = 'array', FALSE) AS malformed_value\n            FROM source_tasks\n            LEFT JOIN LATERAL jsonb_array_elements(CASE WHEN dependency_values IS NOT NULL AND jsonb_typeof(dependency_values) = 'object' AND dependency_values->>'type' = 'EntityReference' AND jsonb_typeof(dependency_values->'value') = 'array' THEN dependency_values->'value' ELSE '[]'::jsonb END) WITH ORDINALITY AS refs(reference, reference_ordinal) ON TRUE\n        ), normalized_refs AS (\n            SELECT task_id, ordinal, reference_ordinal, malformed_value, reference,\n                CASE WHEN reference->>'entity_type' = 'TASK' AND reference->>'specific_message_id' IS NULL AND reference->>'entity_id' ~* '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' AND (reference->>'entity_id')::uuid <> task_id THEN (reference->>'entity_id')::uuid ELSE NULL END AS dependency_id\n            FROM expanded_refs\n        ), valid_refs AS (\n            SELECT DISTINCT ON (task_id, ordinal, dependency_id) task_id, ordinal, dependency_id, reference_ordinal\n            FROM normalized_refs WHERE dependency_id IS NOT NULL ORDER BY task_id, ordinal, dependency_id, reference_ordinal\n        ), duplicate_refs AS (\n            SELECT task_id, ordinal, dependency_id\n            FROM normalized_refs\n            WHERE dependency_id IS NOT NULL\n            GROUP BY task_id, ordinal, dependency_id\n            HAVING count(*) > 1\n        ), classified_refs AS (\n            SELECT valid_refs.task_id, valid_refs.ordinal, valid_refs.dependency_id, valid_refs.reference_ordinal,\n                dependency.id IS NOT NULL AND dependency_type.document_id IS NOT NULL AS live_same_project_task,\n                status.values = jsonb_build_object('type', 'SelectOption', 'value', jsonb_build_array($4::uuid)) AS completed\n            FROM valid_refs\n            JOIN source_tasks ON source_tasks.task_id = valid_refs.task_id AND source_tasks.ordinal = valid_refs.ordinal\n            LEFT JOIN \"Document\" dependency ON dependency.id = valid_refs.dependency_id::text AND dependency.\"projectId\" IS NOT DISTINCT FROM source_tasks.project_id AND dependency.\"deletedAt\" IS NULL\n            LEFT JOIN document_sub_type dependency_type ON dependency_type.document_id = dependency.id AND dependency_type.sub_type = 'task'::document_sub_type_value\n            LEFT JOIN entity_properties status ON status.entity_id = dependency.id AND status.entity_type = 'TASK' AND status.property_definition_id = $3\n        ), source_flags AS (\n            SELECT source_tasks.task_id, source_tasks.ordinal,\n                COALESCE(bool_or(normalized_refs.malformed_value), FALSE)\n                  OR COALESCE(bool_or(normalized_refs.reference IS NOT NULL AND normalized_refs.dependency_id IS NULL), FALSE)\n                  OR EXISTS (SELECT 1 FROM duplicate_refs WHERE duplicate_refs.task_id = source_tasks.task_id AND duplicate_refs.ordinal = source_tasks.ordinal) AS malformed\n            FROM source_tasks LEFT JOIN normalized_refs ON normalized_refs.task_id = source_tasks.task_id AND normalized_refs.ordinal = source_tasks.ordinal\n            GROUP BY source_tasks.task_id, source_tasks.ordinal\n        ), reverse_candidates AS (\n            SELECT source_tasks.task_id, source_tasks.ordinal, candidate.id, candidate.\"projectId\" AS project_id,\n                candidate.\"deletedAt\" IS NULL AND candidate_type.document_id IS NOT NULL AS live_task,\n                candidate_dependency.values AS dependency_values\n            FROM source_tasks\n            JOIN entity_properties candidate_dependency ON candidate_dependency.entity_type = 'TASK' AND candidate_dependency.property_definition_id = $2\n            LEFT JOIN \"Document\" candidate ON candidate.id = candidate_dependency.entity_id\n            LEFT JOIN document_sub_type candidate_type ON candidate_type.document_id = candidate.id AND candidate_type.sub_type = 'task'::document_sub_type_value\n            WHERE jsonb_path_exists(candidate_dependency.values, '$.** ? (@.entity_id == $id)', jsonb_build_object('id', to_jsonb(source_tasks.task_id::text)))\n        ), reverse_ranked AS (\n            SELECT reverse_candidates.*, row_number() OVER (\n                PARTITION BY task_id, ordinal\n                ORDER BY id ASC NULLS LAST, dependency_values::text ASC\n            ) AS candidate_rank\n            FROM reverse_candidates\n        ), reverse_rows AS (\n            SELECT task_id, ordinal, id, project_id, live_task, dependency_values\n            FROM reverse_ranked\n            WHERE candidate_rank <= 201\n        )\n        SELECT source_tasks.task_id AS \"task_id!\", source_tasks.source_available AS \"source_available!\", source_tasks.project_id,\n            CASE WHEN COALESCE(source_flags.malformed, FALSE) OR COALESCE(bool_or(NOT classified_refs.live_same_project_task), FALSE) OR COALESCE(bool_or(classified_refs.live_same_project_task AND NOT COALESCE(classified_refs.completed, FALSE)), FALSE) THEN 'blocked' ELSE 'ready' END AS \"readiness!\",\n            COALESCE(array_agg(classified_refs.dependency_id ORDER BY classified_refs.reference_ordinal) FILTER (WHERE classified_refs.live_same_project_task), ARRAY[]::uuid[]) AS \"depends_on_task_ids!\",\n            COALESCE(array_agg(classified_refs.dependency_id ORDER BY classified_refs.reference_ordinal) FILTER (WHERE classified_refs.live_same_project_task AND NOT COALESCE(classified_refs.completed, FALSE)), ARRAY[]::uuid[]) AS \"blocking_task_ids!\",\n            COALESCE(source_flags.malformed, FALSE) OR COALESCE(bool_or(NOT classified_refs.live_same_project_task), FALSE) AS \"has_unavailable_dependencies!\",\n            COALESCE((SELECT jsonb_agg(jsonb_build_object('id', reverse_rows.id, 'projectId', reverse_rows.project_id, 'liveTask', reverse_rows.live_task, 'dependencyValues', reverse_rows.dependency_values) ORDER BY reverse_rows.id ASC NULLS LAST, reverse_rows.dependency_values::text ASC) FROM reverse_rows WHERE reverse_rows.task_id = source_tasks.task_id AND reverse_rows.ordinal = source_tasks.ordinal), '[]'::jsonb) AS \"reverse_rows!\"\n        FROM source_tasks\n        LEFT JOIN source_flags ON source_flags.task_id = source_tasks.task_id AND source_flags.ordinal = source_tasks.ordinal\n        LEFT JOIN classified_refs ON classified_refs.task_id = source_tasks.task_id AND classified_refs.ordinal = source_tasks.ordinal\n        GROUP BY source_tasks.task_id, source_tasks.ordinal, source_tasks.source_available, source_tasks.project_id, source_flags.malformed\n        ORDER BY source_tasks.ordinal\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "task_id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "source_available!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 2,
+        "name": "project_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "readiness!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "depends_on_task_ids!",
+        "type_info": "UuidArray"
+      },
+      {
+        "ordinal": 5,
+        "name": "blocking_task_ids!",
+        "type_info": "UuidArray"
+      },
+      {
+        "ordinal": 6,
+        "name": "has_unavailable_dependencies!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 7,
+        "name": "reverse_rows!",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      true,
+      null,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "142a7dc18fa01ca29d1ee771dde893ea2d3f6de15d4dcac215303477a9ebd3d1"
+}

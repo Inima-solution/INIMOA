@@ -49,6 +49,33 @@ pub struct TaskDependencyReadiness {
     pub has_unavailable_dependencies: bool,
 }
 
+/// Caller-scoped direct dependency relations for one task.
+///
+/// This read model deliberately exposes identifiers only after the domain has
+/// applied an individual document-view check for each related task.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "inbound", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "ai_tools", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct TaskDependencyRelations {
+    pub task_id: Uuid,
+    pub readiness: TaskReadiness,
+    pub depends_on_task_ids: Vec<Uuid>,
+    pub blocking_task_ids: Vec<Uuid>,
+    pub has_unavailable_dependencies: bool,
+    pub successor_task_ids: Vec<Uuid>,
+    pub has_unavailable_successors: bool,
+}
+
+/// Internal canonical relation snapshot before per-document access projection.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskDependencyRelationsSnapshot {
+    pub readiness: TaskDependencyReadiness,
+    pub successor_task_ids: Vec<Uuid>,
+    pub has_unavailable_successors: bool,
+}
+
 /// Computed direct-subtask completion state for one parent task.
 ///
 /// This is a transition-time snapshot only. It is deliberately not a

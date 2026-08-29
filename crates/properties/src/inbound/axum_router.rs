@@ -16,6 +16,7 @@ pub mod extract;
 pub mod options;
 pub mod project_dependency_readiness;
 pub mod tags;
+pub mod task_dependency_relations;
 pub mod task_subtask_progress;
 
 use std::sync::Arc;
@@ -118,6 +119,10 @@ where
     Auth: MacroAuthorizationService,
 {
     Router::new()
+        .route(
+            "/task-dependency-relations",
+            post(task_dependency_relations::get_task_dependency_relations::<S, A, Auth>),
+        )
         .route(
             "/task-subtask-progress",
             post(task_subtask_progress::get_task_subtask_progress::<S, A, Auth>),

@@ -1603,3 +1603,219 @@ async fn task_subtask_progress_maps_source_denial_not_found_and_internal_without
         serde_json::json!({"error":true,"message":"internal server error"})
     );
 }
+
+#[tokio::test]
+async fn task_dependency_relations_returns_exact_seven_key_shape_and_preserves_duplicate_order() {
+    use crate::domain::model::{
+        TaskDependencyReadiness, TaskDependencyRelationsSnapshot, TaskReadiness,
+    };
+
+    let first = Uuid::from_u128(0xE801);
+    let second = Uuid::from_u128(0xE802);
+    let predecessor = Uuid::from_u128(0xE803);
+    let successor = Uuid::from_u128(0xE804);
+    let requested = vec![first, second, first];
+    let expected_requested = requested.clone();
+    let snapshot = move |task_id| TaskDependencyRelationsSnapshot {
+        readiness: TaskDependencyReadiness {
+            task_id,
+            readiness: TaskReadiness::Blocked,
+            depends_on_task_ids: vec![predecessor],
+            blocking_task_ids: vec![predecessor],
+            has_unavailable_dependencies: false,
+        },
+        successor_task_ids: vec![successor],
+        has_unavailable_successors: false,
+    };
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_task_dependency_relations()
+        .once()
+        .withf(move |ids| ids == expected_requested.as_slice())
+        .return_once(move |_| {
+            Box::pin(async move {
+                Ok(Some(vec![
+                    snapshot(first),
+                    snapshot(second),
+                    snapshot(first),
+                ]))
+            })
+        });
+    let mut permission = MockPermissionService::new();
+    permission
+        .expect_mint_view_receipt()
+        .returning(move |_, id, _| {
+            let id = id.to_owned();
+            Box::pin(async move {
+                Ok(EntityAccessReceipt::dangerously_assert_authenticated_user(
+                    MacroUserIdStr::parse_from_str(VALID_USER_ID).unwrap(),
+                    &id,
+                    EntityType::Document,
+                ))
+            })
+        });
+    let access = FakeEntityAccessService::default();
+    let response = properties_router(
+        PropertiesServiceImpl::new(repo, Some(permission), None::<MockNotificationService>),
+        access.clone(),
+    )
+    .oneshot(json_post(
+        "/task-dependency-relations",
+        serde_json::json!({"taskIds": requested}),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value = serde_json::from_str(&response_body(response).await).unwrap();
+    assert_eq!(body.as_array().unwrap().len(), 3);
+    for (item, task_id) in body.as_array().unwrap().iter().zip([first, second, first]) {
+        assert_eq!(
+            item.as_object()
+                .unwrap()
+                .keys()
+                .map(String::as_str)
+                .collect::<std::collections::BTreeSet<_>>(),
+            [
+                "blockingTaskIds",
+                "dependsOnTaskIds",
+                "hasUnavailableDependencies",
+                "hasUnavailableSuccessors",
+                "readiness",
+                "successorTaskIds",
+                "taskId"
+            ]
+            .into_iter()
+            .collect(),
+        );
+        assert_eq!(item["taskId"], task_id.to_string());
+    }
+    assert_eq!(
+        access.calls().len(),
+        3,
+        "one Document View receipt per source"
+    );
+}
+
+#[tokio::test]
+async fn task_dependency_relations_rejects_useronly_and_bad_bodies_before_receipts_or_domain() {
+    for (authorization, body, status) in [
+        (
+            None,
+            r#"{"taskIds":[]}"#.to_owned(),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            Some("Bearer invalid"),
+            r#"{"taskIds":[]}"#.to_owned(),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            Some("Bearer valid"),
+            r#"{"taskIds":["not-a-uuid"]}"#.to_owned(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            Some("Bearer valid"),
+            r#"{"taskIds":[],"unknown":true}"#.to_owned(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            Some("Bearer valid"),
+            serde_json::json!({"taskIds": vec![Uuid::nil(); 201]}).to_string(),
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let mut repo = MockPropertiesRepo::new();
+        repo.expect_get_task_dependency_relations().never();
+        let access = FakeEntityAccessService::default();
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/task-dependency-relations")
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(authorization) = authorization {
+            request = request.header(header::AUTHORIZATION, authorization);
+        }
+        let response = properties_router(
+            PropertiesServiceImpl::new(
+                repo,
+                None::<MockPermissionService>,
+                None::<MockNotificationService>,
+            ),
+            access.clone(),
+        )
+        .oneshot(request.body(Body::from(body)).unwrap())
+        .await
+        .unwrap();
+        assert_readiness_error(response, status).await;
+        assert!(
+            access.calls().is_empty(),
+            "UserOnly/body validation precedes receipts"
+        );
+    }
+}
+
+#[tokio::test]
+async fn task_dependency_relations_empty_and_failures_are_redacted_and_do_not_leak() {
+    let empty = properties_router(
+        PropertiesServiceImpl::new(
+            MockPropertiesRepo::new(),
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        ),
+        FakeEntityAccessService::default(),
+    )
+    .oneshot(json_post(
+        "/task-dependency-relations",
+        serde_json::json!({"taskIds": []}),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(empty.status(), StatusCode::OK);
+    assert_eq!(response_body(empty).await, "[]");
+
+    let task_id = Uuid::from_u128(0xE805);
+    let body = serde_json::json!({"taskIds": [task_id]});
+    let mut denied_repo = MockPropertiesRepo::new();
+    denied_repo.expect_get_task_dependency_relations().never();
+    let denied = properties_router(
+        PropertiesServiceImpl::new(
+            denied_repo,
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        ),
+        FakeEntityAccessService::with_denied_document_receipt(),
+    )
+    .oneshot(json_post("/task-dependency-relations", body.clone()))
+    .await
+    .unwrap();
+    assert_readiness_error(denied, StatusCode::FORBIDDEN).await;
+
+    for (outcome, status) in [
+        (false, StatusCode::NOT_FOUND),
+        (true, StatusCode::INTERNAL_SERVER_ERROR),
+    ] {
+        let mut repo = MockPropertiesRepo::new();
+        repo.expect_get_task_dependency_relations()
+            .once()
+            .return_once(move |_| {
+                Box::pin(async move {
+                    if outcome {
+                        Err(anyhow::anyhow!("dependency-relations-private-sentinel"))
+                    } else {
+                        Ok(None)
+                    }
+                })
+            });
+        let response = properties_router(
+            PropertiesServiceImpl::new(
+                repo,
+                None::<MockPermissionService>,
+                None::<MockNotificationService>,
+            ),
+            FakeEntityAccessService::default(),
+        )
+        .oneshot(json_post("/task-dependency-relations", body.clone()))
+        .await
+        .unwrap();
+        assert_readiness_error(response, status).await;
+    }
+}

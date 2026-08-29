@@ -2,6 +2,7 @@
 
 mod helpers;
 mod task_dependencies;
+mod task_dependency_relations;
 mod task_properties;
 mod task_subtask_progress;
 
@@ -45,8 +46,8 @@ use super::model::{
     EditReceipt, EntityOptionUpdateOutcome, EntityPropertyInfo, EntityPropertyOptionSelection,
     EntityPropertyOptionUpdate, PropertyAccessReceiptExt, PropertyDefinitionOwner,
     PropertyTargetKey, ResolvedPropertySubject, TagPromotionOutcome, TagRemapOutcome, TagScope,
-    TagSet, TaskDependencyReadiness, TaskStatusMutationOutcome, TaskSubtaskProgress,
-    UpdatePropertyOptionOutcome, ViewReceipt,
+    TagSet, TaskDependencyReadiness, TaskDependencyRelations, TaskStatusMutationOutcome,
+    TaskSubtaskProgress, UpdatePropertyOptionOutcome, ViewReceipt,
 };
 use super::ports::{NotificationService, PermissionService, PropertiesRepo};
 use super::service::{
@@ -536,6 +537,16 @@ where
     B: MacroEventBroker,
     anyhow::Error: From<R::Err> + From<P::Err> + From<N::Err>,
 {
+    #[tracing::instrument(skip(self, sources, task_ids), err)]
+    async fn get_task_dependency_relations(
+        &self,
+        sources: &[ViewReceipt],
+        task_ids: &[Uuid],
+    ) -> Result<Vec<TaskDependencyRelations>, PropertiesErr> {
+        self.get_task_dependency_relations_scoped(sources, task_ids)
+            .await
+    }
+
     #[tracing::instrument(skip(self, sources, task_ids), err)]
     async fn get_task_subtask_progress(
         &self,
