@@ -86,6 +86,11 @@ export const NOTIFICATION_EVENT_GROUPS: readonly NotificationEventGroup[] = [
         label: 'Assignments',
         description: 'When a task is assigned to you',
       },
+      {
+        type: 'task_ready',
+        label: 'Ready tasks',
+        description: 'When a task is ready for you',
+      },
     ],
   },
   {

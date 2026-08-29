@@ -336,6 +336,13 @@ describe('notification utils', () => {
       expect(getNotificationActionText(notification)).toBe('assigned');
     });
 
+    it('returns senderless action text for task_ready', () => {
+      const notification = {
+        notification_metadata: { tag: 'task_ready' },
+      } as Notification;
+      expect(getNotificationActionText(notification)).toBe('Task ready');
+    });
+
     it('returns correct action text for github_pr_status_changed', () => {
       expect(getNotificationActionText(githubPrNotification())).toBe('updated');
     });
@@ -432,6 +439,17 @@ describe('notification utils', () => {
         notification_metadata: {
           tag: 'task_assigned',
           content: { taskName: 'Review PR' },
+        },
+      } as any;
+
+      expect(extractMessageContent(notification)).toBe('Review PR');
+    });
+
+    it('extracts taskName for task_ready without exposing taskId', () => {
+      const notification = {
+        notification_metadata: {
+          tag: 'task_ready',
+          content: { taskId: 'task-uuid', taskName: 'Review PR' },
         },
       } as any;
 

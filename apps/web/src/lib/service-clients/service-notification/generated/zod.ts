@@ -1396,6 +1396,23 @@ export const listTypedNotificationsResponse = zod
                     .describe(
                       "A review was submitted on the user's GitHub pull request."
                     ),
+                  zod
+                    .object({
+                      content: zod
+                        .object({
+                          taskId: zod
+                            .string()
+                            .describe('The unique identifier of the task.'),
+                          taskName: zod
+                            .string()
+                            .describe('The current task name.'),
+                        })
+                        .describe(
+                          'Metadata for when a task becomes ready for its current assignees.'
+                        ),
+                      tag: zod.enum(['task_ready']),
+                    })
+                    .describe('A task became ready for its current assignees.'),
                 ])
                 .describe(
                   'Mirrors [`model_notifications::NotificationEvent`] but uses `tag` \/ `content`\nas the serde adjacently-tagged field names so it can be deserialized from the\nshape produced by [`UserNotificationRow::into_tagged`] +\n[`UserNotificationRow::into_json`].\n\nOnly includes variants whose metadata types implement the `Notification` trait.'
@@ -2752,6 +2769,23 @@ export const bulkGetTypedNotificationsByEventItemIdsResponse = zod
                     .describe(
                       "A review was submitted on the user's GitHub pull request."
                     ),
+                  zod
+                    .object({
+                      content: zod
+                        .object({
+                          taskId: zod
+                            .string()
+                            .describe('The unique identifier of the task.'),
+                          taskName: zod
+                            .string()
+                            .describe('The current task name.'),
+                        })
+                        .describe(
+                          'Metadata for when a task becomes ready for its current assignees.'
+                        ),
+                      tag: zod.enum(['task_ready']),
+                    })
+                    .describe('A task became ready for its current assignees.'),
                 ])
                 .describe(
                   'Mirrors [`model_notifications::NotificationEvent`] but uses `tag` \/ `content`\nas the serde adjacently-tagged field names so it can be deserialized from the\nshape produced by [`UserNotificationRow::into_tagged`] +\n[`UserNotificationRow::into_json`].\n\nOnly includes variants whose metadata types implement the `Notification` trait.'
@@ -4102,6 +4136,23 @@ export const getTypedNotificationsByEventItemIdResponse = zod
                     .describe(
                       "A review was submitted on the user's GitHub pull request."
                     ),
+                  zod
+                    .object({
+                      content: zod
+                        .object({
+                          taskId: zod
+                            .string()
+                            .describe('The unique identifier of the task.'),
+                          taskName: zod
+                            .string()
+                            .describe('The current task name.'),
+                        })
+                        .describe(
+                          'Metadata for when a task becomes ready for its current assignees.'
+                        ),
+                      tag: zod.enum(['task_ready']),
+                    })
+                    .describe('A task became ready for its current assignees.'),
                 ])
                 .describe(
                   'Mirrors [`model_notifications::NotificationEvent`] but uses `tag` \/ `content`\nas the serde adjacently-tagged field names so it can be deserialized from the\nshape produced by [`UserNotificationRow::into_tagged`] +\n[`UserNotificationRow::into_json`].\n\nOnly includes variants whose metadata types implement the `Notification` trait.'
@@ -5368,6 +5419,21 @@ export const getTypedNotificationByIdResponse = zod
             .describe(
               "A review was submitted on the user's GitHub pull request."
             ),
+          zod
+            .object({
+              content: zod
+                .object({
+                  taskId: zod
+                    .string()
+                    .describe('The unique identifier of the task.'),
+                  taskName: zod.string().describe('The current task name.'),
+                })
+                .describe(
+                  'Metadata for when a task becomes ready for its current assignees.'
+                ),
+              tag: zod.enum(['task_ready']),
+            })
+            .describe('A task became ready for its current assignees.'),
         ])
         .describe(
           'Mirrors [`model_notifications::NotificationEvent`] but uses `tag` \/ `content`\nas the serde adjacently-tagged field names so it can be deserialized from the\nshape produced by [`UserNotificationRow::into_tagged`] +\n[`UserNotificationRow::into_json`].\n\nOnly includes variants whose metadata types implement the `Notification` trait.'

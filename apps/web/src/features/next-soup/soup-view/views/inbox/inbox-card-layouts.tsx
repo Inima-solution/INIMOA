@@ -243,6 +243,9 @@ const tagBubbleIcon = (tag: NotificationTag) =>
     .with('task_assigned', () => () => (
       <EntityIcon class={AVATAR_GLYPH_CLASS} targetType="task" size="fill" />
     ))
+    .with('task_ready', () => () => (
+      <EntityIcon class={AVATAR_GLYPH_CLASS} targetType="task" size="fill" />
+    ))
     .with('ai_response', () => () => (
       <EntityIcon class={AVATAR_GLYPH_CLASS} targetType="chat" size="fill" />
     ))
@@ -1067,6 +1070,13 @@ export function TaskCardLayout(props: InboxCardLayoutProps) {
       };
     }
 
+    if (getNotificationTag(props.item.notification) === 'task_ready') {
+      return {
+        title: 'Task ready',
+        content: content || props.item.entity.name,
+      };
+    }
+
     return { title: props.item.entity.name, content };
   });
 
@@ -1606,6 +1616,7 @@ export function InboxCardLayout(props: InboxCardLayoutProps) {
 
     return (
       notificationTag() === 'task_assigned' ||
+      notificationTag() === 'task_ready' ||
       (entity.type === 'document' && entity.subType?.type === 'task')
     );
   };

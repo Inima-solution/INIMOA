@@ -888,6 +888,18 @@ pub struct TaskAssignedMetadata {
     pub sender_profile_picture_url: Option<String>,
 }
 
+/// Metadata for when a task becomes ready for its current assignees.
+#[derive(Serialize, Deserialize, Debug, Clone, ToSchema)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskReadyMetadata {
+    /// The unique identifier of the task.
+    #[serde(alias = "task_id")]
+    pub task_id: String,
+    /// The current task name.
+    #[serde(alias = "task_name")]
+    pub task_name: String,
+}
+
 /// Helper to parse XML message content to plain text, returning None on failure.
 fn parse_message_plain_text(content: &str) -> Result<String, Report> {
     let parsed = ParsedXmlText::parse(content)?;
@@ -1050,6 +1062,38 @@ impl NotificationExtIos for DocumentMentionMetadata {
 
 impl notification::domain::models::Notification for TaskAssignedMetadata {
     const TYPE_NAME: &'static str = "task_assigned";
+}
+
+impl notification::domain::models::Notification for TaskReadyMetadata {
+    const TYPE_NAME: &'static str = "task_ready";
+}
+
+impl NotificationTitle for TaskReadyMetadata {
+    fn format_title(&self, _sender_id: Option<MacroUserIdStr<'_>>) -> Result<String, Report> {
+        Ok("Task ready".to_string())
+    }
+
+    fn format_body(&self, _sender_id: Option<MacroUserIdStr<'_>>) -> Result<String, Report> {
+        Ok(self.task_name.clone())
+    }
+}
+
+impl NotificationExtIos for TaskReadyMetadata {
+    type NotifData = ::notification::domain::models::apple::PushNotificationData;
+
+    fn collapse_key(&self, entity: &Entity<'_>) -> NotifCollapseKey {
+        let entity_type: &'static str = entity.entity_type.into();
+        NotifCollapseKey::new(entity_type).append(&entity.entity_id)
+    }
+
+    fn as_apns<'a>(
+        &self,
+        sender_id: Option<MacroUserIdStr<'a>>,
+        _entity: &Entity<'_>,
+        notification_id: Uuid,
+    ) -> Option<APNSPushNotification<Self::NotifData>> {
+        alert_apns(self, sender_id, notification_id, None).ok()
+    }
 }
 
 impl NotificationTitle for TaskAssignedMetadata {

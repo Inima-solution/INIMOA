@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { NOTIFICATION_LABEL_BY_TYPE } from '../notification-preview';
 import type { UnifiedNotification } from '../types';
 
 function createEmailNotification(
@@ -51,5 +52,11 @@ describe('new_email notification', () => {
       sender?: string | null;
     };
     expect(content.sender).toBe('fallback@example.com');
+  });
+});
+
+describe('task_ready notification', () => {
+  it('uses the ready preview label', () => {
+    expect(NOTIFICATION_LABEL_BY_TYPE.task_ready).toBe('READY');
   });
 });

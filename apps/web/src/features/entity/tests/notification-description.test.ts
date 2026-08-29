@@ -118,6 +118,7 @@ describe('notification-description helpers', () => {
       expect(isGithubNotificationType('channel_mention')).toBe(false);
       expect(isGithubNotificationType('new_email')).toBe(false);
       expect(isGithubNotificationType('task_assigned')).toBe(false);
+      expect(isGithubNotificationType('task_ready')).toBe(false);
     });
   });
 
@@ -218,6 +219,10 @@ describe('notification-description helpers', () => {
       expect(getActionVerb('task_assigned')).toBe('assigned you');
     });
 
+    it('returns senderless action text for task_ready', () => {
+      expect(getActionVerb('task_ready')).toBe('Task ready');
+    });
+
     it('returns correct verb for github_pr_status_changed', () => {
       expect(getActionVerb('github_pr_status_changed')).toBe(
         'updated a pull request'
@@ -311,6 +316,13 @@ describe('notification-description helpers', () => {
 
       it('returns plural for count greater than 1', () => {
         expect(getTypeNoun('task_assigned', 5)).toBe('tasks');
+      });
+    });
+
+    describe('task_ready', () => {
+      it('returns ready-task nouns', () => {
+        expect(getTypeNoun('task_ready', 1)).toBe('ready task');
+        expect(getTypeNoun('task_ready', 2)).toBe('ready tasks');
       });
     });
 

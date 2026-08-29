@@ -7,3 +7,4 @@ pub mod document_restore;
 pub mod entity_mutation;
 pub mod s3;
 pub mod soup_favorites_reader;
+pub mod task_ready_notification;

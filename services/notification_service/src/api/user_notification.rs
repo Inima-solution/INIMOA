@@ -15,6 +15,7 @@ use model_notifications::{
     DocumentMentionMetadata, GithubPrComment, GithubPrMention, GithubPrReview,
     GithubPrStatusChanged, GithubReviewRequested, MentionedInDocumentCommentMetadata,
     NewEmailMetadata, NotifEvent, RepliedToDocumentCommentThreadMetadata, TaskAssignedMetadata,
+    TaskReadyMetadata,
 };
 use notification::{
     domain::{models::Notification, service::NotificationReader},
@@ -42,6 +43,7 @@ pub(crate) static BLOCKABLE_NOTIFICATIONS: LazyLock<HashSet<&'static str>> = Laz
         GithubPrMention::TYPE_NAME,
         GithubPrReview::TYPE_NAME,
         TaskAssignedMetadata::TYPE_NAME,
+        TaskReadyMetadata::TYPE_NAME,
         MentionedInDocumentCommentMetadata::TYPE_NAME,
         RepliedToDocumentCommentThreadMetadata::TYPE_NAME,
         CommentedOnDocumentMetadata::TYPE_NAME,

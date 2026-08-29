@@ -251,6 +251,16 @@ function getSupportedHandler(
         });
       };
     })
+    .with('task_ready', () => {
+      const meta = notification.notification_metadata;
+      if (meta.tag !== 'task_ready') return null;
+      return async (lm: SplitManager, newSplit: boolean = false) => {
+        openSplitIfNotOpen(lm, 'task', meta.content.taskId, {
+          newSplit,
+          sourceHandle,
+        });
+      };
+    })
     .with(P.union(...GITHUB_EVENT_TYPES), () => {
       const meta = notification.notification_metadata;
       if (

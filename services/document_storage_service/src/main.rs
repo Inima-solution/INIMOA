@@ -1127,6 +1127,56 @@ async fn run() -> anyhow::Result<()> {
         }
     });
 
+    consumer_tracker.spawn({
+        let brokers = config.kafka_brokers.as_ref().to_string();
+        let entity_access_service = entity_access_service.as_ref().clone();
+        let notification_ingress_service = notification_ingress_service.as_ref().clone();
+        let db = db.clone();
+        let cancellation_token = consumer_cancellation_token.clone();
+        async move {
+            let mut consecutive_failures = 0_u32;
+            loop {
+                if cancellation_token.is_cancelled() {
+                    break;
+                }
+                let materializer =
+                    service::task_ready_notification::TaskReadyNotificationMaterializer::new(
+                        db.clone(),
+                        entity_access_service.clone(),
+                        notification_ingress_service.clone(),
+                    );
+                tracing::info!("starting task-ready notification consumer");
+                let _result =
+                    service::task_ready_notification::run_task_ready_notification_consumer(
+                        &brokers,
+                        materializer,
+                        cancellation_token.cancelled(),
+                    )
+                    .await;
+                if cancellation_token.is_cancelled() {
+                    break;
+                }
+                consecutive_failures = consecutive_failures.saturating_add(1);
+                let Some(delay) = service::task_ready_notification::supervisor_restart_delay(
+                    cancellation_token.is_cancelled(),
+                    consecutive_failures,
+                ) else {
+                    break;
+                };
+                tracing::warn!(
+                    consecutive_failures,
+                    restart_delay_secs = delay.as_secs(),
+                    "task-ready notification consumer stopped; scheduling restart"
+                );
+                tokio::select! {
+                    biased;
+                    _ = cancellation_token.cancelled() => break,
+                    _ = tokio::time::sleep(delay) => {}
+                }
+            }
+        }
+    });
+
     let favorites_service = Arc::new(FavoritesServiceImpl::new(PgFavoritesRepo::new(db.clone())));
     let calendar_state = CalendarRouterState::new(
         Arc::new(calendar_events::domain::service::CalendarService::new(

@@ -3,7 +3,9 @@ use chrono::Utc;
 use macro_user_id::cowlike::CowLike;
 use macro_user_id::user_id::MacroUserIdStr;
 use model_entity::EntityType;
-use model_notifications::{ChannelMentionMetadata, GithubPrEventAction, GithubPrEventStatus};
+use model_notifications::{
+    ChannelMentionMetadata, GithubPrEventAction, GithubPrEventStatus, TaskReadyMetadata,
+};
 use notification::domain::models::UserNotificationRow;
 
 /// Build a [`UserNotificationRow<serde_json::Value>`] with the given event type
@@ -163,6 +165,25 @@ fn to_typed_row_task_assigned() {
         typed.notification_metadata,
         NotifEvent::TaskAssigned(_)
     ));
+}
+
+#[test]
+fn to_typed_row_task_ready() {
+    let row = make_row(
+        "task_ready",
+        serde_json::json!({"taskId":"task-1","taskName":"Ready task"}),
+    );
+    let typed = to_typed_row(row).expect("should deserialize task_ready");
+    assert!(matches!(
+        typed.notification_metadata,
+        NotifEvent::TaskReady(_)
+    ));
+}
+
+#[test]
+fn task_ready_is_a_blockable_typed_rest_notification() {
+    assert!(BLOCKABLE_NOTIFICATIONS.contains(TaskReadyMetadata::TYPE_NAME));
+    assert!(BLOCKABLE_NOTIFICATIONS.contains("task_ready"));
 }
 
 #[test]

@@ -58,6 +58,14 @@ where
 {
     /// Convert this builder into a full request with optional delivery customizers.
     pub fn into_request(self) -> SendNotificationRequest<'a, T, ()> {
+        self.into_request_with_id(Uuid::now_v7())
+    }
+
+    /// Convert this builder into a request with a caller-supplied durable id.
+    ///
+    /// Normal callers should use [`Self::into_request`]. Event materializers
+    /// use this only when their broker envelope provides the idempotency key.
+    pub fn into_request_with_id(self, notification_id: Uuid) -> SendNotificationRequest<'a, T, ()> {
         let SendNotificationRequestBuilder {
             notification_entity,
             secondary_notification_entity,
@@ -66,7 +74,7 @@ where
             recipient_ids,
         } = self;
         SendNotificationRequest {
-            uuid_to_write: Uuid::now_v7(),
+            uuid_to_write: notification_id,
             req: SendNotificationRequestBuilder {
                 notification_entity,
                 secondary_notification_entity,

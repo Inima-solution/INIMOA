@@ -68,7 +68,9 @@ function NotificationRowContent(props: {
       <Match
         when={(() => {
           const m = props.notification.notification_metadata;
-          return m.tag === 'task_assigned' ? m.content.taskName : undefined;
+          return m.tag === 'task_assigned' || m.tag === 'task_ready'
+            ? m.content.taskName
+            : undefined;
         })()}
       >
         {(taskName) => (

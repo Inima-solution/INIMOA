@@ -120,6 +120,7 @@ export function getNotificationActionText(n: Notification): string {
     .with('new_email', () => 'emailed')
     .with('invite_to_team', () => 'invited')
     .with('task_assigned', () => 'assigned')
+    .with('task_ready', () => 'Task ready')
     .with('ai_response', () => 'responded')
     .with('github_pr_status_changed', () => 'updated')
     .with('github_pr_check_run', () => {
@@ -167,6 +168,7 @@ export function extractMessageContent(notification: Notification): string {
     .with({ tag: 'commented_on_document' }, (m) => m.content.text || '')
     .with({ tag: 'new_email' }, (m) => m.content.subject || '')
     .with({ tag: 'task_assigned' }, (m) => m.content.taskName ?? '')
+    .with({ tag: 'task_ready' }, (m) => m.content.taskName)
     .with({ tag: 'ai_response' }, (m) => m.content.summary || '')
     .with(
       { tag: P.union('github_pr_status_changed', 'github_review_requested') },

@@ -729,6 +729,17 @@ function mapGraphqlNotificationMetadata(
         }) satisfies NotifEventMember<'task_assigned'>
     )
     .with(
+      { __typename: 'GraphqlTaskReadyMetadata' },
+      (metadata) =>
+        ({
+          tag: 'task_ready',
+          content: {
+            taskId: metadata.taskReadyTaskId,
+            taskName: metadata.taskReadyTaskName,
+          },
+        }) satisfies NotifEventMember<'task_ready'>
+    )
+    .with(
       { __typename: 'GraphqlReminderMetadata' },
       (metadata) =>
         ({

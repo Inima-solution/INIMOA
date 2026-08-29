@@ -94,6 +94,9 @@ export function handleNotificationUpdate(notification: UnifiedNotification) {
     .with({ tag: 'task_assigned' }, () => {
       refreshSoupEntity(notification, 'document');
     })
+    .with({ tag: 'task_ready' }, () => {
+      refreshSoupEntity(notification, 'document');
+    })
     .with({ tag: 'ai_response' }, () => {
       refreshSoupEntity(notification, 'chat');
     })

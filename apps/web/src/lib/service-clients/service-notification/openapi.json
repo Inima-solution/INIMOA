@@ -2327,6 +2327,21 @@
                 "enum": ["github_pr_review"]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "A task became ready for its current assignees.",
+            "required": ["content", "tag"],
+            "properties": {
+              "content": {
+                "$ref": "#/components/schemas/TaskReadyMetadata",
+                "description": "A task became ready for its current assignees."
+              },
+              "tag": {
+                "type": "string",
+                "enum": ["task_ready"]
+              }
+            }
           }
         ],
         "description": "Mirrors [`model_notifications::NotificationEvent`] but uses `tag` / `content`\nas the serde adjacently-tagged field names so it can be deserialized from the\nshape produced by [`UserNotificationRow::into_tagged`] +\n[`UserNotificationRow::into_json`].\n\nOnly includes variants whose metadata types implement the `Notification` trait."
@@ -2584,6 +2599,21 @@
           "taskName": {
             "type": ["string", "null"],
             "description": "The name of the task (optional)"
+          }
+        }
+      },
+      "TaskReadyMetadata": {
+        "type": "object",
+        "description": "Metadata for when a task becomes ready for its current assignees.",
+        "required": ["taskId", "taskName"],
+        "properties": {
+          "taskId": {
+            "type": "string",
+            "description": "The unique identifier of the task."
+          },
+          "taskName": {
+            "type": "string",
+            "description": "The current task name."
           }
         }
       },

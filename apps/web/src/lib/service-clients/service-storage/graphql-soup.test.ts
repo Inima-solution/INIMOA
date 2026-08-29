@@ -263,3 +263,35 @@ describe('GraphQL Soup browser cache session gate', () => {
     expect(WorkerConstructor).not.toHaveBeenCalled();
   });
 });
+
+describe('GraphQL Soup notification mapping', () => {
+  it('preserves task_ready taskId and taskName in the REST-compatible event', async () => {
+    const { mapGraphqlNotification } = await import('./graphql-soup');
+
+    const result = mapGraphqlNotification({
+      id: 'notification-1',
+      eventType: 'TASK_READY',
+      entityType: 'DOCUMENT',
+      entityId: 'task-1',
+      sent: true,
+      done: false,
+      createdAt: '2026-08-29T00:00:00.000Z',
+      viewedAt: null,
+      updatedAt: '2026-08-29T00:00:00.000Z',
+      senderId: null,
+      metadata: {
+        __typename: 'GraphqlTaskReadyMetadata',
+        taskReadyTaskId: 'task-1',
+        taskReadyTaskName: 'Prepare release notes',
+      },
+    } as any);
+
+    expect(result.notification_metadata).toEqual({
+      tag: 'task_ready',
+      content: {
+        taskId: 'task-1',
+        taskName: 'Prepare release notes',
+      },
+    });
+  });
+});

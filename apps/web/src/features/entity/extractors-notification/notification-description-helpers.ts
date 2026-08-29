@@ -111,6 +111,7 @@ export function getActionVerb(type: NotificationType): string {
       .with('channel_invite', () => 'invited you')
       .with('invite_to_team', () => 'invited you')
       .with('task_assigned', () => 'assigned you')
+      .with('task_ready', () => 'Task ready')
       .with('github_pr_status_changed', () => 'updated a pull request')
       .with('github_pr_check_run', () => 'completed a check')
       .with('github_review_requested', () => 'requested your review')
@@ -150,6 +151,7 @@ export function getTypeNoun(type: NotificationType, count: number): string {
     .with('channel_invite', () => (count === 1 ? 'invite' : 'invites'))
     .with('invite_to_team', () => (count === 1 ? 'invite' : 'invites'))
     .with('task_assigned', () => (count === 1 ? 'task' : 'tasks'))
+    .with('task_ready', () => (count === 1 ? 'ready task' : 'ready tasks'))
     .with('github_pr_status_changed', () =>
       count === 1 ? 'pull request' : 'pull requests'
     )

@@ -10,7 +10,7 @@ use model_notifications::{
     GithubPrReviewState, GithubPrStatusChanged, GithubReviewRequested, InboxReauthRequiredMetadata,
     InviteToTeamMetadata, MentionedInDocumentCommentMetadata, NewEmailMetadata, NotifEvent,
     NotificationDocumentSubType, ReminderMetadata, RepliedToDocumentCommentThreadMetadata,
-    TaskAssignedMetadata,
+    TaskAssignedMetadata, TaskReadyMetadata,
 };
 
 /// GraphQL channel type used by notification metadata.
@@ -741,6 +741,23 @@ impl GraphqlTaskAssignedMetadata {
     }
 }
 
+/// GraphQL wrapper for task-ready metadata.
+pub struct GraphqlTaskReadyMetadata(TaskReadyMetadata);
+
+/// Metadata for a task that is ready.
+#[Object]
+impl GraphqlTaskReadyMetadata {
+    /// Task identifier.
+    async fn task_id(&self) -> &str {
+        &self.0.task_id
+    }
+
+    /// Current task name.
+    async fn task_name(&self) -> &str {
+        &self.0.task_name
+    }
+}
+
 /// GraphQL wrapper for reminder metadata.
 pub struct GraphqlReminderMetadata(ReminderMetadata);
 
@@ -1091,6 +1108,8 @@ pub enum GraphqlNotifEvent {
     GithubPrMention(GraphqlGithubPrMentionMetadata),
     /// GitHub pull-request review metadata.
     GithubPrReview(GraphqlGithubPrReviewMetadata),
+    /// Task-ready metadata.
+    TaskReady(GraphqlTaskReadyMetadata),
 }
 
 impl From<NotifEvent> for GraphqlNotifEvent {
@@ -1160,6 +1179,7 @@ impl From<NotifEvent> for GraphqlNotifEvent {
             NotifEvent::GithubPrReview(metadata) => {
                 Self::GithubPrReview(GraphqlGithubPrReviewMetadata(metadata))
             }
+            NotifEvent::TaskReady(metadata) => Self::TaskReady(GraphqlTaskReadyMetadata(metadata)),
         }
     }
 }

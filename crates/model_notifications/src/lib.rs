@@ -19,7 +19,7 @@ pub use metadata::{
     InboxReauthRequiredMetadata, InviteToTeamMetadata, ItemSharedMetadata,
     MentionedInDocumentCommentMetadata, NewEmailMetadata, NotificationDocumentSubType,
     NotificationTitle, ReminderMetadata, RepliedToDocumentCommentThreadMetadata,
-    TaskAssignedMetadata,
+    TaskAssignedMetadata, TaskReadyMetadata,
 };
 pub use unsubscribe::UserUnsubscribe;
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
@@ -243,6 +243,9 @@ define_notif_event!(
 
         /// A review was submitted on the user's GitHub pull request.
         GithubPrReview(GithubPrReview),
+
+        /// A task became ready for its current assignees.
+        TaskReady(TaskReadyMetadata),
     }
 );
 
@@ -304,6 +307,9 @@ impl NotificationTitle for NotifEvent {
             NotifEvent::GithubPrReview(github_pr_review) => {
                 github_pr_review.format_title(sender_id)
             }
+            NotifEvent::TaskReady(task_ready_metadata) => {
+                task_ready_metadata.format_title(sender_id)
+            }
         }
     }
 
@@ -362,6 +368,9 @@ impl NotificationTitle for NotifEvent {
                 github_pr_mention.format_body(sender_id)
             }
             NotifEvent::GithubPrReview(github_pr_review) => github_pr_review.format_body(sender_id),
+            NotifEvent::TaskReady(task_ready_metadata) => {
+                task_ready_metadata.format_body(sender_id)
+            }
         }
     }
 }

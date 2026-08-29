@@ -1,5 +1,17 @@
 use super::*;
 
+#[test]
+fn task_ready_metadata_has_the_narrow_wire_shape() {
+    let metadata = TaskReadyMetadata {
+        task_id: "task-1".to_string(),
+        task_name: "Ready task".to_string(),
+    };
+    assert_eq!(
+        serde_json::to_value(metadata).unwrap(),
+        serde_json::json!({"taskId": "task-1", "taskName": "Ready task"})
+    );
+}
+
 fn uid(value: &str) -> MacroUserIdStr<'static> {
     MacroUserIdStr::parse_from_str(value).unwrap().into_owned()
 }

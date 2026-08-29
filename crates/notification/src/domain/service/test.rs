@@ -46,6 +46,13 @@ struct TestNotification {
     message: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct TaskReadyTestNotification;
+
+impl Notification for TaskReadyTestNotification {
+    const TYPE_NAME: &'static str = "task_ready";
+}
+
 #[derive(Debug, Deserialize, PartialEq)]
 #[serde(tag = "tag", content = "content", rename_all = "snake_case")]
 enum TestNotifEvent {
@@ -899,6 +906,22 @@ async fn test_send_notification_success() {
     assert!(result.notified_recipients.contains(&recipient));
 }
 
+#[test]
+fn explicit_request_id_is_preserved_for_broker_idempotency() {
+    let event_id = uuid::Uuid::parse_str("018f4a12-2f5b-7a7c-8000-000000000001").unwrap();
+    let request = SendNotificationRequestBuilder {
+        notification_entity: EntityType::Document.with_entity_str("task-1"),
+        secondary_notification_entity: None,
+        notification: TestNotification {
+            message: "Ready".to_string(),
+        },
+        sender_id: None,
+        recipient_ids: HashSet::from([test_user_id("user@example.com")]),
+    }
+    .into_request_with_id(event_id);
+    assert_eq!(request.uuid_to_write, event_id);
+}
+
 #[tokio::test]
 async fn test_sender_excluded_from_recipients() {
     let service =
@@ -998,6 +1021,25 @@ async fn test_type_disabled_user_excluded() {
 
     // User with type disabled should be excluded, no valid recipients remain
     assert!(result.is_none());
+}
+
+#[tokio::test]
+async fn task_ready_respects_the_existing_type_preference_filter() {
+    let user = test_user_id("task-ready-disabled@example.com");
+    let service = NotificationIngressService::new(
+        MockRepository::new().with_type_disabled_user(user.clone()),
+        MockQueue::new(),
+        MockStateMachine,
+    );
+    let request = SendNotificationRequestBuilder {
+        notification_entity: EntityType::Document.with_entity_str("task-1"),
+        secondary_notification_entity: None,
+        notification: TaskReadyTestNotification,
+        sender_id: None,
+        recipient_ids: HashSet::from([user]),
+    }
+    .into_request();
+    assert!(service.send_notification(request).await.unwrap().is_none());
 }
 
 #[tokio::test]

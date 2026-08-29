@@ -2,7 +2,7 @@ use async_graphql::{EmptyMutation, EmptySubscription, Object, Schema};
 use chrono::Utc;
 use macro_user_id::user_id::MacroUserIdStr;
 use model_entity::EntityType;
-use model_notifications::TaskAssignedMetadata;
+use model_notifications::{TaskAssignedMetadata, TaskReadyMetadata};
 use notification::domain::models::UserNotificationRow;
 use serde_json::json;
 
@@ -71,6 +71,29 @@ async fn metadata_is_the_typed_notification_union() {
         data["notification"]["metadata"]["assignedBy"],
         "macro|assigner@example.com"
     );
+}
+
+#[tokio::test]
+async fn task_ready_metadata_is_serialized_by_the_typed_union() {
+    let metadata = TaskReadyMetadata {
+        task_id: "task-1".to_string(),
+        task_name: "Ready task".to_string(),
+    };
+    let mut row = raw_notification(serde_json::to_value(metadata).unwrap());
+    row.notification_event_type = "task_ready".to_string();
+    let notification = GraphqlNotification::try_from(row).unwrap();
+    let schema = Schema::new(Query { notification }, EmptyMutation, EmptySubscription);
+    let response = schema
+        .execute("{ notification { metadata { __typename ... on GraphqlTaskReadyMetadata { taskId taskName } } } }")
+        .await;
+    assert!(response.errors.is_empty(), "{:?}", response.errors);
+    let data = response.data.into_json().unwrap();
+    assert_eq!(
+        data["notification"]["metadata"]["__typename"],
+        "GraphqlTaskReadyMetadata"
+    );
+    assert_eq!(data["notification"]["metadata"]["taskId"], "task-1");
+    assert_eq!(data["notification"]["metadata"]["taskName"], "Ready task");
 }
 
 #[test]
