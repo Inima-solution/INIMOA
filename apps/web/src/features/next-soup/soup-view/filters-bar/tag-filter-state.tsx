@@ -1,5 +1,5 @@
-import type { PropertyFilter } from '@app/features/next-soup/filters/filter-store';
 import type { QueryStore } from '@app/features/next-soup/filters/filter-store/query-store';
+import type { StringPropertyFilter } from '@app/features/next-soup/filters/filter-store/types';
 import { TagDot } from '@property/tags/TagDot';
 import { useTagsQuery } from '@queries/properties/tags';
 import type { TagSetResponse } from '@service-properties/generated/schemas/tagSetResponse';
@@ -50,7 +50,7 @@ export function createTagFilter(queryFilters: QueryStore) {
     const byOption = defByOption();
     const current = activeIds();
     const currentFilters = queryFilters.state.include.tagFilters ?? [];
-    const addProps = ids.reduce<PropertyFilter[]>((acc, id) => {
+    const addProps = ids.reduce<StringPropertyFilter[]>((acc, id) => {
       if (current.includes(id)) return acc;
       const propertyId = byOption.get(id);
       if (propertyId) acc.push({ propertyId, type: 'select', value: id });

@@ -17,11 +17,27 @@ export type DateRangeFilter = {
   lte?: string;
 };
 
-export type PropertyFilter = {
+export type SelectPropertyFilter = {
   propertyId: string;
-  type: 'select' | 'entity';
+  type: 'select';
   value: string;
 };
+
+export type EntityPropertyFilter = {
+  propertyId: string;
+  type: 'entity';
+  value: string;
+};
+
+export type StringPropertyFilter = SelectPropertyFilter | EntityPropertyFilter;
+
+export type BooleanPropertyFilter = {
+  propertyId: string;
+  type: 'boolean';
+  value: boolean;
+};
+
+export type PropertyFilter = StringPropertyFilter | BooleanPropertyFilter;
 
 export type TagFilterMode = 'any' | 'all';
 
@@ -68,7 +84,7 @@ export type ArrayFieldFilters = {
   // single OR across all tag definitions (personal + team), whereas `properties`
   // AND across distinct definitions. Each entry carries its owning definition id
   // (needed for the soup literal) and option id.
-  tagFilters?: PropertyFilter[];
+  tagFilters?: StringPropertyFilter[];
 };
 
 export type ScalarFieldFilters = {

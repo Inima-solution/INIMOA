@@ -8,6 +8,7 @@ import {
   callStatusFromAttended,
   type FieldFilters,
   type PropertyFilter,
+  type StringPropertyFilter,
   type TagFilterMode,
 } from '@app/features/next-soup/filters/filter-store/types';
 import { getViewPreset } from '@app/features/next-soup/sidebar/soup-filter-presets';
@@ -75,7 +76,7 @@ export type SearchFiltersState = SearchFiltersSections & {
   // from the compiled query, so they persist across those types but clear
   // when switching to a type where tags do not apply (channels/etc).
   // Each entry carries its owning definition id and option id.
-  tags: PropertyFilter[];
+  tags: StringPropertyFilter[];
   // How the selected tags combine: match any of them (default) or all.
   tagMode: TagFilterMode;
 };
@@ -198,7 +199,10 @@ export function createSearchFiltersController() {
 
   const taskProperty = (propertyId: string) =>
     (include().properties ?? [])
-      .filter((p) => p.propertyId === propertyId)
+      .filter(
+        (p): p is StringPropertyFilter =>
+          p.propertyId === propertyId && p.type !== 'boolean'
+      )
       .map((p) => p.value);
   const taskStatus = createMemo(() => taskProperty(SYSTEM_PROPERTY_IDS.STATUS));
   const taskPriority = createMemo(() =>
@@ -208,7 +212,9 @@ export function createSearchFiltersController() {
     taskProperty(SYSTEM_PROPERTY_IDS.ASSIGNEES)
   );
   const taskCreatedBy = createMemo(() => withoutNil(include().documentOwnerId));
-  const tags = createMemo<PropertyFilter[]>(() => include().tagFilters ?? []);
+  const tags = createMemo<StringPropertyFilter[]>(
+    () => include().tagFilters ?? []
+  );
   const tagMode = createMemo<TagFilterMode>(
     () => include().tagFilterMode ?? 'any'
   );
@@ -231,7 +237,7 @@ export function createSearchFiltersController() {
   // Tags aren't a per-type section but are still remembered across type
   // switches (they compile only for TAG_SEARCH_TYPES, so `tags()` reads empty
   // on other types — snapshot them on switch-away so the selection survives).
-  let stashedTags: PropertyFilter[] = [];
+  let stashedTags: StringPropertyFilter[] = [];
   let stashedTagMode: TagFilterMode = 'any';
 
   const apply = (state: SearchFiltersState) =>
@@ -294,7 +300,7 @@ export function createSearchFiltersController() {
     type,
     setType,
     tags,
-    setTags: (filters: PropertyFilter[]) =>
+    setTags: (filters: StringPropertyFilter[]) =>
       apply({
         type: type(),
         tags: filters,

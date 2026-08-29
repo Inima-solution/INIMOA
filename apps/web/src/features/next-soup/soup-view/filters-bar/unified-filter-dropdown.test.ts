@@ -1,8 +1,26 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.hoisted(() => {
+  Object.defineProperty(globalThis, 'WebSocket', {
+    configurable: true,
+    value: class {
+      close() {}
+      send() {}
+      addEventListener() {}
+      removeEventListener() {}
+    },
+  });
+});
+
+vi.mock('@queries/contacts/contacts', () => ({
+  useContacts: () => () => [],
+}));
+
 import {
   type FilterCategory,
   filterInboxGithubPrOption,
 } from './filter-categories';
+import { VIEW_FILTER_CATEGORIES } from './unified-filter-dropdown';
 
 const categories: FilterCategory[] = [
   {
@@ -37,5 +55,15 @@ describe('filterInboxGithubPrOption', () => {
 
   it('leaves other filter categories unchanged', () => {
     expect(filterInboxGithubPrOption(categories, false)[1]).toBe(categories[1]);
+  });
+});
+
+describe('task filter categories', () => {
+  it('maps Milestones to the frozen task-milestone filter', () => {
+    expect(VIEW_FILTER_CATEGORIES.tasks).toContainEqual({
+      id: 'milestone',
+      label: 'Milestones',
+      options: [{ id: 'task-milestone', label: 'Milestones' }],
+    });
   });
 });

@@ -27,6 +27,12 @@ const mocks = vi.hoisted(() => ({
   duplicatePreview: false,
   entryStateCalls: [] as Array<{ key: string; options: { default: string } }>,
   focusSet: vi.fn(),
+  milestoneFilterProps: undefined as { viewOverride?: string } | undefined,
+  milestoneToolbarItem: undefined as
+    | { id: string; priority: number }
+    | undefined,
+  milestoneToolbarPortalCount: 0,
+  soupViewProviderCount: 0,
   openEntityInSplit: vi.fn(),
   projectId: 'project-id',
   source: [] as Array<{
@@ -78,8 +84,36 @@ vi.mock('@app/features/next-soup/soup-context', () => ({
 vi.mock('@app/features/next-soup/soup-view/soup-view', () => ({
   SoupViewList: () => <div data-testid="soup-view-list" />,
 }));
+vi.mock(
+  '@app/features/next-soup/soup-view/filters-bar/unified-filter-dropdown',
+  () => ({
+    UnifiedFilterDropdown: (props: { viewOverride?: string }) => {
+      mocks.milestoneFilterProps = props;
+      return <button data-testid="project-milestone-filter">Milestones</button>;
+    },
+  })
+);
+vi.mock('@components/app/split-layout/components/CollapsibleItem', () => ({
+  CollapsibleToolbarItem: (props: {
+    children: (isCollapsed: Accessor<boolean>) => unknown;
+    id: string;
+    priority: number;
+  }) => {
+    mocks.milestoneToolbarItem = { id: props.id, priority: props.priority };
+    return <>{props.children(() => false)}</>;
+  },
+}));
+vi.mock('@components/app/split-layout/components/SplitToolbar', () => ({
+  SplitToolbarLeft: (props: ParentProps) => {
+    mocks.milestoneToolbarPortalCount += 1;
+    return <div data-testid="project-milestone-toolbar">{props.children}</div>;
+  },
+}));
 vi.mock('@app/features/next-soup/soup-view/soup-view-context', () => ({
-  SoupViewContextProvider: (props: ParentProps) => props.children,
+  SoupViewContextProvider: (props: ParentProps) => {
+    mocks.soupViewProviderCount += 1;
+    return props.children;
+  },
   useSoupView: () => ({
     rows: () => mocks.rows,
     searchText: () => mocks.searchText,
@@ -218,6 +252,10 @@ beforeEach(() => {
   mocks.duplicatePreview = false;
   mocks.entryStateCalls = [];
   mocks.focusSet.mockReset();
+  mocks.milestoneFilterProps = undefined;
+  mocks.milestoneToolbarItem = undefined;
+  mocks.milestoneToolbarPortalCount = 0;
+  mocks.soupViewProviderCount = 0;
   mocks.openEntityInSplit.mockReset();
   mocks.projectId = 'project-id';
   mocks.source = [];
@@ -239,6 +277,40 @@ beforeEach(() => {
 });
 
 describe('project task dependency relation batching', () => {
+  it('routes the task Milestones filter through the ordinary project toolbar provider', () => {
+    render(() => <Block />);
+
+    expect(
+      document.querySelector('[data-testid="project-milestone-filter"]')
+    ).toBeTruthy();
+    expect(
+      document.querySelector('[data-testid="project-milestone-toolbar"]')
+    ).toBeTruthy();
+    expect(mocks.milestoneFilterProps).toMatchObject({
+      viewOverride: 'tasks',
+      hideLabel: false,
+    });
+    expect(mocks.milestoneToolbarItem).toEqual({
+      id: 'project-toolbar-task-filter',
+      priority: 1,
+    });
+    expect(mocks.milestoneToolbarPortalCount).toBe(1);
+    expect(mocks.soupViewProviderCount).toBe(1);
+  });
+
+  it('keeps the board and Milestones control on one project provider without paging', () => {
+    mocks.viewMode = 'board';
+    mocks.source = [
+      { id: 'milestone-task', subType: { type: 'task' }, type: 'document' },
+    ];
+    render(() => <Block />);
+
+    expect(mocks.boardProps?.tasks).toEqual(mocks.source);
+    expect(mocks.soupViewProviderCount).toBe(1);
+    expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
+    expect(mocks.boardProps).toBeDefined();
+  });
+
   it('defaults to the existing list with the project-local entry key', () => {
     render(() => <Block />);
 
@@ -542,6 +614,12 @@ describe('project task dependency relation batching', () => {
       document.querySelector('[data-testid="soup-view-list"]')
     ).toBeTruthy();
     expect(mocks.boardProps).toBeUndefined();
+    expect(
+      document.querySelector('[data-testid="project-milestone-filter"]')
+    ).toBeNull();
+    expect(
+      document.querySelector('[data-testid="project-milestone-toolbar"]')
+    ).toBeNull();
   });
 
   it('uses the canonical split path for board task opens', () => {

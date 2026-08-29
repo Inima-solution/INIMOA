@@ -1,6 +1,6 @@
 import type {
   CallStatus,
-  PropertyFilter,
+  StringPropertyFilter,
   TagFilterMode,
 } from '@app/features/next-soup/filters/filter-store/types';
 import { EntityIcon } from '@core/component/EntityIcon';
@@ -466,7 +466,7 @@ export function useSearchFacets(
       onChange: (ids) => {
         const byOption = tagSource.defByOption();
         controller.setTags(
-          ids.reduce<PropertyFilter[]>((acc, id) => {
+          ids.reduce<StringPropertyFilter[]>((acc, id) => {
             const propertyId = byOption.get(id);
             if (propertyId) acc.push({ propertyId, type: 'select', value: id });
             return acc;

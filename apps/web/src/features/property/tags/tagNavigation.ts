@@ -1,7 +1,5 @@
-import type {
-  PropertyFilter,
-  Query,
-} from '@app/features/next-soup/filters/filter-store';
+import type { Query } from '@app/features/next-soup/filters/filter-store';
+import type { StringPropertyFilter } from '@app/features/next-soup/filters/filter-store/types';
 import { getViewPreset } from '@app/features/next-soup/sidebar/soup-filter-presets';
 import type {
   OpenWithSplitOptions,
@@ -13,7 +11,9 @@ export type TagNavigationTarget = {
   propertyDefinitionId: string;
 };
 
-export function tagToPropertyFilter(tag: TagNavigationTarget): PropertyFilter {
+export function tagToPropertyFilter(
+  tag: TagNavigationTarget
+): StringPropertyFilter {
   return {
     propertyId: tag.propertyDefinitionId,
     type: 'select',

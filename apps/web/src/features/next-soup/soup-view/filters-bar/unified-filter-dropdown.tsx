@@ -191,6 +191,11 @@ const MAIL_FILTER_CATEGORIES: FilterCategory[] = [
 
 const TASKS_FILTER_CATEGORIES: FilterCategory[] = [
   {
+    id: 'milestone',
+    label: 'Milestones',
+    options: [{ id: 'task-milestone', label: 'Milestones' }],
+  },
+  {
     id: 'status',
     label: 'Status',
     labelPlural: 'Statuses',
@@ -485,6 +490,8 @@ const SearchableFilterSubmenu = (props: {
 };
 
 interface UnifiedFilterDropdownProps {
+  /** Use a list view's filter configuration outside of a list split. */
+  viewOverride?: ListView;
   /** Optional controlled open state */
   open?: Accessor<boolean>;
   onOpenChange?: (open: boolean) => void;
@@ -572,6 +579,7 @@ export const UnifiedFilterDropdown = (
   const dealStages = useDealStages();
 
   const currentView = createMemo((): ListView | undefined => {
+    if (props.viewOverride) return props.viewOverride;
     const content = panel.handle.content();
     if (content.type !== 'component' || !isListViewID(content.id))
       return undefined;

@@ -199,6 +199,7 @@ export * from './projectSearchResultScore';
 export * from './propertyDefinition';
 export * from './propertyDefinitionSpecificEntityType';
 export * from './propertyFilter';
+export * from './propertyFilterBooleanValue';
 export * from './propertyFilterEntityType';
 export * from './propertyOwner';
 export * from './propertyOwnerOneOf';

@@ -2857,9 +2857,13 @@
       },
       "PropertyFilter": {
         "type": "object",
-        "description": "A single property-based filter condition.\n\nEach filter targets a specific property definition on entities of a given type,\nmatching against select option UUIDs or entity reference IDs.\nMultiple values within a single filter are OR'd together.\nMultiple filters are AND'd together.",
+        "description": "A single property-based filter condition.\n\nEach filter targets a specific property definition on entities of a given type,\nmatching against select option UUIDs, entity reference IDs, or a boolean value.\nMultiple values within a single filter are OR'd together.\nMultiple filters are AND'd together.",
         "required": ["property_definition_id"],
         "properties": {
+          "boolean_value": {
+            "type": ["boolean", "null"],
+            "description": "Boolean value to match. None does not filter on a boolean value."
+          },
           "entity_ids": {
             "type": "array",
             "items": {

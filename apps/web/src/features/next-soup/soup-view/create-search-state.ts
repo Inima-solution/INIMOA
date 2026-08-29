@@ -42,8 +42,9 @@ function isSingleQuotedTerm(query: string): boolean {
 // search request shape, mirroring the soup path so search and soup agree. Values
 // are grouped by property id: multiple values on one property are OR'd (a task
 // matches any of them), and different properties are AND'd. Select options go to
-// option_ids, entity refs to entity_ids.
-function includePropertiesToFilters(
+// option_ids, entity refs to entity_ids, and Boolean values to boolean_value.
+
+export function includePropertiesToFilters(
   properties: QueryState['include']['properties']
 ): PropertyFilter[] {
   if (!properties?.length) return [];
@@ -56,8 +57,10 @@ function includePropertiesToFilters(
     }
     if (p.type === 'select') {
       filter.option_ids = [...(filter.option_ids ?? []), p.value];
-    } else {
+    } else if (p.type === 'entity') {
       filter.entity_ids = [...(filter.entity_ids ?? []), p.value];
+    } else {
+      filter.boolean_value = p.value;
     }
   }
   return [...byPropId.values()];

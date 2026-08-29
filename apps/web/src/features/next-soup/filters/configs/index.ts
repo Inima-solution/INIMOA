@@ -62,6 +62,7 @@ import {
   myTasksFilter,
   TASK_PRIORITY_FILTERS,
   TASK_STATUS_FILTERS,
+  taskMilestoneFilter,
 } from './task';
 
 export const SOUP_FILTERS = [
@@ -91,6 +92,7 @@ export const SOUP_FILTERS = [
   notTaskFilter,
   documentOrFileFilter,
   activeTaskFilter,
+  taskMilestoneFilter,
   callsFilter,
   crmCompanyFilter,
   crmCompanyActiveFilter,

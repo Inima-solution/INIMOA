@@ -1467,11 +1467,15 @@ export type PropertyDefinition = {
  * A single property-based filter condition.
  *
  * Each filter targets a specific property definition on entities of a given type,
- * matching against select option UUIDs or entity reference IDs.
+ * matching against select option UUIDs, entity reference IDs, or a boolean value.
  * Multiple values within a single filter are OR'd together.
  * Multiple filters are AND'd together.
  */
 export type PropertyFilter = {
+    /**
+     * Boolean value to match. None does not filter on a boolean value.
+     */
+    boolean_value?: boolean | null;
     /**
      * Entity reference IDs to match. Multiple values are OR'd together.
      */

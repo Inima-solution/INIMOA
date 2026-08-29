@@ -1,8 +1,11 @@
 import {
-  getTaskAssigneeIds,
   isTaskEntity,
   type TaskEntityWithProperties,
-} from '@entity';
+} from '@entity/types/entity';
+import {
+  getTaskAssigneeIds,
+  isTaskMilestone,
+} from '@entity/utils/task-properties';
 import { PROPERTY_OPTION_IDS, SYSTEM_PROPERTY_IDS } from '@property/constants';
 import {
   hasNoPriority,
@@ -107,6 +110,24 @@ export const activeTaskFilter = config({
           'select',
           PROPERTY_OPTION_IDS.STATUS.CANCELED
         ),
+      ],
+    },
+  },
+});
+
+export const taskMilestoneFilter = config({
+  id: 'task-milestone',
+  predicate: (e) =>
+    isTaskEntity(e) && isTaskMilestone(e as TaskEntityWithProperties),
+  query: {
+    include: {
+      ...isTask.include,
+      properties: [
+        {
+          propertyId: SYSTEM_PROPERTY_IDS.MILESTONE,
+          type: 'boolean',
+          value: true,
+        },
       ],
     },
   },

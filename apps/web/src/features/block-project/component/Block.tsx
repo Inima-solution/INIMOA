@@ -6,6 +6,7 @@ import {
 import { defineQueryFilters } from '@app/features/next-soup/filters/filter-store';
 import { soupItemMatchesProjectMembership } from '@app/features/next-soup/filters/query-filters';
 import { SoupContextProvider } from '@app/features/next-soup/soup-context';
+import { UnifiedFilterDropdown } from '@app/features/next-soup/soup-view/filters-bar/unified-filter-dropdown';
 import { SoupViewList } from '@app/features/next-soup/soup-view/soup-view';
 import {
   SoupViewContextProvider,
@@ -17,6 +18,8 @@ import {
 } from '@app/features/next-soup/utils';
 import { getIsSpecialProject } from '@block-project/isSpecial';
 import { SidePanel } from '@components/app/side-panel';
+import { CollapsibleToolbarItem } from '@components/app/split-layout/components/CollapsibleItem';
+import { SplitToolbarLeft } from '@components/app/split-layout/components/SplitToolbar';
 import { useEntryState } from '@components/app/split-layout/entry-state';
 import { useSplitPanelOrThrow } from '@components/app/split-layout/layoutUtils';
 import { useBlockId } from '@core/block';
@@ -332,6 +335,21 @@ const ProjectSoupViewList = (props: {
   return (
     <TaskSubtaskProgressProvider taskIds={taskIds}>
       <TaskDependencyRelationsProvider taskIds={taskIds}>
+        <Show when={!props.isSpecialProject}>
+          <SplitToolbarLeft>
+            <CollapsibleToolbarItem
+              id="project-toolbar-task-filter"
+              priority={1}
+            >
+              {(isCollapsed) => (
+                <UnifiedFilterDropdown
+                  viewOverride="tasks"
+                  hideLabel={isCollapsed()}
+                />
+              )}
+            </CollapsibleToolbarItem>
+          </SplitToolbarLeft>
+        </Show>
         <Show
           when={!props.isSpecialProject && props.mode === 'board'}
           fallback={

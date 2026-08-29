@@ -175,7 +175,9 @@ const expandDateRange = (
 const propertyToAst = (p: PropertyFilter): BackendAst =>
   p.type === 'select'
     ? { l: { pd: p.propertyId, v: { so: p.value } } }
-    : { l: { pd: p.propertyId, v: { er: p.value } } };
+    : p.type === 'entity'
+      ? { l: { pd: p.propertyId, v: { er: p.value } } }
+      : { l: { pd: p.propertyId, v: { b: p.value } } };
 
 const propertyEquals = (a: PropertyFilter, b: PropertyFilter): boolean =>
   a.propertyId === b.propertyId && a.type === b.type && a.value === b.value;

@@ -254,4 +254,60 @@ describe('compileToAst', () => {
       ],
     });
   });
+
+  it('compiles boolean properties with exact true and false values', () => {
+    expect(
+      compileToAst(
+        queryStateFrom({
+          include: {
+            properties: [
+              { propertyId: 'milestone', type: 'boolean', value: true },
+              { propertyId: 'archived', type: 'boolean', value: false },
+            ],
+          },
+        })
+      ).propf
+    ).toEqual({
+      '&': [
+        { l: { pd: 'milestone', v: { b: true } } },
+        { l: { pd: 'archived', v: { b: false } } },
+      ],
+    });
+  });
+
+  it('keeps select and entity property AST semantics while filtering boolean excludes', () => {
+    expect(
+      compileToAst(
+        queryStateFrom({
+          include: {
+            properties: [
+              { propertyId: 'select', type: 'select', value: 'option-1' },
+              { propertyId: 'entity', type: 'entity', value: 'entity-1' },
+              { propertyId: 'milestone', type: 'boolean', value: true },
+            ],
+          },
+          exclude: {
+            properties: [
+              { propertyId: 'milestone', type: 'boolean', value: false },
+            ],
+          },
+        })
+      ).propf
+    ).toEqual({
+      '&': [
+        { l: { pd: 'select', v: { so: 'option-1' } } },
+        {
+          '&': [
+            { l: { pd: 'entity', v: { er: 'entity-1' } } },
+            {
+              '&': [
+                { l: { pd: 'milestone', v: { b: true } } },
+                { '!': { l: { pd: 'milestone', v: { b: false } } } },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+  });
 });
