@@ -14,6 +14,9 @@ export const propertiesKeys = createQueryKeys('properties', {
   taskSubtaskProgress: (taskIds: readonly string[]) => ({
     queryKey: [[...taskIds]],
   }),
+  taskDependencyRelations: (taskIds: readonly string[]) => ({
+    queryKey: [[...taskIds]],
+  }),
   definitions: (params: {
     scope: PropertyScope;
     includeOptions: boolean;

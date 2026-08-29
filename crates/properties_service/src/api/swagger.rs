@@ -15,7 +15,6 @@ use properties::inbound::axum_router::{
     },
     task_dependency_relations::{
         TaskDependencyRelationsBatchRequest, TaskDependencyRelationsErrorResponse,
-        TaskDependencyRelationsResponse,
     },
     task_subtask_progress::{
         TaskSubtaskProgressBatchRequest, TaskSubtaskProgressErrorResponse,
@@ -75,7 +74,6 @@ use utoipa::OpenApi;
             TaskSubtaskProgressResponse,
             TaskSubtaskProgressErrorResponse,
             TaskDependencyRelationsBatchRequest,
-            TaskDependencyRelationsResponse,
             TaskDependencyRelationsErrorResponse,
             properties::domain::model::TaskDependencyRelations,
             EntityQueryParams,

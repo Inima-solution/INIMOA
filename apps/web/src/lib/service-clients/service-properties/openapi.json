@@ -957,6 +957,133 @@
         }
       }
     },
+    "/properties/task-dependency-relations": {
+      "post": {
+        "tags": ["properties"],
+        "operationId": "getTaskDependencyRelations",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskDependencyRelationsBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "description": "Caller-scoped direct dependency relations for one task.\n\nThis read model deliberately exposes identifiers only after the domain has\napplied an individual document-view check for each related task.",
+                    "required": [
+                      "taskId",
+                      "readiness",
+                      "dependsOnTaskIds",
+                      "blockingTaskIds",
+                      "hasUnavailableDependencies",
+                      "successorTaskIds",
+                      "hasUnavailableSuccessors"
+                    ],
+                    "properties": {
+                      "blockingTaskIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      },
+                      "dependsOnTaskIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      },
+                      "hasUnavailableDependencies": {
+                        "type": "boolean"
+                      },
+                      "hasUnavailableSuccessors": {
+                        "type": "boolean"
+                      },
+                      "readiness": {
+                        "$ref": "#/components/schemas/TaskReadiness"
+                      },
+                      "successorTaskIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      },
+                      "taskId": {
+                        "type": "string",
+                        "format": "uuid"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDependencyRelationsErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDependencyRelationsErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDependencyRelationsErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDependencyRelationsErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDependencyRelationsErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/properties/task-subtask-progress": {
       "post": {
         "tags": ["properties"],
@@ -2479,6 +2606,82 @@
             "type": "string",
             "format": "uuid",
             "description": "The scoped, live source task identifier."
+          }
+        }
+      },
+      "TaskDependencyRelations": {
+        "type": "object",
+        "description": "Caller-scoped direct dependency relations for one task.\n\nThis read model deliberately exposes identifiers only after the domain has\napplied an individual document-view check for each related task.",
+        "required": [
+          "taskId",
+          "readiness",
+          "dependsOnTaskIds",
+          "blockingTaskIds",
+          "hasUnavailableDependencies",
+          "successorTaskIds",
+          "hasUnavailableSuccessors"
+        ],
+        "properties": {
+          "blockingTaskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "dependsOnTaskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "hasUnavailableDependencies": {
+            "type": "boolean"
+          },
+          "hasUnavailableSuccessors": {
+            "type": "boolean"
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/TaskReadiness"
+          },
+          "successorTaskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "taskId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "TaskDependencyRelationsBatchRequest": {
+        "type": "object",
+        "required": ["taskIds"],
+        "properties": {
+          "taskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 200
+          }
+        },
+        "additionalProperties": false
+      },
+      "TaskDependencyRelationsErrorResponse": {
+        "type": "object",
+        "required": ["error", "message"],
+        "properties": {
+          "error": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
           }
         }
       },

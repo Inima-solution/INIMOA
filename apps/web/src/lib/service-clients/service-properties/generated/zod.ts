@@ -1998,6 +1998,33 @@ export const promoteTagResponse = zod
   })
   .describe('Property option response (API representation).');
 
+export const getTaskDependencyRelationsBodyTaskIdsMax = 200;
+
+export const getTaskDependencyRelationsBody = zod.object({
+  taskIds: zod.array(zod.uuid()).max(getTaskDependencyRelationsBodyTaskIdsMax),
+});
+
+export const getTaskDependencyRelationsResponseItem = zod
+  .object({
+    blockingTaskIds: zod.array(zod.uuid()),
+    dependsOnTaskIds: zod.array(zod.uuid()),
+    hasUnavailableDependencies: zod.boolean(),
+    hasUnavailableSuccessors: zod.boolean(),
+    readiness: zod
+      .enum(['ready', 'blocked'])
+      .describe(
+        'Computed direct-dependency readiness for one task.\n\nThis is a read model only. Its value is intentionally never stored as a\nproperty or status option.'
+      ),
+    successorTaskIds: zod.array(zod.uuid()),
+    taskId: zod.uuid(),
+  })
+  .describe(
+    'Caller-scoped direct dependency relations for one task.\n\nThis read model deliberately exposes identifiers only after the domain has\napplied an individual document-view check for each related task.'
+  );
+export const getTaskDependencyRelationsResponse = zod.array(
+  getTaskDependencyRelationsResponseItem
+);
+
 export const getTaskSubtaskProgressBodyTaskIdsMax = 200;
 
 export const getTaskSubtaskProgressBody = zod.object({
