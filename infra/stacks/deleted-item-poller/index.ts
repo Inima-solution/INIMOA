@@ -16,6 +16,12 @@ const DATABASE_URL = aws.secretsmanager
   })
   .apply((secret) => secret.secretString);
 
+const MACRO_CACHE = aws.secretsmanager
+  .getSecretVersionOutput({
+    secretId: config.require(`macro_cache_secret_key`),
+  })
+  .apply((secret) => secret.secretString);
+
 const cloudStorageServiceStack = new pulumi.StackReference(
   'cloud-storage-service',
   {
@@ -51,6 +57,7 @@ const deletedItemPoller = new DeleteItemPoller('deleted-item-poller', {
     DATABASE_URL: pulumi.interpolate`${DATABASE_URL}`,
     ENVIRONMENT: stack,
     KAFKA_BROKERS: kafkaBrokers,
+    REDIS_URI: pulumi.interpolate`redis://${MACRO_CACHE}`,
     RUST_LOG: 'deleted_item_poller=info,macro_http_request=info',
   },
   tags,

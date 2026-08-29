@@ -16,6 +16,7 @@ export type EnvVars = {
   DATABASE_URL: pulumi.Output<string> | string;
   ENVIRONMENT: pulumi.Output<string> | string;
   KAFKA_BROKERS: pulumi.Output<string> | string;
+  REDIS_URI: pulumi.Output<string> | string;
   RUST_LOG: pulumi.Output<string> | string;
 };
 
