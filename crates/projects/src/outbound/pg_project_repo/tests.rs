@@ -1374,6 +1374,55 @@ async fn recursive_detection_and_soft_delete_output(pool: Pool<Postgres>) -> any
     migrator = "MACRO_DB_MIGRATIONS",
     fixtures(path = "../../../fixtures", scripts("projects_test_data"))
 )]
+async fn subtree_delete_and_restore_serialize_behind_taskdeps_lock(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    let mut delete_lock = pool.begin().await?;
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKDEPS")
+    )
+    .fetch_one(&mut *delete_lock)
+    .await?;
+    let delete_repo = repo.clone();
+    let mut delete = tokio::spawn(async move { delete_repo.soft_delete_project(ROOT_ID).await });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(25), &mut delete)
+            .await
+            .is_err()
+    );
+    delete_lock.commit().await?;
+    let deleted = delete.await??;
+    assert!(deleted.project_ids.iter().any(|id| id == ROOT_ID));
+    assert!(repo.get_project_by_id(ROOT_ID).await?.is_none());
+
+    let mut restore_lock = pool.begin().await?;
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKDEPS")
+    )
+    .fetch_one(&mut *restore_lock)
+    .await?;
+    let restore_repo = repo.clone();
+    let mut restore =
+        tokio::spawn(async move { restore_repo.revert_delete_project(ROOT_ID, None).await });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(25), &mut restore)
+            .await
+            .is_err()
+    );
+    restore_lock.commit().await?;
+    let restored = restore.await??;
+    assert!(restored.project_ids.iter().any(|id| id == ROOT_ID));
+    assert!(repo.get_project_by_id(ROOT_ID).await?.is_some());
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
 async fn revert_restores_subtree_and_handles_parent_state(
     pool: Pool<Postgres>,
 ) -> anyhow::Result<()> {

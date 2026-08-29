@@ -1,4 +1,7 @@
-use crate::api::context::{AuthorizationService, EntityAccessService};
+use crate::{
+    api::context::{ApiContext, AuthorizationService, EntityAccessService},
+    service::document_restore,
+};
 use axum::extract::State;
 use axum::{Extension, extract::Path, http::StatusCode, response::IntoResponse};
 use entity_access::inbound::axum_extractors::DocumentAccessExtractor;
@@ -11,7 +14,6 @@ use model::response::{
 };
 use models_permissions::share_permission::access_level::OwnerAccessLevel;
 use serde::Deserialize;
-use sqlx::PgPool;
 
 #[derive(Deserialize)]
 pub struct Params {
@@ -34,22 +36,18 @@ pub struct Params {
             (status = 500, body=GenericErrorResponse),
         )
     )]
-#[tracing::instrument(skip(db, user, document_context, _access), fields(user_id=?user.authorization.user.macro_user_id))]
+#[tracing::instrument(skip(state, user, _document_context, _access), fields(user_id=?user.authorization.user.macro_user_id))]
 pub async fn handler(
     _access: DocumentAccessExtractor<OwnerAccessLevel, EntityAccessService, AuthorizationService>,
-    State(db): State<PgPool>,
+    State(state): State<ApiContext>,
     user: MacroAuthorizationExtractor<AuthorizationService, UserOrInternal>,
-    document_context: Extension<DocumentBasic>,
+    _document_context: Extension<DocumentBasic>,
     Path(Params { document_id }): Path<Params>,
 ) -> impl IntoResponse {
     tracing::info!("revert_delete document");
 
-    if let Err(e) = macro_db_client::document::revert_delete::revert_delete_document(
-        &db,
-        &document_id,
-        document_context.project_id.as_deref(),
-    )
-    .await
+    if let Err(e) =
+        document_restore::restore_document(&state.db, &state.macro_event_broker, &document_id).await
     {
         tracing::error!(error=?e, document_id=?document_id, "unable to revert document");
         return GenericResponse::builder()

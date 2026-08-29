@@ -310,6 +310,12 @@ impl ProjectRepo for PgProjectRepo {
     #[tracing::instrument(err, skip(self))]
     async fn soft_delete_project(&self, project_id: &str) -> Result<SoftDeleteResult, Self::Err> {
         let mut transaction = self.pool.begin().await?;
+        sqlx::query_scalar!(
+            r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+            i64::from_be_bytes(*b"TASKDEPS")
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
         let result = delete::soft_delete_project(&mut transaction, project_id).await?;
         transaction.commit().await?;
         Ok(result)
@@ -333,6 +339,12 @@ impl ProjectRepo for PgProjectRepo {
         previous_parent_id: Option<String>,
     ) -> Result<RevertDeleteResult, Self::Err> {
         let mut transaction = self.pool.begin().await?;
+        sqlx::query_scalar!(
+            r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+            i64::from_be_bytes(*b"TASKDEPS")
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
         let result = revert_delete::revert_delete_project(
             &mut transaction,
             project_id,

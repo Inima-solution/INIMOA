@@ -242,6 +242,15 @@ impl DocumentRepo for PgDocumentRepo {
     async fn soft_delete_document(&self, document_id: &str) -> Result<(), Self::Err> {
         let mut transaction = self.pool.begin().await?;
 
+        // Keep availability changes serialized with task dependency/status
+        // transitions without adding a documents -> system_properties edge.
+        sqlx::query_scalar!(
+            r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+            i64::from_be_bytes(*b"TASKDEPS")
+        )
+        .fetch_one(&mut *transaction)
+        .await?;
+
         // Delete pins
         sqlx::query!(
             r#"

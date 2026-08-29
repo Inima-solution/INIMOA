@@ -411,7 +411,7 @@ async fn guarded_status_reports_mixed_live_dependencies_in_stored_order(
     migrator = "MACRO_DB_MIGRATIONS",
     fixtures(path = "../../../fixtures", scripts("task_dependencies_seed"))
 )]
-async fn completion_signals_distinct_final_ready_live_dependents_once(
+async fn shared_final_ready_fanout_is_distinct_and_uuid_ordered(
     pool: Pool<Postgres>,
 ) -> anyhow::Result<()> {
     let predecessor = Uuid::new_v4();
@@ -466,7 +466,7 @@ async fn completion_signals_distinct_final_ready_live_dependents_once(
         .await?;
     status(&pool, predecessor, Some(StatusOption::NotStarted)).await;
     status(&pool, incomplete, Some(StatusOption::InProgress)).await;
-    depends(&pool, ready, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(predecessor.to_string(), EntityType::Task)]})).await;
+    depends(&pool, ready, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(predecessor.to_string(), EntityType::Task), EntityReference::new(predecessor.to_string(), EntityType::Task)]})).await;
     depends(&pool, explicit_null, serde_json::json!({"type":"EntityReference","value":[{"entity_id": predecessor, "entity_type":"TASK", "specific_message_id": null}]})).await;
     depends(&pool, blocked, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(predecessor.to_string(), EntityType::Task), EntityReference::new(incomplete.to_string(), EntityType::Task)]})).await;
     depends(&pool, deleted_case, serde_json::json!({"type":"EntityReference","value":[EntityReference::new(predecessor.to_string(), EntityType::Task), EntityReference::new(deleted_dependency.to_string(), EntityType::Task)]})).await;
@@ -488,6 +488,10 @@ async fn completion_signals_distinct_final_ready_live_dependents_once(
     let mut expected = vec![ready, explicit_null];
     expected.sort_unstable();
     assert_eq!(ready_task_ids, expected);
+    assert!(
+        ready_task_ids.contains(&ready),
+        "completion passes no restored-source exclusion to the shared fanout"
+    );
     // Retry and leaving Completed are ordinary writes, never readiness signals.
     assert!(matches!(
         transition_task_status(&pool, predecessor, Some(StatusOption::Completed)).await?,

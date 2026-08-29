@@ -7,6 +7,7 @@ use crate::{
     api::util::count_occurrences,
     service::{
         document_event_publisher::publish_document_purged_event,
+        document_restore,
         entity_mutation::{EntityLifecycleService, LifecycleError},
     },
 };
@@ -95,13 +96,9 @@ impl<B: MacroEventBroker> EntityLifecycleService for DssEntityLifecycleAdapter<B
         let document = macro_db_client::document::get_basic_document(&self.db, &entity.entity_id)
             .await
             .map_err(row_error)?;
-        macro_db_client::document::revert_delete::revert_delete_document(
-            &self.db,
-            &entity.entity_id,
-            document.project_id.as_deref(),
-        )
-        .await
-        .map_err(|error| internal!(error))?;
+        document_restore::restore_document(&self.db, &self.event_broker, &entity.entity_id)
+            .await
+            .map_err(|error| internal!(error))?;
         Ok(document
             .project_id
             .into_iter()

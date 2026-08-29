@@ -296,6 +296,37 @@ async fn test_soft_delete_document(pool: Pool<Postgres>) {
     migrator = "MACRO_DB_MIGRATIONS",
     fixtures(path = "../../../fixtures", scripts("documents_test_data"))
 )]
+async fn soft_delete_serializes_behind_taskdeps_lock(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    let repo = PgDocumentRepo::new(pool.clone());
+    let mut lock_transaction = pool.begin().await?;
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKDEPS")
+    )
+    .fetch_one(&mut *lock_transaction)
+    .await?;
+    let mut delete = tokio::spawn(async move { repo.soft_delete_document(TEST_DOCUMENT_ID).await });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(25), &mut delete)
+            .await
+            .is_err()
+    );
+    lock_transaction.commit().await?;
+    delete.await??;
+    let deleted_at = sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
+        "SELECT \"deletedAt\"::timestamptz FROM \"Document\" WHERE id = $1",
+    )
+    .bind(TEST_DOCUMENT_ID)
+    .fetch_optional(&pool)
+    .await?;
+    assert!(deleted_at.is_some());
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("documents_test_data"))
+)]
 async fn test_update_document_modified(pool: Pool<Postgres>) {
     let document_id = "d0000000-0000-0000-0000-000000000001";
     sqlx::query!(

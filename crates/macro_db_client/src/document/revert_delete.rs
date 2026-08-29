@@ -1,4 +1,6 @@
 use anyhow::Context;
+use system_properties::outbound::task_readiness::final_ready_dependents;
+use uuid::Uuid;
 
 /// Reverts a document deletion
 /// Adds the document back to the users history as well
@@ -6,24 +8,42 @@ use anyhow::Context;
 pub async fn revert_delete_document(
     db: &sqlx::Pool<sqlx::Postgres>,
     document_id: &str,
-    project_id: Option<&str>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<Uuid>> {
     let mut transaction = db.begin().await.context("unable to begin transaction")?;
 
-    // Remove deletedAt for document
-    let document_owner = sqlx::query!(
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKDEPS")
+    )
+    .fetch_one(&mut *transaction)
+    .await
+    .context("unable to lock task dependencies")?;
+
+    // Capture whether this call made the document available.  A retry still
+    // refreshes history, but it must never fan out a second readiness event.
+    let restored = sqlx::query!(
         r#"
-        UPDATE "Document"
+        WITH previous AS (
+            SELECT owner, "deletedAt", "projectId"
+            FROM "Document"
+            WHERE id = $1
+            FOR UPDATE
+        )
+        UPDATE "Document" document
         SET "deletedAt" = NULL
-        WHERE id = $1
-        RETURNING owner as owner
+        FROM previous
+        WHERE document.id = $1
+        RETURNING document.owner AS owner,
+            previous."projectId" AS project_id,
+            previous."deletedAt" IS NOT NULL AS "actually_restored!"
         "#,
         document_id,
     )
-    .map(|row| row.owner)
     .fetch_one(&mut *transaction)
     .await
     .context("unable to update document")?;
+    let document_owner = restored.owner;
+    let actually_restored = restored.actually_restored;
 
     // Add document back to history
     sqlx::query!(
@@ -41,7 +61,8 @@ pub async fn revert_delete_document(
     .await
     .context("unable to add document to history")?;
 
-    if let Some(project_id) = project_id {
+    let mut ready_project_id = restored.project_id;
+    if let Some(project_id) = ready_project_id.as_deref() {
         tracing::trace!("document was in nested");
         let is_deleted = sqlx::query!(
             r#"
@@ -64,15 +85,32 @@ pub async fn revert_delete_document(
             )
             .execute(&mut *transaction)
             .await?;
+            ready_project_id = None;
         }
     }
+
+    let ready_task_ids = if actually_restored {
+        if let Ok(document_id) = Uuid::parse_str(document_id) {
+            final_ready_dependents(
+                &mut transaction,
+                &[document_id],
+                ready_project_id.as_deref(),
+                &[document_id],
+            )
+            .await?
+        } else {
+            Vec::new()
+        }
+    } else {
+        Vec::new()
+    };
 
     transaction
         .commit()
         .await
         .context("unable to commit transaction")?;
 
-    Ok(())
+    Ok(ready_task_ids)
 }
 
 #[cfg(test)]
@@ -82,7 +120,8 @@ mod tests {
 
     #[sqlx::test(fixtures(path = "../../fixtures", scripts("basic_user_with_document")))]
     async fn test_revert_delete_document(pool: Pool<Postgres>) -> anyhow::Result<()> {
-        revert_delete_document(&pool, "document-one", None).await?;
+        let first_ready_task_ids = revert_delete_document(&pool, "document-one").await?;
+        assert_eq!(first_ready_task_ids, Vec::<Uuid>::new());
 
         let document = sqlx::query!(
             r#"
@@ -110,6 +149,44 @@ mod tests {
     }
 
     #[sqlx::test(fixtures(path = "../../fixtures", scripts("basic_user_with_document")))]
+    async fn retry_restore_has_no_ready_fanout(pool: Pool<Postgres>) -> anyhow::Result<()> {
+        let first_ready_task_ids = revert_delete_document(&pool, "document-one").await?;
+        let retry_ready_task_ids = revert_delete_document(&pool, "document-one").await?;
+
+        assert_eq!(first_ready_task_ids, Vec::<Uuid>::new());
+        assert_eq!(retry_ready_task_ids, Vec::<Uuid>::new());
+        Ok(())
+    }
+
+    #[sqlx::test(fixtures(path = "../../fixtures", scripts("basic_user_with_document")))]
+    async fn restore_serializes_behind_taskdeps_lifecycle_lock(
+        pool: Pool<Postgres>,
+    ) -> anyhow::Result<()> {
+        let mut lock_transaction = pool.begin().await?;
+        sqlx::query_scalar!(
+            r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+            i64::from_be_bytes(*b"TASKDEPS")
+        )
+        .fetch_one(&mut *lock_transaction)
+        .await?;
+
+        let restore_pool = pool.clone();
+        let mut restore =
+            tokio::spawn(
+                async move { revert_delete_document(&restore_pool, "document-one").await },
+            );
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(25), &mut restore)
+                .await
+                .is_err()
+        );
+
+        lock_transaction.commit().await?;
+        assert_eq!(restore.await??, Vec::<Uuid>::new());
+        Ok(())
+    }
+
+    #[sqlx::test(fixtures(path = "../../fixtures", scripts("basic_user_with_document")))]
     async fn test_revert_delete_document_nested_deleted_parent(
         pool: Pool<Postgres>,
     ) -> anyhow::Result<()> {
@@ -132,7 +209,7 @@ mod tests {
         .execute(&pool)
         .await?;
 
-        revert_delete_document(&pool, "document-one", Some("p1")).await?;
+        revert_delete_document(&pool, "document-one").await?;
 
         let project_id = sqlx::query!(
             r#"
@@ -171,7 +248,7 @@ mod tests {
         .execute(&pool)
         .await?;
 
-        revert_delete_document(&pool, "document-one", Some("p1")).await?;
+        revert_delete_document(&pool, "document-one").await?;
 
         let project_id = sqlx::query!(
             r#"
