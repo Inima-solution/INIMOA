@@ -177,6 +177,31 @@ const variables = {
   ],
 };
 
+const milestoneProperty = {
+  propertyId: 'milestone-1',
+  propertyDefinitionId: SYSTEM_PROPERTY_IDS.MILESTONE,
+  displayName: 'Milestone',
+  valueType: 'BOOLEAN',
+  value: false,
+  isMultiSelect: false,
+  isMetadata: false,
+  isSystemProperty: true,
+  owner: { scope: 'system' },
+  createdAt: new Date('2026-08-30T00:00:00.000Z'),
+  updatedAt: new Date('2026-08-30T00:00:00.000Z'),
+} satisfies Property;
+
+const milestoneVariables = (value: boolean) => ({
+  properties: [
+    {
+      entityId: 'task-1',
+      entityType: 'TASK' as const,
+      property: milestoneProperty,
+      apiValues: { valueType: 'BOOLEAN' as const, value },
+    },
+  ],
+});
+
 function renderWithQueryClient(factory: () => void): void {
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -783,6 +808,20 @@ describe('useBulkSaveEntityPropertiesMutation dispositions', () => {
     expect(invalidateSoupEntityMock).toHaveBeenCalledWith('task-1');
     expect(testQueryClient.invalidateQueries).toHaveBeenCalled();
     expect(toastFailureMock).not.toHaveBeenCalled();
+  });
+
+  it('commits the required Task Milestone Boolean through the shared mutation', async () => {
+    await mutation.mutateAsync(milestoneVariables(true));
+
+    expect(graphqlEntityPropertyMutationMock).toHaveBeenCalledWith({
+      kind: 'save',
+      entityId: 'task-1',
+      entityType: 'TASK',
+      property: milestoneProperty,
+      apiValues: { valueType: 'BOOLEAN', value: true },
+    });
+    expect(invalidateSoupEntityMock).toHaveBeenCalledWith('task-1');
+    expect(testQueryClient.invalidateQueries).toHaveBeenCalled();
   });
 
   it('re-fetches only the saved Task and does not retain optimistic data after remount', async () => {
