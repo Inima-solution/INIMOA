@@ -24,7 +24,8 @@ use super::model::{
     EntityPropertyOptionSelection, EntityPropertyOptionUpdate, GetOrCreateTagDefinitionResult,
     PropertyDefinitionOwner, TagPromotionOutcome, TagRemapOutcome, TaskAssignedNotification,
     TaskDependencyMutationOutcome, TaskDependencyReadiness, TaskHierarchyMutationOutcome,
-    TaskStatusMutationOutcome, UpdatePropertyOptionOutcome, ViewReceipt,
+    TaskStatusMutationOutcome, TaskSubtaskProgressSnapshot, UpdatePropertyOptionOutcome,
+    ViewReceipt,
 };
 
 /// Repository trait for property operations.
@@ -227,6 +228,12 @@ pub trait PropertiesRepo: Send + Sync + 'static {
         team_id: Uuid,
         task_ids: &[Uuid],
     ) -> impl Future<Output = Result<Option<Vec<TaskDependencyReadiness>>, Self::Err>> + Send;
+
+    /// Read a canonical snapshot for every requested live Task.
+    fn get_task_subtask_progress(
+        &self,
+        task_ids: &[Uuid],
+    ) -> impl Future<Output = Result<Option<Vec<TaskSubtaskProgressSnapshot>>, Self::Err>> + Send;
 
     /// Atomically add one option to a multi-select entity property value,
     /// attaching the property if needed. Re-adding a present option is deduped.

@@ -16,6 +16,7 @@ pub mod extract;
 pub mod options;
 pub mod project_dependency_readiness;
 pub mod tags;
+pub mod task_subtask_progress;
 
 use std::sync::Arc;
 
@@ -117,6 +118,10 @@ where
     Auth: MacroAuthorizationService,
 {
     Router::new()
+        .route(
+            "/task-subtask-progress",
+            post(task_subtask_progress::get_task_subtask_progress::<S, A, Auth>),
+        )
         // Property Definition Management - requires authentication
         .route(
             "/definitions",

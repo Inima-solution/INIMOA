@@ -24,5 +24,6 @@ pub mod task_dependency_read_queries;
 pub mod task_property_queries;
 pub mod task_ready_notification_queries;
 pub mod task_status_transition_queries;
+pub mod task_subtask_progress_queries;
 #[cfg(test)]
 pub mod test;

@@ -65,6 +65,31 @@ pub struct TaskSubtaskCompletionReadiness {
     pub has_unavailable_subtasks: bool,
 }
 
+/// Computed direct-subtask progress for one task. This read model never
+/// exposes child identities.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "inbound", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "ai_tools", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct TaskSubtaskProgress {
+    pub task_id: Uuid,
+    pub completed_subtasks: u32,
+    pub total_subtasks: u32,
+    pub has_unavailable_subtasks: bool,
+}
+
+/// Internal canonical snapshot. Child IDs remain private until the domain has
+/// applied per-document view access for the requesting user.
+#[doc(hidden)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskSubtaskProgressSnapshot {
+    pub task_id: Uuid,
+    pub subtask_ids: Vec<Uuid>,
+    pub completed_subtask_ids: Vec<Uuid>,
+    pub canceled_subtask_ids: Vec<Uuid>,
+    pub has_unavailable_subtasks: bool,
+}
+
 #[doc(hidden)]
 pub struct TaskTransitionBlockedDetails(Box<TaskDependencyReadiness>);
 

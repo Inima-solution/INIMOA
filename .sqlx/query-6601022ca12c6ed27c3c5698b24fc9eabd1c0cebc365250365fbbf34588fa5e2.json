@@ -1,0 +1,49 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH requested AS (\n            SELECT task_id, ordinal\n            FROM unnest($1::uuid[]) WITH ORDINALITY AS input(task_id, ordinal)\n        ), source AS (\n            SELECT requested.task_id, requested.ordinal, document.\"projectId\" AS project_id,\n                document.id IS NOT NULL AND source_type.document_id IS NOT NULL AS source_available,\n                subtasks.values AS subtasks_values\n            FROM requested\n            LEFT JOIN \"Document\" document ON document.id = requested.task_id::text AND document.\"deletedAt\" IS NULL\n            LEFT JOIN document_sub_type source_type ON source_type.document_id = document.id AND source_type.sub_type = 'task'::document_sub_type_value\n            LEFT JOIN entity_properties subtasks ON subtasks.entity_id = document.id AND subtasks.entity_type = 'TASK' AND subtasks.property_definition_id = $2\n        ), candidates AS (\n            SELECT source.task_id, source.ordinal, source.project_id, refs.reference, refs.reference_ordinal\n            FROM source\n            LEFT JOIN LATERAL jsonb_array_elements(CASE\n                WHEN jsonb_typeof(source.subtasks_values) = 'object'\n                 AND source.subtasks_values->>'type' = 'EntityReference'\n                 AND jsonb_typeof(source.subtasks_values->'value') = 'array'\n                THEN source.subtasks_values->'value' ELSE '[]'::jsonb END\n            ) WITH ORDINALITY AS refs(reference, reference_ordinal) ON TRUE\n        ), candidate_rows AS (\n            SELECT candidates.task_id, candidates.ordinal, candidates.reference, candidates.reference_ordinal,\n                child.id AS child_id, status.values AS status_values\n            FROM candidates\n            LEFT JOIN \"Document\" child ON child.id = candidates.reference->>'entity_id'\n                AND child.\"deletedAt\" IS NULL AND child.\"projectId\" IS NOT DISTINCT FROM candidates.project_id\n            LEFT JOIN document_sub_type child_type ON child_type.document_id = child.id AND child_type.sub_type = 'task'::document_sub_type_value\n            LEFT JOIN entity_properties status ON status.entity_id = child.id AND status.entity_type = 'TASK' AND status.property_definition_id = $4\n            WHERE child_type.document_id IS NOT NULL OR candidates.reference IS NOT NULL\n        ), reverse_rows AS (\n            SELECT source.task_id, source.ordinal, child.id, parent.values AS parent_values\n            FROM source\n            JOIN \"Document\" child ON child.\"deletedAt\" IS NULL AND child.\"projectId\" IS NOT DISTINCT FROM source.project_id\n            JOIN document_sub_type child_type ON child_type.document_id = child.id AND child_type.sub_type = 'task'::document_sub_type_value\n            JOIN entity_properties parent ON parent.entity_id = child.id AND parent.entity_type = 'TASK' AND parent.property_definition_id = $3\n        )\n        SELECT source.task_id AS \"task_id!\", source.source_available AS \"source_available!\", source.subtasks_values,\n            COALESCE((SELECT jsonb_agg(jsonb_build_object('reference', candidate_rows.reference, 'childId', candidate_rows.child_id, 'statusValues', candidate_rows.status_values) ORDER BY candidate_rows.reference_ordinal) FROM candidate_rows WHERE candidate_rows.task_id = source.task_id AND candidate_rows.ordinal = source.ordinal), '[]'::jsonb) AS \"candidate_rows!\",\n            COALESCE((SELECT jsonb_agg(jsonb_build_object('id', reverse_rows.id, 'parentValues', reverse_rows.parent_values)) FROM reverse_rows WHERE reverse_rows.task_id = source.task_id AND reverse_rows.ordinal = source.ordinal), '[]'::jsonb) AS \"reverse_rows!\"\n        FROM source\n        GROUP BY source.task_id, source.ordinal, source.source_available, source.subtasks_values\n        ORDER BY source.ordinal\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "task_id!",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "source_available!",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 2,
+        "name": "subtasks_values",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 3,
+        "name": "candidate_rows!",
+        "type_info": "Jsonb"
+      },
+      {
+        "ordinal": 4,
+        "name": "reverse_rows!",
+        "type_info": "Jsonb"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray",
+        "Uuid",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null,
+      null,
+      true,
+      null,
+      null
+    ]
+  },
+  "hash": "6601022ca12c6ed27c3c5698b24fc9eabd1c0cebc365250365fbbf34588fa5e2"
+}

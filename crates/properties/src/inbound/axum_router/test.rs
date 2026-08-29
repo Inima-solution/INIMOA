@@ -224,6 +224,7 @@ struct FakeEntityAccessService {
     calls: Arc<Mutex<Vec<AccessCall>>>,
     team: Option<UserTeamInfo>,
     deny_team_receipt: bool,
+    deny_document_receipt: bool,
 }
 
 impl FakeEntityAccessService {
@@ -238,6 +239,7 @@ impl FakeEntityAccessService {
                 business_roles: Default::default(),
             }),
             deny_team_receipt: false,
+            deny_document_receipt: false,
         }
     }
 
@@ -245,6 +247,13 @@ impl FakeEntityAccessService {
         Self {
             deny_team_receipt: true,
             ..Self::on_team(team_id)
+        }
+    }
+
+    fn with_denied_document_receipt() -> Self {
+        Self {
+            deny_document_receipt: true,
+            ..Self::default()
         }
     }
 
@@ -277,7 +286,9 @@ impl EntityAccessService for FakeEntityAccessService {
         if entity_id.contains("denied") {
             return Err(AccessError::Unauthorized);
         }
-        if self.deny_team_receipt && entity_type == EntityType::Team {
+        if (self.deny_team_receipt && entity_type == EntityType::Team)
+            || (self.deny_document_receipt && entity_type == EntityType::Document)
+        {
             return Err(AccessError::Unauthorized);
         }
 
@@ -1351,4 +1362,244 @@ async fn task_dependency_readiness_maps_unavailable_and_repo_failures_without_le
     assert_eq!(value["error"], true);
     assert_eq!(value["message"], "internal server error");
     assert!(!body.contains("readiness-secret-sentinel"));
+}
+
+#[tokio::test]
+async fn task_subtask_progress_forwards_duplicate_sources_in_order_and_returns_exact_shape() {
+    let first = Uuid::from_u128(0xE601);
+    let second = Uuid::from_u128(0xE602);
+    let requested = vec![first, second, first];
+    let expected_requested = requested.clone();
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_task_subtask_progress()
+        .once()
+        .withf(move |ids| ids == expected_requested.as_slice())
+        .return_once(move |_| {
+            Box::pin(async move {
+                Ok(Some(vec![
+                    crate::domain::model::TaskSubtaskProgressSnapshot {
+                        task_id: first,
+                        subtask_ids: vec![],
+                        completed_subtask_ids: vec![],
+                        canceled_subtask_ids: vec![],
+                        has_unavailable_subtasks: false,
+                    },
+                    crate::domain::model::TaskSubtaskProgressSnapshot {
+                        task_id: second,
+                        subtask_ids: vec![],
+                        completed_subtask_ids: vec![],
+                        canceled_subtask_ids: vec![],
+                        has_unavailable_subtasks: false,
+                    },
+                    crate::domain::model::TaskSubtaskProgressSnapshot {
+                        task_id: first,
+                        subtask_ids: vec![],
+                        completed_subtask_ids: vec![],
+                        canceled_subtask_ids: vec![],
+                        has_unavailable_subtasks: false,
+                    },
+                ]))
+            })
+        });
+    let mut permission = MockPermissionService::new();
+    permission.expect_mint_view_receipt().never();
+    let access = FakeEntityAccessService::default();
+    let response = properties_router(
+        PropertiesServiceImpl::new(repo, Some(permission), None::<MockNotificationService>),
+        access.clone(),
+    )
+    .oneshot(json_post(
+        "/task-subtask-progress",
+        serde_json::json!({"taskIds": requested}),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let value: serde_json::Value = serde_json::from_str(&response_body(response).await).unwrap();
+    assert_eq!(
+        value,
+        serde_json::json!([
+            {"taskId": first, "completedSubtasks": 0, "totalSubtasks": 0, "hasUnavailableSubtasks": false},
+            {"taskId": second, "completedSubtasks": 0, "totalSubtasks": 0, "hasUnavailableSubtasks": false},
+            {"taskId": first, "completedSubtasks": 0, "totalSubtasks": 0, "hasUnavailableSubtasks": false},
+        ])
+    );
+    assert_eq!(
+        access.calls().len(),
+        3,
+        "one Document View receipt per requested source"
+    );
+}
+
+#[tokio::test]
+async fn task_subtask_progress_rejects_bad_requests_and_useronly_before_source_receipts() {
+    for (authorization, body, status) in [
+        (
+            None,
+            r#"{"taskIds":[]}"#.to_owned(),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            Some("Bearer invalid"),
+            r#"{"taskIds":[]}"#.to_owned(),
+            StatusCode::UNAUTHORIZED,
+        ),
+        (
+            Some("Bearer valid"),
+            r#"{"taskIds":["not-a-uuid"]}"#.to_owned(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            Some("Bearer valid"),
+            r#"{"taskIds":[],"extra":true}"#.to_owned(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            Some("Bearer valid"),
+            "{".to_owned(),
+            StatusCode::BAD_REQUEST,
+        ),
+        (
+            Some("Bearer valid"),
+            serde_json::json!({"taskIds": vec![Uuid::nil(); 201]}).to_string(),
+            StatusCode::BAD_REQUEST,
+        ),
+    ] {
+        let mut repo = MockPropertiesRepo::new();
+        repo.expect_get_task_subtask_progress().never();
+        let access = FakeEntityAccessService::default();
+        let router = properties_router(
+            PropertiesServiceImpl::new(
+                repo,
+                None::<MockPermissionService>,
+                None::<MockNotificationService>,
+            ),
+            access.clone(),
+        );
+        let mut request = Request::builder()
+            .method("POST")
+            .uri("/task-subtask-progress")
+            .header(header::CONTENT_TYPE, "application/json");
+        if let Some(authorization) = authorization {
+            request = request.header(header::AUTHORIZATION, authorization);
+        }
+        let response = router
+            .oneshot(request.body(Body::from(body)).unwrap())
+            .await
+            .unwrap();
+        assert_readiness_error(response, status).await;
+        assert!(
+            access.calls().is_empty(),
+            "UserOnly and body validation precede source receipts"
+        );
+    }
+
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_task_subtask_progress().never();
+    let access = FakeEntityAccessService::default();
+    let response = properties_router(
+        PropertiesServiceImpl::new(
+            repo,
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        ),
+        access.clone(),
+    )
+    .oneshot(
+        Request::builder()
+            .method("POST")
+            .uri("/task-subtask-progress")
+            .header(INTERNAL_API_KEY_HEADER, INTERNAL_API_KEY)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"taskIds":[]}"#))
+            .unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_readiness_error(response, StatusCode::FORBIDDEN).await;
+    assert!(
+        access.calls().is_empty(),
+        "UserOnly rejects internal callers before source receipts"
+    );
+
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_task_subtask_progress().never();
+    let empty = properties_router(
+        PropertiesServiceImpl::new(
+            repo,
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        ),
+        FakeEntityAccessService::default(),
+    )
+    .oneshot(json_post(
+        "/task-subtask-progress",
+        serde_json::json!({"taskIds": []}),
+    ))
+    .await
+    .unwrap();
+    assert_eq!(empty.status(), StatusCode::OK);
+    assert_eq!(response_body(empty).await, "[]");
+}
+
+#[tokio::test]
+async fn task_subtask_progress_maps_source_denial_not_found_and_internal_without_leaking_details() {
+    let task_id = Uuid::from_u128(0xE603);
+    let body = serde_json::json!({"taskIds":[task_id]});
+    let mut denied_repo = MockPropertiesRepo::new();
+    denied_repo.expect_get_task_subtask_progress().never();
+    let denied = properties_router(
+        PropertiesServiceImpl::new(
+            denied_repo,
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        ),
+        FakeEntityAccessService::with_denied_document_receipt(),
+    )
+    .oneshot(json_post("/task-subtask-progress", body.clone()))
+    .await
+    .unwrap();
+    assert_readiness_error(denied, StatusCode::FORBIDDEN).await;
+
+    let mut missing_repo = MockPropertiesRepo::new();
+    missing_repo
+        .expect_get_task_subtask_progress()
+        .once()
+        .return_once(|_| Box::pin(async { Ok(None) }));
+    let missing = properties_router(
+        PropertiesServiceImpl::new(
+            missing_repo,
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        ),
+        FakeEntityAccessService::default(),
+    )
+    .oneshot(json_post("/task-subtask-progress", body.clone()))
+    .await
+    .unwrap();
+    assert_readiness_error(missing, StatusCode::NOT_FOUND).await;
+
+    let mut failing_repo = MockPropertiesRepo::new();
+    failing_repo
+        .expect_get_task_subtask_progress()
+        .once()
+        .return_once(|_| Box::pin(async { Err(anyhow::anyhow!("subtask-progress-secret")) }));
+    let failing = properties_router(
+        PropertiesServiceImpl::new(
+            failing_repo,
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        ),
+        FakeEntityAccessService::default(),
+    )
+    .oneshot(json_post("/task-subtask-progress", body))
+    .await
+    .unwrap();
+    assert_eq!(failing.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    let response = response_body(failing).await;
+    assert!(!response.contains("subtask-progress-secret"));
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&response).unwrap(),
+        serde_json::json!({"error":true,"message":"internal server error"})
+    );
 }

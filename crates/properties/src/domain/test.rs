@@ -6207,3 +6207,186 @@ async fn dependency_readiness_routes_scoped_batch_and_maps_unavailable_project()
         Err(PropertiesErr::Repo(_))
     ));
 }
+
+#[test]
+fn task_subtask_progress_serializes_only_the_four_public_camel_case_fields() {
+    let task_id = Uuid::from_u128(0xE401);
+    assert_eq!(
+        serde_json::to_value(crate::domain::model::TaskSubtaskProgress {
+            task_id,
+            completed_subtasks: 2,
+            total_subtasks: 3,
+            has_unavailable_subtasks: false,
+        })
+        .unwrap(),
+        serde_json::json!({
+            "taskId": task_id,
+            "completedSubtasks": 2,
+            "totalSubtasks": 3,
+            "hasUnavailableSubtasks": false,
+        })
+    );
+}
+
+#[tokio::test]
+async fn task_subtask_progress_projects_visible_live_children_and_excludes_canceled() {
+    let task_id = Uuid::from_u128(0xE402);
+    let completed = Uuid::from_u128(0xE403);
+    let incomplete = Uuid::from_u128(0xE404);
+    let canceled = Uuid::from_u128(0xE405);
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_task_subtask_progress()
+        .once()
+        .withf(move |ids| ids == [task_id])
+        .return_once(move |_| {
+            Box::pin(async move {
+                Ok(Some(vec![
+                    crate::domain::model::TaskSubtaskProgressSnapshot {
+                        task_id,
+                        subtask_ids: vec![completed, incomplete, canceled],
+                        completed_subtask_ids: vec![completed],
+                        canceled_subtask_ids: vec![canceled],
+                        has_unavailable_subtasks: false,
+                    },
+                ]))
+            })
+        });
+    let calls = Arc::new(Mutex::new(0_usize));
+    let mut permission = MockPermissionService::new();
+    permission.expect_mint_view_receipt().times(3).returning({
+        let calls = calls.clone();
+        move |_, id, entity_type| {
+            *calls.lock().unwrap() += 1;
+            let receipt = ViewReceipt::dangerously_assert_authenticated_user(
+                caller_user_id(),
+                id,
+                entity_type,
+            );
+            Box::pin(async move { Ok(receipt) })
+        }
+    });
+    let result =
+        PropertiesServiceImpl::new(repo, Some(permission), None::<MockNotificationService>)
+            .get_task_subtask_progress(
+                &[view_receipt(&task_id.to_string(), EntityType::Document)],
+                &[task_id],
+            )
+            .await
+            .unwrap();
+    assert_eq!(*calls.lock().unwrap(), 3);
+    assert_eq!(
+        result,
+        vec![crate::domain::model::TaskSubtaskProgress {
+            task_id,
+            completed_subtasks: 1,
+            total_subtasks: 2,
+            has_unavailable_subtasks: false,
+        }]
+    );
+}
+
+#[tokio::test]
+async fn task_subtask_progress_fails_closed_for_unavailable_or_denied_children_and_skips_empty_children()
+ {
+    let task_id = Uuid::from_u128(0xE406);
+    let child = Uuid::from_u128(0xE407);
+    for (snapshot, receipt_error, expected_unavailable) in [
+        (
+            crate::domain::model::TaskSubtaskProgressSnapshot {
+                task_id,
+                subtask_ids: vec![child],
+                completed_subtask_ids: vec![child],
+                canceled_subtask_ids: vec![],
+                has_unavailable_subtasks: true,
+            },
+            false,
+            true,
+        ),
+        (
+            crate::domain::model::TaskSubtaskProgressSnapshot {
+                task_id,
+                subtask_ids: vec![child],
+                completed_subtask_ids: vec![child],
+                canceled_subtask_ids: vec![],
+                has_unavailable_subtasks: false,
+            },
+            true,
+            true,
+        ),
+        (
+            crate::domain::model::TaskSubtaskProgressSnapshot {
+                task_id,
+                subtask_ids: vec![],
+                completed_subtask_ids: vec![],
+                canceled_subtask_ids: vec![],
+                has_unavailable_subtasks: false,
+            },
+            false,
+            false,
+        ),
+    ] {
+        let mut repo = MockPropertiesRepo::new();
+        repo.expect_get_task_subtask_progress()
+            .once()
+            .return_once(move |_| Box::pin(async move { Ok(Some(vec![snapshot])) }));
+        let mut permission = MockPermissionService::new();
+        if receipt_error {
+            permission
+                .expect_mint_view_receipt()
+                .once()
+                .return_once(|_, _, _| {
+                    Box::pin(async { Err(anyhow!("permission backend sentinel")) })
+                });
+        } else {
+            permission.expect_mint_view_receipt().never();
+        }
+        let result =
+            PropertiesServiceImpl::new(repo, Some(permission), None::<MockNotificationService>)
+                .get_task_subtask_progress(
+                    &[view_receipt(&task_id.to_string(), EntityType::Document)],
+                    &[task_id],
+                )
+                .await
+                .unwrap();
+        assert_eq!(
+            result,
+            vec![crate::domain::model::TaskSubtaskProgress {
+                task_id,
+                completed_subtasks: 0,
+                total_subtasks: 0,
+                has_unavailable_subtasks: expected_unavailable,
+            }]
+        );
+    }
+}
+
+#[tokio::test]
+async fn task_subtask_progress_rejects_nonhuman_or_mismatched_source_receipts_before_repository() {
+    let task_id = Uuid::from_u128(0xE408);
+    for source in [
+        ViewReceipt::dangerously_assert_internal_user(
+            &task_id.to_string(),
+            AccessEntityType::Document,
+        ),
+        ViewReceipt::dangerously_assert_bot(
+            BotId::new_from_uuid(Uuid::from_u128(0xE409)).into_storage_id(),
+            BotReceiptScope::User {
+                acting_user: caller_user_id(),
+            },
+            &task_id.to_string(),
+            AccessEntityType::Document,
+        ),
+        view_receipt(&Uuid::from_u128(0xE40A).to_string(), EntityType::Document),
+    ] {
+        assert!(matches!(
+            PropertiesServiceImpl::new(
+                MockPropertiesRepo::new(),
+                None::<MockPermissionService>,
+                None::<MockNotificationService>,
+            )
+            .get_task_subtask_progress(&[source], &[task_id])
+            .await,
+            Err(PropertiesErr::PermissionDenied)
+        ));
+    }
+}
