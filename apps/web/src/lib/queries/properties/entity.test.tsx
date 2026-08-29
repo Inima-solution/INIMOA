@@ -18,6 +18,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeSubject, onEnd, pipe } from 'wonka';
 import { EntityPropertiesDocument } from '../../service-clients/service-storage/graphql/generated/graphql';
 import { createUrqlQuery } from '../../urql-solid';
+import { propertiesKeys } from './keys';
 
 const useFeatureFlagMock = vi.hoisted(() => vi.fn());
 const graphqlEntityPropertyMutationMock = vi.hoisted(() => vi.fn());
@@ -36,7 +37,6 @@ const bulkUpdateEntityPropertyOptionsMock = vi.hoisted(() => vi.fn());
 const updateGraphqlEntityPropertyOptionsMock = vi.hoisted(() => vi.fn());
 const setRestEntityPropertyMock = vi.hoisted(() => vi.fn());
 const isInstantiatedPropertyMock = vi.hoisted(() => vi.fn());
-const entityPropertyFromApiMock = vi.hoisted(() => vi.fn());
 const soupPropertyToPropertyMock = vi.hoisted(() => vi.fn());
 const rollbackMock = vi.hoisted(() => vi.fn());
 const optimisticUpdateSoupEntityMock = vi.hoisted(() => vi.fn());
@@ -67,10 +67,14 @@ vi.mock('@entity/extractors-property/property-helpers', () => ({
   soupPropertyToProperty: soupPropertyToPropertyMock,
 }));
 
-vi.mock('@property/api/converters', () => ({
-  entityPropertyFromApi: entityPropertyFromApiMock,
-  propertyValueToApi: vi.fn(() => ({ type: 'string', value: 'doing' })),
-}));
+vi.mock('@property/api/converters', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@property/api/converters')>();
+  return {
+    ...actual,
+    propertyValueToApi: vi.fn(() => ({ type: 'string', value: 'doing' })),
+  };
+});
 
 vi.mock('@property/utils', () => ({
   isInstantiatedProperty: isInstantiatedPropertyMock,
@@ -200,7 +204,11 @@ function renderMutation(): void {
 
 function renderEntityQuery(
   includeMetadata: boolean,
-  entityType: 'DOCUMENT' | 'USER' | Accessor<'DOCUMENT' | 'USER'> = 'DOCUMENT',
+  entityType:
+    | 'DOCUMENT'
+    | 'USER'
+    | 'TASK'
+    | Accessor<'DOCUMENT' | 'USER' | 'TASK'> = 'DOCUMENT',
   entityId: string | Accessor<string> = 'document-1'
 ): void {
   const type = typeof entityType === 'function' ? entityType : () => entityType;
@@ -208,6 +216,29 @@ function renderEntityQuery(
   renderWithQueryClient(() => {
     entityQuery = useEntityPropertiesQuery(type, id, includeMetadata);
   });
+}
+
+function restStatusProperty(value: string) {
+  return {
+    property: {
+      id: 'assignment-1',
+      property_definition_id: 'status-def',
+      created_at: '2026-08-29T00:00:00.000Z',
+      updated_at: '2026-08-29T00:00:00.000Z',
+    },
+    definition: {
+      id: 'status-def',
+      display_name: 'Status',
+      data_type: 'SELECT_STRING',
+      is_multi_select: false,
+      is_metadata: false,
+      is_system: true,
+      owner: { scope: 'system' },
+      created_at: '2026-08-29T00:00:00.000Z',
+      updated_at: '2026-08-29T00:00:00.000Z',
+    },
+    value: { type: 'SelectOption', value: [value] },
+  };
 }
 
 describe('useEntityPropertiesQuery transport', () => {
@@ -438,15 +469,42 @@ describe('useEntityPropertiesQuery transport', () => {
   });
 
   it('keeps metadata requests on REST', async () => {
-    const apiProperty = { property: { id: 'assignment-1' } };
+    const apiProperty = {
+      property: {
+        id: 'assignment-1',
+        property_definition_id: 'status-def',
+        created_at: '2026-08-29T00:00:00.000Z',
+        updated_at: '2026-08-29T00:00:00.000Z',
+      },
+      definition: {
+        id: 'status-def',
+        display_name: 'Status',
+        data_type: 'SELECT_STRING',
+        is_multi_select: false,
+        is_metadata: false,
+        is_system: true,
+        owner: { scope: 'system' },
+        created_at: '2026-08-29T00:00:00.000Z',
+        updated_at: '2026-08-29T00:00:00.000Z',
+      },
+      value: { type: 'SelectOption', value: ['todo'] },
+    };
     getRestEntityPropertiesMock.mockResolvedValue(
       ok({ properties: [apiProperty] })
     );
-    entityPropertyFromApiMock.mockReturnValue(property);
 
     renderEntityQuery(true);
 
-    await vi.waitFor(() => expect(entityQuery.data).toEqual([property]));
+    await vi.waitFor(() =>
+      expect(entityQuery.data).toMatchObject([
+        {
+          propertyId: 'assignment-1',
+          propertyDefinitionId: 'status-def',
+          valueType: 'SELECT_STRING',
+          value: ['todo'],
+        },
+      ])
+    );
     expect(graphqlExecutions).toHaveLength(0);
     expect(getRestEntityPropertiesMock).toHaveBeenCalledWith({
       entity_type: 'DOCUMENT',
@@ -724,6 +782,67 @@ describe('useBulkSaveEntityPropertiesMutation dispositions', () => {
     expect(invalidateSoupEntityMock).toHaveBeenCalledWith('task-1');
     expect(testQueryClient.invalidateQueries).toHaveBeenCalled();
     expect(toastFailureMock).not.toHaveBeenCalled();
+  });
+
+  it('re-fetches only the saved Task and does not retain optimistic data after remount', async () => {
+    graphqlSoupEnabledMock.mockReturnValue(false);
+    setGraphqlFlagEnabled(false);
+    createGraphqlEntityPropertiesQueryMock.mockReturnValue({
+      isEnabled: () => false,
+      result: {
+        data: undefined,
+        error: null,
+        isLoading: false,
+        isFetching: false,
+      },
+      refetch: vi.fn(),
+    });
+    getRestEntityPropertiesMock
+      .mockResolvedValueOnce(ok({ properties: [restStatusProperty('todo')] }))
+      .mockResolvedValue(ok({ properties: [restStatusProperty('done')] }));
+    const savedTaskKey = propertiesKeys.entity({
+      entityType: 'TASK',
+      entityId: 'task-1',
+    }).queryKey;
+    const otherTaskKey = propertiesKeys.entity({
+      entityType: 'TASK',
+      entityId: 'task-2',
+    }).queryKey;
+    testQueryClient.setQueryData(otherTaskKey, ['other-task-value']);
+
+    // Replace the mutation-only root with an active REST reader sharing its
+    // query client, so invalidation must cause a real authoritative re-read.
+    dispose?.();
+    renderWithQueryClient(() => {
+      mutation = useBulkSaveEntityPropertiesMutation();
+      entityQuery = useEntityPropertiesQuery(
+        () => 'TASK',
+        () => 'task-1',
+        false
+      );
+    });
+    await vi.waitFor(() =>
+      expect(entityQuery.data?.[0]?.value).toEqual(['todo'])
+    );
+
+    await mutation.mutateAsync(variables);
+
+    await vi.waitFor(() =>
+      expect(entityQuery.data?.[0]?.value).toEqual(['done'])
+    );
+    expect(testQueryClient.invalidateQueries).toHaveBeenCalledWith({
+      queryKey: savedTaskKey,
+    });
+    expect(testQueryClient.getQueryData(otherTaskKey)).toEqual([
+      'other-task-value',
+    ]);
+
+    dispose?.();
+    renderEntityQuery(false, 'TASK', 'task-1');
+    await vi.waitFor(() =>
+      expect(entityQuery.data?.[0]?.value).toEqual(['done'])
+    );
+    expect(getRestEntityPropertiesMock).toHaveBeenCalledTimes(3);
   });
 
   it('invalidates the REST projection for a new GraphQL attachment', async () => {

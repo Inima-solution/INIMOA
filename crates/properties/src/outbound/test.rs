@@ -7,11 +7,12 @@ use crate::domain::ports::{MockNotificationService, MockPermissionService, Prope
 use crate::domain::service::PropertiesService;
 use macro_db_migrator::MACRO_DB_MIGRATIONS;
 use macro_user_id::user_id::MacroUserIdStr;
-use models_properties::EntityType;
+use models_properties::api::requests::SetPropertyValue;
 use models_properties::service::property_value::PropertyValue;
+use models_properties::{DataType, EntityReference, EntityType};
 use sqlx::{Pool, Postgres};
 use std::sync::Arc;
-use system_properties::SystemPropertyKey;
+use system_properties::{EffortOption, PriorityOption, StatusOption, SystemPropertyKey};
 use uuid::Uuid;
 
 // ============================================================================
@@ -199,6 +200,422 @@ async fn set_hierarchy_property(
     .bind(value)
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+#[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
+async fn task_system_properties_round_trip_through_specialized_writers(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let source = Uuid::from_u128(0xD401_0000_0000_0000_0000_0000_0000_0001);
+    let parent = Uuid::from_u128(0xD401_0000_0000_0000_0000_0000_0000_0002);
+    let child_one = Uuid::from_u128(0xD401_0000_0000_0000_0000_0000_0000_0003);
+    let child_two = Uuid::from_u128(0xD401_0000_0000_0000_0000_0000_0000_0004);
+    let predecessor_one = Uuid::from_u128(0xD401_0000_0000_0000_0000_0000_0000_0005);
+    let predecessor_two = Uuid::from_u128(0xD401_0000_0000_0000_0000_0000_0000_0006);
+    let relevant_document_one = Uuid::from_u128(0xD401_0000_0000_0000_0000_0000_0000_0007);
+    let relevant_document_two = Uuid::from_u128(0xD401_0000_0000_0000_0000_0000_0000_0008);
+
+    for (id, name) in [
+        (source, "round-trip-source"),
+        (parent, "round-trip-parent"),
+        (child_one, "round-trip-child-one"),
+        (child_two, "round-trip-child-two"),
+        (predecessor_one, "round-trip-predecessor-one"),
+        (predecessor_two, "round-trip-predecessor-two"),
+    ] {
+        seed_live_hierarchy_task(&pool, id, name).await?;
+    }
+    for (id, name) in [
+        (relevant_document_one, "round-trip-document-one"),
+        (relevant_document_two, "round-trip-document-two"),
+    ] {
+        sqlx::query("INSERT INTO \"Document\" (id, name, owner) VALUES ($1, $2, 'hierarchy-test')")
+            .bind(id.to_string())
+            .bind(name)
+            .execute(&pool)
+            .await?;
+    }
+
+    let receipt = EditReceipt::dangerously_assert_internal_user(
+        &source.to_string(),
+        canonical_entity_type(EntityType::Task),
+    );
+    let assignee = EntityReference::new("macro|hierarchy-test@example.test", EntityType::User);
+    let mut permissions = MockPermissionService::new();
+    let source_task_id = source.to_string();
+    permissions
+        .expect_grant_permissions_to_task()
+        .times(1)
+        .withf(move |user_ids, task_id| {
+            user_ids.len() == 1
+                && user_ids.contains(
+                    &MacroUserIdStr::parse_from_str("macro|hierarchy-test@example.test")
+                        .expect("valid canonical assignee"),
+                )
+                && task_id == source_task_id
+        })
+        .returning(|_, _| Box::pin(async { Ok(()) }));
+    let service = PropertiesServiceImpl::new(
+        PropertiesPgRepo::new(pool.clone()),
+        Some(permissions),
+        None::<MockNotificationService>,
+    );
+    let task_reference = |id: Uuid| EntityReference::new(id.to_string(), EntityType::Task);
+    let document_reference = |id: Uuid| EntityReference::new(id.to_string(), EntityType::Document);
+    let due_date = chrono::DateTime::parse_from_rfc3339("2026-09-01T12:34:56Z")?.to_utc();
+
+    for predecessor in [predecessor_one, predecessor_two] {
+        let predecessor_receipt = EditReceipt::dangerously_assert_internal_user(
+            &predecessor.to_string(),
+            canonical_entity_type(EntityType::Task),
+        );
+        service
+            .set_entity_property(
+                &predecessor_receipt,
+                SystemPropertyKey::STATUS_UUID,
+                Some(SetPropertyValue::SelectOption {
+                    option_id: StatusOption::COMPLETED_UUID,
+                }),
+            )
+            .await?;
+    }
+
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::ASSIGNEES_UUID,
+            Some(SetPropertyValue::MultiEntityReference {
+                references: vec![assignee.clone()],
+            }),
+        )
+        .await?;
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::STATUS_UUID,
+            Some(SetPropertyValue::SelectOption {
+                option_id: StatusOption::IN_PROGRESS_UUID,
+            }),
+        )
+        .await?;
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::PRIORITY_UUID,
+            Some(SetPropertyValue::SelectOption {
+                option_id: PriorityOption::HIGH_UUID,
+            }),
+        )
+        .await?;
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::DUE_DATE_UUID,
+            Some(SetPropertyValue::Date { value: due_date }),
+        )
+        .await?;
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::PARENT_TASK_UUID,
+            Some(SetPropertyValue::EntityReference {
+                reference: task_reference(parent),
+            }),
+        )
+        .await?;
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::SUBTASKS_UUID,
+            Some(SetPropertyValue::MultiEntityReference {
+                references: vec![task_reference(child_one), task_reference(child_two)],
+            }),
+        )
+        .await?;
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::DEPENDS_ON_UUID,
+            Some(SetPropertyValue::MultiEntityReference {
+                references: vec![
+                    task_reference(predecessor_one),
+                    task_reference(predecessor_two),
+                ],
+            }),
+        )
+        .await?;
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::EFFORT_UUID,
+            Some(SetPropertyValue::SelectOption {
+                option_id: EffortOption::LARGE_UUID,
+            }),
+        )
+        .await?;
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::STORY_POINTS_UUID,
+            Some(SetPropertyValue::Number { value: 8.0 }),
+        )
+        .await?;
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::RELEVANT_DOCUMENTS_UUID,
+            Some(SetPropertyValue::MultiEntityReference {
+                references: vec![
+                    document_reference(relevant_document_one),
+                    document_reference(relevant_document_two),
+                ],
+            }),
+        )
+        .await?;
+
+    let initial = super::entity_properties_get_query::get_entity_properties_values(
+        &pool,
+        &source.to_string(),
+        EntityType::Task,
+    )
+    .await?;
+    assert_eq!(
+        initial
+            .iter()
+            .map(|property| {
+                (
+                    property.definition.id,
+                    property.definition.data_type,
+                    property.value.clone(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                SystemPropertyKey::ASSIGNEES_UUID,
+                DataType::Entity,
+                Some(PropertyValue::EntityRef(vec![assignee.clone()])),
+            ),
+            (
+                SystemPropertyKey::DEPENDS_ON_UUID,
+                DataType::Entity,
+                Some(PropertyValue::EntityRef(vec![
+                    task_reference(predecessor_one),
+                    task_reference(predecessor_two),
+                ])),
+            ),
+            (
+                SystemPropertyKey::DUE_DATE_UUID,
+                DataType::Date,
+                Some(PropertyValue::Date(due_date)),
+            ),
+            (
+                SystemPropertyKey::EFFORT_UUID,
+                DataType::SelectString,
+                Some(PropertyValue::SelectOption(vec![EffortOption::LARGE_UUID])),
+            ),
+            (
+                SystemPropertyKey::PARENT_TASK_UUID,
+                DataType::Entity,
+                Some(PropertyValue::EntityRef(vec![task_reference(parent)])),
+            ),
+            (
+                SystemPropertyKey::PRIORITY_UUID,
+                DataType::SelectString,
+                Some(PropertyValue::SelectOption(vec![PriorityOption::HIGH_UUID])),
+            ),
+            (
+                SystemPropertyKey::RELEVANT_DOCUMENTS_UUID,
+                DataType::Entity,
+                Some(PropertyValue::EntityRef(vec![
+                    document_reference(relevant_document_one),
+                    document_reference(relevant_document_two),
+                ])),
+            ),
+            (
+                SystemPropertyKey::STATUS_UUID,
+                DataType::SelectString,
+                Some(PropertyValue::SelectOption(vec![
+                    StatusOption::IN_PROGRESS_UUID
+                ])),
+            ),
+            (
+                SystemPropertyKey::STORY_POINTS_UUID,
+                DataType::Number,
+                Some(PropertyValue::Num(8.0)),
+            ),
+            (
+                SystemPropertyKey::SUBTASKS_UUID,
+                DataType::Entity,
+                Some(PropertyValue::EntityRef(vec![
+                    task_reference(child_one),
+                    task_reference(child_two),
+                ])),
+            ),
+        ]
+    );
+
+    for property_definition_id in [
+        SystemPropertyKey::STATUS_UUID,
+        SystemPropertyKey::DEPENDS_ON_UUID,
+        SystemPropertyKey::SUBTASKS_UUID,
+        SystemPropertyKey::PARENT_TASK_UUID,
+    ] {
+        service
+            .set_entity_property(&receipt, property_definition_id, None)
+            .await?;
+    }
+    let cleared = super::entity_properties_get_query::get_entity_properties_values(
+        &pool,
+        &source.to_string(),
+        EntityType::Task,
+    )
+    .await?;
+    for property_definition_id in [
+        SystemPropertyKey::STATUS_UUID,
+        SystemPropertyKey::DEPENDS_ON_UUID,
+        SystemPropertyKey::SUBTASKS_UUID,
+        SystemPropertyKey::PARENT_TASK_UUID,
+    ] {
+        assert_eq!(
+            cleared
+                .iter()
+                .find(|property| property.definition.id == property_definition_id)
+                .expect("cleared canonical property remains attached")
+                .value,
+            None
+        );
+    }
+
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::STATUS_UUID,
+            Some(SetPropertyValue::SelectOption {
+                option_id: StatusOption::IN_REVIEW_UUID,
+            }),
+        )
+        .await?;
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::DEPENDS_ON_UUID,
+            Some(SetPropertyValue::MultiEntityReference {
+                references: vec![
+                    task_reference(predecessor_two),
+                    task_reference(predecessor_one),
+                ],
+            }),
+        )
+        .await?;
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::PARENT_TASK_UUID,
+            Some(SetPropertyValue::EntityReference {
+                reference: task_reference(parent),
+            }),
+        )
+        .await?;
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::SUBTASKS_UUID,
+            Some(SetPropertyValue::MultiEntityReference {
+                references: vec![task_reference(child_two), task_reference(child_one)],
+            }),
+        )
+        .await?;
+
+    let rewritten = super::entity_properties_get_query::get_entity_properties_values(
+        &pool,
+        &source.to_string(),
+        EntityType::Task,
+    )
+    .await?;
+    assert_eq!(rewritten.len(), 10);
+    for property_definition_id in [
+        SystemPropertyKey::ASSIGNEES_UUID,
+        SystemPropertyKey::PRIORITY_UUID,
+        SystemPropertyKey::DUE_DATE_UUID,
+        SystemPropertyKey::EFFORT_UUID,
+        SystemPropertyKey::STORY_POINTS_UUID,
+        SystemPropertyKey::RELEVANT_DOCUMENTS_UUID,
+    ] {
+        let initial_property = initial
+            .iter()
+            .find(|property| property.definition.id == property_definition_id)
+            .expect("initial canonical property exists");
+        let rewritten_property = rewritten
+            .iter()
+            .find(|property| property.definition.id == property_definition_id)
+            .expect("rewritten canonical property exists");
+        assert_eq!(
+            (
+                rewritten_property.definition.id,
+                rewritten_property.definition.data_type,
+                rewritten_property.value.clone(),
+            ),
+            (
+                initial_property.definition.id,
+                initial_property.definition.data_type,
+                initial_property.value.clone(),
+            ),
+        );
+    }
+    assert_eq!(
+        rewritten
+            .iter()
+            .filter(|property| {
+                matches!(
+                    property.definition.id,
+                    SystemPropertyKey::STATUS_UUID
+                        | SystemPropertyKey::DEPENDS_ON_UUID
+                        | SystemPropertyKey::SUBTASKS_UUID
+                        | SystemPropertyKey::PARENT_TASK_UUID
+                )
+            })
+            .map(|property| {
+                (
+                    property.definition.id,
+                    property.definition.data_type,
+                    property.value.clone(),
+                )
+            })
+            .collect::<Vec<_>>(),
+        vec![
+            (
+                SystemPropertyKey::DEPENDS_ON_UUID,
+                DataType::Entity,
+                Some(PropertyValue::EntityRef(vec![
+                    task_reference(predecessor_two),
+                    task_reference(predecessor_one)
+                ]))
+            ),
+            (
+                SystemPropertyKey::PARENT_TASK_UUID,
+                DataType::Entity,
+                Some(PropertyValue::EntityRef(vec![task_reference(parent)]))
+            ),
+            (
+                SystemPropertyKey::STATUS_UUID,
+                DataType::SelectString,
+                Some(PropertyValue::SelectOption(vec![
+                    StatusOption::IN_REVIEW_UUID
+                ]))
+            ),
+            (
+                SystemPropertyKey::SUBTASKS_UUID,
+                DataType::Entity,
+                Some(PropertyValue::EntityRef(vec![
+                    task_reference(child_two),
+                    task_reference(child_one)
+                ]))
+            ),
+        ]
+    );
+
     Ok(())
 }
 
