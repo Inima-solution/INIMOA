@@ -124,6 +124,7 @@ impl<'de> Deserialize<'de> for EntityRefId {
 
 /// A compact UTC range for matching Date property values.
 #[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema, schemars::JsonSchema))]
 pub struct PropertyDateRange {
     /// Match values strictly after this UTC timestamp.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -182,6 +183,8 @@ impl ExpandFrame<PropertiesLiteral> for Vec<PropertyFilter> {
         let nodes: Vec<Option<Expr<PropertiesLiteral>>> = filters
             .into_iter()
             .map(|pf| {
+                pf.validate_date_range()
+                    .map_err(|err| ExpandErr::ApiAst(err.to_owned()))?;
                 let prop_def_id = Uuid::parse_str(&pf.property_definition_id)?;
                 let entity_type = pf
                     .entity_type
@@ -226,9 +229,27 @@ impl ExpandFrame<PropertiesLiteral> for Vec<PropertyFilter> {
                     })
                 });
 
-                Ok([option_nodes, entity_ref_nodes, boolean_node]
-                    .into_iter()
-                    .fold_with(Expr::or))
+                let date_range_node = pf.date_range.map(|date_range| {
+                    let literal = Expr::Literal(PropertiesLiteral {
+                        property_definition_id: prop_def_id,
+                        entity_type,
+                        value: PropertyMatchValue::DateRange(date_range.range),
+                    });
+                    if date_range.exclude {
+                        Expr::Not(Box::new(literal))
+                    } else {
+                        literal
+                    }
+                });
+
+                Ok([
+                    option_nodes,
+                    entity_ref_nodes,
+                    boolean_node,
+                    date_range_node,
+                ]
+                .into_iter()
+                .fold_with(Expr::or))
             })
             .collect::<Result<_, ExpandErr>>()?;
 

@@ -1,7 +1,9 @@
 use std::str::FromStr;
 
 use super::*;
-use crate::{CallFilters, CallStatus, ForeignEntityFilters, PropertyFilter};
+use crate::{
+    CallFilters, CallStatus, ForeignEntityFilters, PropertyDateRangeFilter, PropertyFilter,
+};
 use cool_asserts::assert_matches;
 use model_file_type::FileType;
 use non_empty::IsEmpty;
@@ -621,6 +623,7 @@ fn it_ors_option_entity_ref_and_boolean_within_single_property_filter() {
             option_ids: vec![option_id.to_string()],
             entity_ids: vec![entity_id.to_string()],
             boolean_value: Some(false),
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -701,6 +704,7 @@ fn it_expands_single_property_select_option() {
             option_ids: vec![option_id.to_string()],
             entity_ids: vec![],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -721,6 +725,7 @@ fn it_expands_multiple_option_ids_as_or() {
             option_ids: vec![option_a.to_string(), option_b.to_string()],
             entity_ids: vec![],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -747,6 +752,7 @@ fn it_expands_entity_ref_filter() {
             option_ids: vec![],
             entity_ids: vec![entity_id.clone()],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -780,6 +786,7 @@ fn it_ands_multiple_property_filters() {
                 option_ids: vec![option_a.to_string()],
                 entity_ids: vec![],
                 boolean_value: None,
+                date_range: None,
             },
             PropertyFilter {
                 property_definition_id: priority_id.to_string(),
@@ -787,6 +794,7 @@ fn it_ands_multiple_property_filters() {
                 option_ids: vec![option_b.to_string()],
                 entity_ids: vec![],
                 boolean_value: None,
+                date_range: None,
             },
         ],
         ..Default::default()
@@ -815,6 +823,7 @@ fn it_ors_mixed_option_and_entity_ref_within_single_filter() {
             option_ids: vec![option_id.to_string()],
             entity_ids: vec![entity_id],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -853,6 +862,7 @@ fn property_filter_with_empty_values_produce_no_ast() {
             option_ids: vec![],
             entity_ids: vec![],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -874,6 +884,7 @@ fn it_expands_property_filter_without_entity_type() {
             option_ids: vec![option_id.to_string()],
             entity_ids: vec![],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -904,6 +915,7 @@ fn it_expands_property_filter_with_entity_type() {
             option_ids: vec![option_id.to_string()],
             entity_ids: vec![],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -1027,6 +1039,7 @@ fn invalid_entity_type_returns_error() {
             option_ids: vec![option_id.to_string()],
             entity_ids: vec![],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -1047,6 +1060,7 @@ fn entity_ref_with_single_quote_returns_error() {
             option_ids: vec![],
             entity_ids: vec!["x'); DROP TABLE documents; --".to_string()],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -1148,6 +1162,75 @@ fn property_date_range_ast_uses_compact_dr_serialization() {
         serde_json::to_value(bounded_roundtrip).unwrap(),
         serde_json::to_value(bounded).unwrap()
     );
+}
+
+#[test]
+fn property_date_range_filter_serde_defaults_and_expands_to_date_literal() {
+    let property_definition_id = Uuid::new_v4();
+    let filter: PropertyFilter = serde_json::from_value(json!({
+        "property_definition_id": property_definition_id,
+        "entity_type": "TASK",
+        "date_range": {"gte": "2026-01-10T00:00:00Z", "lte": "2026-01-20T00:00:00Z"}
+    }))
+    .unwrap();
+    let date_range = filter.date_range.as_ref().unwrap();
+    assert!(!date_range.exclude);
+    assert_eq!(
+        serde_json::to_value(date_range).unwrap(),
+        json!({
+            "gte": "2026-01-10T00:00:00Z", "lte": "2026-01-20T00:00:00Z"
+        })
+    );
+    let ast = Vec::<PropertyFilter>::expand_ast(vec![filter])
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(ast).unwrap(),
+        json!({
+            "l": {"pd": property_definition_id, "et": "TASK", "v": {"dr": {
+                "gte": "2026-01-10T00:00:00Z", "lte": "2026-01-20T00:00:00Z"
+            }}}
+        })
+    );
+}
+
+#[test]
+fn property_date_range_filter_exclude_wraps_compact_literal_in_not() {
+    let property_definition_id = Uuid::new_v4();
+    let ast = Vec::<PropertyFilter>::expand_ast(vec![PropertyFilter {
+        property_definition_id: property_definition_id.to_string(),
+        entity_type: Some("TASK".to_string()),
+        date_range: Some(PropertyDateRangeFilter {
+            exclude: true,
+            ..Default::default()
+        }),
+        ..Default::default()
+    }])
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(ast).unwrap(),
+        json!({
+            "!": {"l": {"pd": property_definition_id, "et": "TASK", "v": {"dr": {}}}}
+        })
+    );
+}
+
+#[test]
+fn property_date_range_filter_rejects_non_task_and_mixed_values() {
+    let base = PropertyFilter {
+        property_definition_id: Uuid::new_v4().to_string(),
+        date_range: Some(PropertyDateRangeFilter::default()),
+        ..Default::default()
+    };
+    assert!(Vec::<PropertyFilter>::expand_ast(vec![base.clone()]).is_err());
+    let mut non_task = base.clone();
+    non_task.entity_type = Some("DOCUMENT".to_string());
+    assert!(Vec::<PropertyFilter>::expand_ast(vec![non_task]).is_err());
+    let mut mixed = base;
+    mixed.entity_type = Some("TASK".to_string());
+    mixed.boolean_value = Some(false);
+    assert!(Vec::<PropertyFilter>::expand_ast(vec![mixed]).is_err());
 }
 
 #[test]

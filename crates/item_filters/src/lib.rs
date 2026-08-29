@@ -621,11 +621,49 @@ pub struct PropertyFilter {
     /// Boolean value to match. None does not filter on a boolean value.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub boolean_value: Option<bool>,
+    /// Task Date property range. Date ranges are Task-only and cannot be
+    /// combined with option, entity-reference, or boolean matching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub date_range: Option<PropertyDateRangeFilter>,
+}
+
+/// A Date-property range together with whether matching Task values are excluded.
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Clone)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema, schemars::JsonSchema))]
+pub struct PropertyDateRangeFilter {
+    /// UTC bounds for the Date property value.
+    #[serde(flatten)]
+    pub range: ast::properties::PropertyDateRange,
+    /// Exclude Tasks whose Date property matches these bounds.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exclude: bool,
+}
+
+impl PropertyFilter {
+    /// Validates the Task-only Date-property filter contract.
+    pub fn validate_date_range(&self) -> Result<(), &'static str> {
+        if self.date_range.is_none() {
+            return Ok(());
+        }
+        if self.entity_type.as_deref() != Some("TASK") {
+            return Err("date_range requires entity_type TASK");
+        }
+        if !self.option_ids.is_empty()
+            || !self.entity_ids.is_empty()
+            || self.boolean_value.is_some()
+        {
+            return Err("date_range cannot be combined with other property values");
+        }
+        Ok(())
+    }
 }
 
 impl IsEmpty for PropertyFilter {
     fn is_empty(&self) -> bool {
-        self.option_ids.is_empty() && self.entity_ids.is_empty() && self.boolean_value.is_none()
+        self.option_ids.is_empty()
+            && self.entity_ids.is_empty()
+            && self.boolean_value.is_none()
+            && self.date_range.is_none()
     }
 }
 

@@ -4812,6 +4812,7 @@ async fn test_property_filter_by_select_option(db: Pool<Postgres>) -> anyhow::Re
             option_ids: vec!["00000001-0000-0000-0003-000000000001".to_string()], // Low
             entity_ids: vec![],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -4867,6 +4868,7 @@ async fn test_property_filter_by_status_completed(db: Pool<Postgres>) -> anyhow:
             option_ids: vec!["00000001-0000-0000-0002-000000000004".to_string()], // Completed
             entity_ids: vec![],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -4923,6 +4925,7 @@ async fn test_property_filter_multiple_and(db: Pool<Postgres>) -> anyhow::Result
                 option_ids: vec!["00000001-0000-0000-0003-000000000001".to_string()], // Low
                 entity_ids: vec![],
                 boolean_value: None,
+                date_range: None,
             },
             PropertyFilter {
                 property_definition_id: "00000001-0000-0000-0000-000000000002".to_string(), // Status
@@ -4930,6 +4933,7 @@ async fn test_property_filter_multiple_and(db: Pool<Postgres>) -> anyhow::Result
                 option_ids: vec!["00000001-0000-0000-0002-000000000004".to_string()], // Completed
                 entity_ids: vec![],
                 boolean_value: None,
+                date_range: None,
             },
         ],
         ..Default::default()
@@ -4985,6 +4989,7 @@ async fn test_property_filter_no_match(db: Pool<Postgres>) -> anyhow::Result<()>
             option_ids: vec!["00000001-0000-0000-0003-000000000004".to_string()], // Urgent
             entity_ids: vec![],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -5033,6 +5038,7 @@ async fn test_property_filter_multiple_options_or(db: Pool<Postgres>) -> anyhow:
             ],
             entity_ids: vec![],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -5092,6 +5098,7 @@ async fn test_property_filter_without_entity_type(db: Pool<Postgres>) -> anyhow:
             ],
             entity_ids: vec![],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };
@@ -5147,6 +5154,7 @@ async fn test_property_filter_scoped_entity_type(db: Pool<Postgres>) -> anyhow::
             option_ids: vec!["00000001-0000-0000-0003-000000000002".to_string()], // Medium
             entity_ids: vec![],
             boolean_value: None,
+            date_range: None,
         }],
         ..Default::default()
     };

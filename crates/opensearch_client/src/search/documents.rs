@@ -66,6 +66,24 @@ pub struct PropertyFilterArg {
     /// Candidate values (OR'd). Select-option UUIDs and entity-ref ids both
     /// live in the indexed `values` keyword array.
     pub values: Vec<String>,
+    /// Task Date-property range, when this is a Date filter rather than a
+    /// keyword equality filter.
+    pub date_range: Option<PropertyDateRangeArg>,
+}
+
+/// UTC bounds and exclusion mode for an indexed Task Date property.
+#[derive(Debug, Clone)]
+pub struct PropertyDateRangeArg {
+    /// Match values strictly after this instant.
+    pub gt: Option<DateTime<Utc>>,
+    /// Match values at or after this instant.
+    pub gte: Option<DateTime<Utc>>,
+    /// Match values strictly before this instant.
+    pub lt: Option<DateTime<Utc>>,
+    /// Match values at or before this instant.
+    pub lte: Option<DateTime<Utc>>,
+    /// Exclude matching Date values instead of including them.
+    pub exclude: bool,
 }
 
 #[derive(Clone)]
@@ -173,8 +191,12 @@ impl DocumentQueryBuilder {
         // up within the same nested object. On bool.filter, so they constrain
         // both name and content matches.
         for filter in &self.property_filters {
-            if let Some(nested) = build_property_filter(filter) {
-                bool_query.filter(nested);
+            if let Some((nested, exclude)) = build_property_filter(filter) {
+                if exclude {
+                    bool_query.must_not(nested);
+                } else {
+                    bool_query.filter(nested);
+                }
             }
         }
 
@@ -269,29 +291,58 @@ impl DocumentQueryBuilder {
 }
 
 /// Build a `nested` query over `properties` for one property filter:
-/// a parent matches when it has a nested entry with `definition_id` equal to
-/// the filter's id AND `values` containing any of the filter's values.
-/// Returns `None` when the filter carries no values.
-fn build_property_filter<'a>(filter: &PropertyFilterArg) -> Option<QueryType<'a>> {
-    if filter.values.is_empty() {
-        return None;
-    }
+/// a parent matches when one nested entry has the filter's `definition_id`
+/// and either contains any keyword `values`, or has a valid `date_value`
+/// within the supplied Date range. Returns `None` only for an empty keyword
+/// filter; an empty Date range still requires an indexed Date value.
+fn build_property_filter<'a>(filter: &PropertyFilterArg) -> Option<(QueryType<'a>, bool)> {
     let mut inner = BoolQueryBuilder::new();
     inner.filter(QueryType::term(
         format!("{PROPERTIES_PATH}.definition_id"),
         filter.definition_id.clone(),
     ));
-    inner.filter(QueryType::terms(
-        format!("{PROPERTIES_PATH}.values"),
-        filter.values.clone(),
-    ));
+    let exclude = if let Some(date_range) = &filter.date_range {
+        inner.filter(QueryType::exists(format!("{PROPERTIES_PATH}.date_value")));
+        let field = format!("{PROPERTIES_PATH}.date_value");
+        let mut range = QueryType::range(field);
+        if let Some(value) = date_range.gt.as_ref() {
+            range.gt(value.timestamp_millis());
+        }
+        if let Some(value) = date_range.gte.as_ref() {
+            range.gte(value.timestamp_millis());
+        }
+        if let Some(value) = date_range.lt.as_ref() {
+            range.lt(value.timestamp_millis());
+        }
+        if let Some(value) = date_range.lte.as_ref() {
+            range.lte(value.timestamp_millis());
+        }
+        if date_range.gt.is_some()
+            || date_range.gte.is_some()
+            || date_range.lt.is_some()
+            || date_range.lte.is_some()
+        {
+            inner.filter(range.build().into());
+        }
+        date_range.exclude
+    } else {
+        if filter.values.is_empty() {
+            return None;
+        }
+        inner.filter(QueryType::terms(
+            format!("{PROPERTIES_PATH}.values"),
+            filter.values.clone(),
+        ));
+        false
+    };
     // ignore_unmapped: the unified query spans indices that don't map
     // `properties` as nested; there the clause is a no-op rather than an error.
-    Some(
+    Some((
         NestedQuery::new(PROPERTIES_PATH, inner.build().into())
             .ignore_unmapped(true)
             .into(),
-    )
+        exclude,
+    ))
 }
 
 /// Highlight config attached to each `has_child` inner_hits block.

@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use serde::Serialize;
 
 mod bool;
+mod exists;
 mod function_score;
 mod has_child;
 mod match_phrase;
@@ -18,6 +19,7 @@ mod wildcard;
 
 use crate::ToOpenSearchJson;
 pub use bool::{BoolQuery, BoolQueryBuilder};
+pub use exists::ExistsQuery;
 pub use function_score::{
     BoostMode, DecayFunction, FieldValueFactor, FunctionScoreQuery, FunctionScoreQueryBuilder,
     RandomScore, ScoreFunction, ScoreFunctionType, ScoreMode, ScriptScore,
@@ -41,6 +43,8 @@ pub use wildcard::WildcardQuery;
 pub enum QueryType<'a> {
     /// Bool query
     Bool(BoolQuery<'a>),
+    /// Exists query
+    Exists(ExistsQuery<'a>),
     /// Function score query
     FunctionScore(FunctionScoreQuery<'a>),
     /// Match phrase query
@@ -71,6 +75,7 @@ impl<'a> ToOpenSearchJson for QueryType<'a> {
     fn to_json(&self) -> Value {
         match self {
             QueryType::Bool(bool_query) => bool_query.to_json(),
+            QueryType::Exists(exists) => exists.to_json(),
             QueryType::FunctionScore(function_score) => function_score.to_json(),
             QueryType::MatchPhrase(match_phrase) => match_phrase.to_json(),
             QueryType::MatchPhrasePrefix(match_phrase_prefix) => match_phrase_prefix.to_json(),
@@ -91,6 +96,11 @@ impl<'a> QueryType<'a> {
     /// Convenience method for creating a term query
     pub fn term<T: Into<Value>>(field: impl Into<Cow<'a, str>>, value: T) -> Self {
         QueryType::Term(TermQuery::new(field, value))
+    }
+
+    /// Convenience method for creating an exists query.
+    pub fn exists(field: impl Into<Cow<'a, str>>) -> Self {
+        QueryType::Exists(ExistsQuery::new(field))
     }
 
     /// Convenience method for creating a terms query
@@ -155,6 +165,7 @@ impl<'a> QueryType<'a> {
     pub fn to_owned(&self) -> QueryType<'static> {
         match self {
             QueryType::Bool(bool_query) => QueryType::Bool(bool_query.to_owned()),
+            QueryType::Exists(exists) => QueryType::Exists(exists.to_owned()),
             QueryType::FunctionScore(function_score) => {
                 QueryType::FunctionScore(function_score.to_owned())
             }

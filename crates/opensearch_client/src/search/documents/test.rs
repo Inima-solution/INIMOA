@@ -240,10 +240,12 @@ fn test_build_bool_query_property_filters_emit_nested() -> anyhow::Result<()> {
                     "00000001-0000-0000-0002-000000000001".to_string(),
                     "00000001-0000-0000-0002-000000000004".to_string(),
                 ],
+                date_range: None,
             },
             PropertyFilterArg {
                 definition_id: "00000001-0000-0000-0000-000000000001".to_string(),
                 values: vec!["macro|alice@example.com".to_string()],
+                date_range: None,
             },
         ]);
 
@@ -283,6 +285,7 @@ fn test_build_bool_query_property_filter_empty_values_skipped() -> anyhow::Resul
         .property_filters(vec![PropertyFilterArg {
             definition_id: "00000001-0000-0000-0000-000000000002".to_string(),
             values: vec![],
+            date_range: None,
         }]);
 
     let json = builder.build_bool_query()?.build().to_json();
@@ -290,6 +293,157 @@ fn test_build_bool_query_property_filter_empty_values_skipped() -> anyhow::Resul
     assert!(
         !filter.iter().any(|f| f.get("nested").is_some()),
         "empty-values filter should emit no nested clause: {filter:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_build_bool_query_date_property_filter_uses_exists_and_bounds() -> anyhow::Result<()> {
+    let lower =
+        chrono::DateTime::parse_from_rfc3339("2026-01-10T00:00:00Z")?.with_timezone(&chrono::Utc);
+    let upper =
+        chrono::DateTime::parse_from_rfc3339("2026-01-20T00:00:00Z")?.with_timezone(&chrono::Utc);
+    let json = DocumentQueryBuilder::new(vec!["foo".to_string()])
+        .user_id("alice")
+        .property_filters(vec![PropertyFilterArg {
+            definition_id: "due-date".to_string(),
+            values: vec![],
+            date_range: Some(PropertyDateRangeArg {
+                gt: None,
+                gte: Some(lower),
+                lt: Some(upper),
+                lte: None,
+                exclude: false,
+            }),
+        }])
+        .build_bool_query()?
+        .build()
+        .to_json();
+    let nested = json["bool"]["filter"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|query| query.get("nested").is_some())
+        .unwrap();
+    assert_eq!(
+        nested["nested"]["query"]["bool"]["filter"],
+        serde_json::json!([
+            {"term": {"properties.definition_id": "due-date"}},
+            {"exists": {"field": "properties.date_value"}},
+            {"range": {"properties.date_value": {"gte": 1768003200000i64, "lt": 1768867200000i64}}}
+        ])
+    );
+    Ok(())
+}
+
+#[test]
+fn test_build_bool_query_date_property_filter_preserves_all_four_bounds() -> anyhow::Result<()> {
+    let bound = |value| {
+        chrono::DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&chrono::Utc)
+    };
+    let json = DocumentQueryBuilder::new(vec!["foo".to_string()])
+        .user_id("alice")
+        .property_filters(vec![PropertyFilterArg {
+            definition_id: "due-date".to_string(),
+            values: vec![],
+            date_range: Some(PropertyDateRangeArg {
+                gt: Some(bound("2026-01-01T00:00:00Z")),
+                gte: Some(bound("2026-01-02T00:00:00Z")),
+                lt: Some(bound("2026-01-03T00:00:00Z")),
+                lte: Some(bound("2026-01-04T00:00:00Z")),
+                exclude: false,
+            }),
+        }])
+        .build_bool_query()?
+        .build()
+        .to_json();
+    assert!(
+        json["bool"]["filter"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|query| {
+                query["nested"]["query"]["bool"]["filter"][2]
+                    == serde_json::json!({"range": {"properties.date_value": {
+                        "gt": 1767225600000i64,
+                        "gte": 1767312000000i64,
+                        "lt": 1767398400000i64,
+                        "lte": 1767484800000i64
+                    }}})
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn test_build_bool_query_empty_date_property_filter_requires_date_value() -> anyhow::Result<()> {
+    let json = DocumentQueryBuilder::new(vec!["foo".to_string()])
+        .user_id("alice")
+        .property_filters(vec![PropertyFilterArg {
+            definition_id: "due-date".to_string(),
+            values: vec![],
+            date_range: Some(PropertyDateRangeArg {
+                gt: None,
+                gte: None,
+                lt: None,
+                lte: None,
+                exclude: false,
+            }),
+        }])
+        .build_bool_query()?
+        .build()
+        .to_json();
+    assert!(
+        json["bool"]["filter"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|query| {
+                query["nested"]["query"]["bool"]["filter"]
+                    == serde_json::json!([
+                        {"term": {"properties.definition_id": "due-date"}},
+                        {"exists": {"field": "properties.date_value"}}
+                    ])
+            })
+    );
+    Ok(())
+}
+
+#[test]
+fn test_build_bool_query_excluded_date_property_filter_is_top_level_must_not() -> anyhow::Result<()>
+{
+    let json = DocumentQueryBuilder::new(vec!["foo".to_string()])
+        .user_id("alice")
+        .sub_types(vec!["task".to_string()])
+        .property_filters(vec![PropertyFilterArg {
+            definition_id: "due-date".to_string(),
+            values: vec![],
+            date_range: Some(PropertyDateRangeArg {
+                gt: None,
+                gte: None,
+                lt: None,
+                lte: None,
+                exclude: true,
+            }),
+        }])
+        .build_bool_query()?
+        .build()
+        .to_json();
+    assert_eq!(json["bool"]["must_not"].as_array().unwrap().len(), 1);
+    assert!(json["bool"]["must_not"][0]["nested"].is_object());
+    assert!(
+        json["bool"]["filter"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!({"terms": {"sub_type": ["task"]}}))
+    );
+    assert!(
+        json["bool"]["filter"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!({"term": {"owner_id": "alice"}}))
     );
     Ok(())
 }

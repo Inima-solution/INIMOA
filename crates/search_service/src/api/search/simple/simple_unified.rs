@@ -22,7 +22,9 @@ use models_search::{
 };
 use models_search_cursor::{SearchCursor, SearchCursorOption, SearchMethodCursor};
 use opensearch_client::search::call_records::CallRecordSearchMode;
-use opensearch_client::search::documents::{DocumentSearchMode, PropertyFilterArg};
+use opensearch_client::search::documents::{
+    DocumentSearchMode, PropertyDateRangeArg, PropertyFilterArg,
+};
 use opensearch_client::search::model::SearchHit;
 use opensearch_client::search::unified::UnifiedSearchArgs;
 
@@ -160,15 +162,29 @@ fn enforce_term_limits(terms: Vec<String>) -> Result<Vec<String>, SearchError> {
 
 /// Convert request property filters into OpenSearch property-filter args.
 ///
-/// `entity_type` is dropped: the indexed `properties` field carries only
-/// `definition_id` + `values`, and definition ids are globally unique, so the
-/// entity type adds nothing to the query. Select-option UUIDs, entity-ref ids,
-/// and boolean values all match against `values`. Filters with no values are
-/// skipped.
-fn to_property_filter_args(filters: &[item_filters::PropertyFilter]) -> Vec<PropertyFilterArg> {
+/// Keyword filters match the indexed `values` field. Task Date filters carry
+/// their UTC bounds separately for the indexed `date_value` field. Empty
+/// keyword filters are skipped; an empty Date range remains a valid
+/// "has a Date value" filter.
+fn to_property_filter_args(
+    filters: &[item_filters::PropertyFilter],
+) -> Result<Vec<PropertyFilterArg>, SearchError> {
     filters
         .iter()
         .filter_map(|f| {
+            if f.validate_date_range().is_err() {
+                return Some(Err(SearchError::InvalidPropertyDateRange));
+            }
+            let date_range = f
+                .date_range
+                .as_ref()
+                .map(|date_range| PropertyDateRangeArg {
+                    gt: date_range.range.gt.clone(),
+                    gte: date_range.range.gte.clone(),
+                    lt: date_range.range.lt.clone(),
+                    lte: date_range.range.lte.clone(),
+                    exclude: date_range.exclude,
+                });
             let mut values: Vec<String> = f
                 .option_ids
                 .iter()
@@ -178,15 +194,37 @@ fn to_property_filter_args(filters: &[item_filters::PropertyFilter]) -> Vec<Prop
             if let Some(boolean_value) = f.boolean_value {
                 values.push(boolean_value.to_string());
             }
-            if values.is_empty() {
+            if values.is_empty() && date_range.is_none() {
                 return None;
             }
-            Some(PropertyFilterArg {
+            Some(Ok(PropertyFilterArg {
                 definition_id: f.property_definition_id.clone(),
                 values,
-            })
+                date_range,
+            }))
         })
         .collect()
+}
+
+/// Restrict a Date-filtered document search to the canonical Task subtype
+/// without broadening an explicit non-Task subtype request.
+fn date_range_document_routing(
+    has_date_range_filter: bool,
+    should_include_documents: bool,
+    sub_types: &[String],
+) -> (bool, Option<Vec<String>>) {
+    if !has_date_range_filter || !should_include_documents {
+        return (should_include_documents, None);
+    }
+    if sub_types.is_empty() || sub_types.iter().any(|sub_type| sub_type == "task") {
+        return (true, Some(vec!["task".to_string()]));
+    }
+    (false, None)
+}
+
+/// Date property filters apply only to indexed Task documents.
+fn include_non_document_source(should_include: bool, has_date_range_filter: bool) -> bool {
+    should_include && !has_date_range_filter
 }
 
 /// Creates a unified search request and performs the search
@@ -249,7 +287,7 @@ pub(in crate::api::search) async fn perform_unified_search(
     // (which drops them) and attach them to the document search args below.
     // Tags, by contrast, are indexed on every taggable source, each of which
     // applies the tag filter itself (see the per-source gating below).
-    let property_filter_args = to_property_filter_args(&req.filters.property_filters);
+    let property_filter_args = to_property_filter_args(&req.filters.property_filters)?;
     let tag_option_ids = req.filters.tag_option_ids.clone();
     let match_all_tags = req.filters.tag_filter_mode == item_filters::TagFilterMode::All;
     // A tag filter keeps only the tag-indexed sources; channels and CRM drop
@@ -261,7 +299,6 @@ pub(in crate::api::search) async fn perform_unified_search(
     // (set only when `include_crm` is true and the user has a qualifying
     // membership). `crm_company_filters` scopes/selects within the team.
     let crm_company_filters = req.filters.crm_company_filters.clone();
-    let should_include_crm = crm_access.is_some() && !tags_active;
 
     let search_filters = SearchEntityFilters::from(req.filters);
     let channel_filters = search_filters.channel_filters;
@@ -272,18 +309,41 @@ pub(in crate::api::search) async fn perform_unified_search(
     let call_filters = search_filters.call_filters;
     let calendar_event_filters = search_filters.calendar_event_filters;
 
-    let should_include_documents = search_filters.should_include_documents;
+    let has_date_range_filter = !property_filter_args
+        .iter()
+        .all(|filter| filter.date_range.is_none());
+    let should_include_crm =
+        include_non_document_source(crm_access.is_some() && !tags_active, has_date_range_filter);
+    let (should_include_documents, forced_task_sub_types) = date_range_document_routing(
+        has_date_range_filter,
+        search_filters.should_include_documents,
+        &doc_filters.sub_types,
+    );
     // A tag filter drops channels (and CRM, below) because they aren't
     // tag-indexed. Every tag-indexed source — documents, chats, projects,
     // emails, call records, calendar events — stays included and applies the
     // filter itself.
-    let should_include_channels = search_filters.should_include_channels && !tags_active;
-    let should_include_chats = search_filters.should_include_chats;
-    let should_include_projects = search_filters.should_include_projects;
-    let should_include_emails = search_filters.should_include_emails;
-    let should_include_call_records = search_filters.should_include_call_records;
+    let should_include_channels = include_non_document_source(
+        search_filters.should_include_channels && !tags_active,
+        has_date_range_filter,
+    );
+    let should_include_chats =
+        include_non_document_source(search_filters.should_include_chats, has_date_range_filter);
+    let should_include_projects = include_non_document_source(
+        search_filters.should_include_projects,
+        has_date_range_filter,
+    );
+    let should_include_emails =
+        include_non_document_source(search_filters.should_include_emails, has_date_range_filter);
+    let should_include_call_records = include_non_document_source(
+        search_filters.should_include_call_records,
+        has_date_range_filter,
+    );
     let should_include_calendar_events = calendar_events_searchable(
-        search_filters.should_include_calendar_events,
+        include_non_document_source(
+            search_filters.should_include_calendar_events,
+            has_date_range_filter,
+        ),
         ctx.calendar_search_enabled,
     );
     let email_terms = search_terms.clone();
@@ -354,6 +414,9 @@ pub(in crate::api::search) async fn perform_unified_search(
     // flat and match terms against their name/title only.
     filter_document_response.terms = search_terms.clone();
     filter_document_response.property_filters = property_filter_args;
+    if let Some(sub_types) = forced_task_sub_types {
+        filter_document_response.sub_types = sub_types;
+    }
     filter_document_response.tag_option_ids = tag_option_ids.clone();
     filter_document_response.match_all_tags = match_all_tags;
     filter_channel_response.terms = search_terms.clone();

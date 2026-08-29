@@ -1,4 +1,5 @@
 use super::*;
+use axum::{body::to_bytes, response::IntoResponse};
 use chrono::{TimeZone, Utc};
 use models_opensearch::SearchEntityType;
 use opensearch_client::search::model::Highlight;
@@ -547,7 +548,7 @@ fn property_filter_args_translate_true_boolean_value() {
         ..Default::default()
     }];
 
-    let args = to_property_filter_args(&filters);
+    let args = to_property_filter_args(&filters).unwrap();
 
     assert_eq!(args.len(), 1);
     assert_eq!(args[0].definition_id, "is-completed");
@@ -562,7 +563,7 @@ fn property_filter_args_translate_false_boolean_value() {
         ..Default::default()
     }];
 
-    let args = to_property_filter_args(&filters);
+    let args = to_property_filter_args(&filters).unwrap();
 
     assert_eq!(args.len(), 1);
     assert_eq!(args[0].definition_id, "is-archived");
@@ -576,7 +577,7 @@ fn property_filter_args_skip_empty_filter_without_boolean_value() {
         ..Default::default()
     }];
 
-    assert!(to_property_filter_args(&filters).is_empty());
+    assert!(to_property_filter_args(&filters).unwrap().is_empty());
 }
 
 #[test]
@@ -589,7 +590,7 @@ fn property_filter_args_preserve_option_entity_boolean_value_order() {
         ..Default::default()
     }];
 
-    let args = to_property_filter_args(&filters);
+    let args = to_property_filter_args(&filters).unwrap();
 
     assert_eq!(
         args[0].values,
@@ -612,13 +613,117 @@ fn property_filter_args_preserve_multiple_filters_for_and_handoff() {
         },
     ];
 
-    let args = to_property_filter_args(&filters);
+    let args = to_property_filter_args(&filters).unwrap();
 
     assert_eq!(args.len(), 2);
     assert_eq!(args[0].definition_id, "first");
     assert_eq!(args[0].values, vec!["true"]);
     assert_eq!(args[1].definition_id, "second");
     assert_eq!(args[1].values, vec!["option-1"]);
+}
+
+#[test]
+fn property_filter_args_translate_date_range_and_exclude() {
+    let filters = vec![item_filters::PropertyFilter {
+        property_definition_id: "due-date".to_string(),
+        entity_type: Some("TASK".to_string()),
+        date_range: Some(item_filters::PropertyDateRangeFilter {
+            range: item_filters::ast::properties::PropertyDateRange {
+                gt: Some(
+                    chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+                        .unwrap()
+                        .with_timezone(&Utc),
+                ),
+                gte: Some(
+                    chrono::DateTime::parse_from_rfc3339("2026-01-02T00:00:00Z")
+                        .unwrap()
+                        .with_timezone(&Utc),
+                ),
+                lt: Some(
+                    chrono::DateTime::parse_from_rfc3339("2026-01-03T00:00:00Z")
+                        .unwrap()
+                        .with_timezone(&Utc),
+                ),
+                lte: Some(
+                    chrono::DateTime::parse_from_rfc3339("2026-01-04T00:00:00Z")
+                        .unwrap()
+                        .with_timezone(&Utc),
+                ),
+            },
+            exclude: true,
+        }),
+        ..Default::default()
+    }];
+    let args = to_property_filter_args(&filters).unwrap();
+    let date = args[0].date_range.as_ref().unwrap();
+    assert!(args[0].values.is_empty());
+    assert!(date.exclude);
+    assert_eq!(date.gt.unwrap().timestamp_millis(), 1767225600000);
+    assert_eq!(date.gte.unwrap().timestamp_millis(), 1767312000000);
+    assert_eq!(date.lt.unwrap().timestamp_millis(), 1767398400000);
+    assert_eq!(date.lte.unwrap().timestamp_millis(), 1767484800000);
+}
+
+#[test]
+fn property_filter_args_reject_invalid_date_ranges_with_safe_error() {
+    let filters = vec![item_filters::PropertyFilter {
+        property_definition_id: "due-date".to_string(),
+        entity_type: Some("DOCUMENT".to_string()),
+        date_range: Some(item_filters::PropertyDateRangeFilter::default()),
+        ..Default::default()
+    }];
+    assert!(matches!(
+        to_property_filter_args(&filters),
+        Err(SearchError::InvalidPropertyDateRange)
+    ));
+}
+
+#[test]
+fn date_range_document_routing_intersects_task_subtype_without_broadening() {
+    assert_eq!(
+        date_range_document_routing(true, true, &[]),
+        (true, Some(vec!["task".to_string()]))
+    );
+    assert_eq!(
+        date_range_document_routing(true, true, &["task".to_string(), "note".to_string()]),
+        (true, Some(vec!["task".to_string()]))
+    );
+    assert_eq!(
+        date_range_document_routing(true, true, &["note".to_string()]),
+        (false, None)
+    );
+    assert_eq!(
+        date_range_document_routing(true, false, &["task".to_string()]),
+        (false, None),
+        "an existing document exclusion remains excluded"
+    );
+}
+
+#[test]
+fn date_range_routing_disables_every_non_document_source() {
+    for source_enabled in [false, true] {
+        assert_eq!(
+            include_non_document_source(source_enabled, true),
+            false,
+            "Date filters must not run a non-document source"
+        );
+        assert_eq!(
+            include_non_document_source(source_enabled, false),
+            source_enabled,
+            "non-Date routing preserves the prior source decision"
+        );
+    }
+}
+
+#[tokio::test]
+async fn invalid_date_range_search_error_is_redacted_bad_request() {
+    let response = SearchError::InvalidPropertyDateRange.into_response();
+    assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    assert_eq!(
+        std::str::from_utf8(&body).unwrap(),
+        r#"{"message":"invalid property date range filter"}"#
+    );
 }
 
 /// The flag is the only thing keeping calendar events out of a deployed
