@@ -828,6 +828,47 @@ function invalidatePropertySaveCaches(
   invalidateSoupEntity(item.entityId);
 }
 
+/**
+ * Refreshes task projections whose values are derived from canonical task
+ * properties. These use collection-wide query prefixes because a property
+ * change can affect every mounted task set containing this task.
+ */
+function invalidateDerivedTaskPropertyProjections(
+  properties: BulkSaveEntityPropertiesParams['properties']
+): void {
+  let invalidatesSubtaskProgress = false;
+  let invalidatesDependencyRelations = false;
+
+  for (const item of properties) {
+    if (item.entityType !== 'TASK') continue;
+
+    switch (getPropertyDefinitionId(item.property)) {
+      case SYSTEM_PROPERTY_IDS.STATUS:
+        invalidatesSubtaskProgress = true;
+        invalidatesDependencyRelations = true;
+        break;
+      case SYSTEM_PROPERTY_IDS.PARENT_TASK:
+      case SYSTEM_PROPERTY_IDS.SUBTASKS:
+        invalidatesSubtaskProgress = true;
+        break;
+      case SYSTEM_PROPERTY_IDS.DEPENDS_ON:
+        invalidatesDependencyRelations = true;
+        break;
+    }
+  }
+
+  if (invalidatesSubtaskProgress) {
+    void queryClient.invalidateQueries({
+      queryKey: propertiesKeys.taskSubtaskProgress._def,
+    });
+  }
+  if (invalidatesDependencyRelations) {
+    void queryClient.invalidateQueries({
+      queryKey: propertiesKeys.taskDependencyRelations._def,
+    });
+  }
+}
+
 function handleCommittedPropertySave(
   item: BulkSaveEntityPropertiesParams['properties'][number],
   disposition: EntityPropertyMutationDisposition
@@ -920,6 +961,7 @@ function useRestBulkSaveEntityPropertiesMutation(
             for (const item of variables.properties) {
               invalidatePropertySaveCaches(item);
             }
+            invalidateDerivedTaskPropertyProjections(variables.properties);
           });
         },
       },
@@ -976,6 +1018,7 @@ export function useBulkSaveEntityPropertiesMutation(
             for (const item of variables.properties) {
               invalidatePropertySaveCaches(item);
             }
+            invalidateDerivedTaskPropertyProjections(variables.properties);
           });
           await callbacks?.onSettled?.(
             undefined,

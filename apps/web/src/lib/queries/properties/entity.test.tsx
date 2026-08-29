@@ -202,6 +202,40 @@ const milestoneVariables = (value: boolean) => ({
   ],
 });
 
+function taskSystemProperty(propertyDefinitionId: string): Property {
+  return {
+    ...property,
+    propertyDefinitionId,
+  } as Property;
+}
+
+function propertySaveVariables(
+  propertyDefinitionIds: string[],
+  entityType: 'TASK' | 'DOCUMENT' = 'TASK'
+) {
+  return {
+    properties: propertyDefinitionIds.map((propertyDefinitionId) => ({
+      entityId: 'task-1',
+      entityType,
+      property: taskSystemProperty(propertyDefinitionId),
+      apiValues: { valueType: 'STRING' as const, value: 'updated' },
+    })),
+  };
+}
+
+function derivedProjectionInvalidationKeys(): unknown[] {
+  return vi
+    .mocked(testQueryClient.invalidateQueries)
+    .mock.calls.flatMap(([args]) => (args ? [args.queryKey] : []))
+    .filter(
+      (queryKey) =>
+        JSON.stringify(queryKey) ===
+          JSON.stringify(propertiesKeys.taskSubtaskProgress._def) ||
+        JSON.stringify(queryKey) ===
+          JSON.stringify(propertiesKeys.taskDependencyRelations._def)
+    );
+}
+
 function renderWithQueryClient(factory: () => void): void {
   const container = document.createElement('div');
   document.body.appendChild(container);
@@ -761,20 +795,25 @@ describe('useBulkSaveEntityPropertiesMutation dispositions', () => {
     expect(toastFailureMock).not.toHaveBeenCalled();
   });
 
-  it('invalidates GraphQL permanent failures without snapshot rollback', async () => {
+  it('invalidates GraphQL Status permanent failures without snapshot rollback', async () => {
     graphqlEntityPropertyMutationMock.mockResolvedValue({
       kind: 'permanently-failed',
       error: new Error('invalid property'),
     });
 
-    await expect(mutation.mutateAsync(variables)).rejects.toThrow(
-      'invalid property'
-    );
+    await expect(
+      mutation.mutateAsync(propertySaveVariables([SYSTEM_PROPERTY_IDS.STATUS]))
+    ).rejects.toThrow('invalid property');
 
     expect(optimisticUpdateSoupEntityMock).not.toHaveBeenCalled();
     expect(rollbackMock).not.toHaveBeenCalled();
     expect(invalidateSoupEntityMock).toHaveBeenCalledWith('task-1');
     expect(testQueryClient.invalidateQueries).toHaveBeenCalled();
+    expect(derivedProjectionInvalidationKeys()).toEqual([
+      propertiesKeys.taskSubtaskProgress._def,
+      propertiesKeys.taskDependencyRelations._def,
+    ]);
+    expect(trackMock).not.toHaveBeenCalled();
     expect(toastFailureMock).toHaveBeenCalledOnce();
   });
 
@@ -808,6 +847,76 @@ describe('useBulkSaveEntityPropertiesMutation dispositions', () => {
     expect(invalidateSoupEntityMock).toHaveBeenCalledWith('task-1');
     expect(testQueryClient.invalidateQueries).toHaveBeenCalled();
     expect(toastFailureMock).not.toHaveBeenCalled();
+  });
+
+  it('refreshes both derived Task projections after a GraphQL Status save', async () => {
+    await mutation.mutateAsync(
+      propertySaveVariables([SYSTEM_PROPERTY_IDS.STATUS])
+    );
+
+    expect(derivedProjectionInvalidationKeys()).toEqual([
+      propertiesKeys.taskSubtaskProgress._def,
+      propertiesKeys.taskDependencyRelations._def,
+    ]);
+  });
+
+  it('refreshes subtask progress once for REST Parent Task and Subtasks saves', async () => {
+    graphqlSoupEnabledMock.mockReturnValue(false);
+
+    await mutation.mutateAsync(
+      propertySaveVariables([
+        SYSTEM_PROPERTY_IDS.PARENT_TASK,
+        SYSTEM_PROPERTY_IDS.SUBTASKS,
+      ])
+    );
+
+    expect(derivedProjectionInvalidationKeys()).toEqual([
+      propertiesKeys.taskSubtaskProgress._def,
+    ]);
+  });
+
+  it('refreshes dependency relations after a GraphQL Depends On save', async () => {
+    await mutation.mutateAsync(
+      propertySaveVariables([SYSTEM_PROPERTY_IDS.DEPENDS_ON])
+    );
+
+    expect(derivedProjectionInvalidationKeys()).toEqual([
+      propertiesKeys.taskDependencyRelations._def,
+    ]);
+  });
+
+  it('deduplicates derived projection invalidations across a bulk save', async () => {
+    await mutation.mutateAsync(
+      propertySaveVariables([
+        SYSTEM_PROPERTY_IDS.STATUS,
+        SYSTEM_PROPERTY_IDS.PARENT_TASK,
+        SYSTEM_PROPERTY_IDS.SUBTASKS,
+        SYSTEM_PROPERTY_IDS.DEPENDS_ON,
+      ])
+    );
+
+    expect(derivedProjectionInvalidationKeys()).toEqual([
+      propertiesKeys.taskSubtaskProgress._def,
+      propertiesKeys.taskDependencyRelations._def,
+    ]);
+  });
+
+  it('does not refresh derived projections for unrelated or non-Task writes', async () => {
+    await mutation.mutateAsync(
+      propertySaveVariables(
+        [
+          SYSTEM_PROPERTY_IDS.MILESTONE,
+          SYSTEM_PROPERTY_IDS.DUE_DATE,
+          SYSTEM_PROPERTY_IDS.PRIORITY,
+        ],
+        'TASK'
+      )
+    );
+    await mutation.mutateAsync(
+      propertySaveVariables([SYSTEM_PROPERTY_IDS.STATUS], 'DOCUMENT')
+    );
+
+    expect(derivedProjectionInvalidationKeys()).toEqual([]);
   });
 
   it('commits the required Task Milestone Boolean through the shared mutation', async () => {
@@ -1066,10 +1175,14 @@ describe('useBulkSaveEntityPropertiesMutation dispositions', () => {
     expect(rollbackMock).toHaveBeenCalledOnce();
     expect(invalidateSoupEntityMock).toHaveBeenCalledOnce();
     expect(invalidateSoupEntityMock).toHaveBeenCalledWith('task-1');
-    expect(testQueryClient.invalidateQueries).toHaveBeenCalledOnce();
+    expect(testQueryClient.invalidateQueries).toHaveBeenCalledTimes(3);
     expect(testQueryClient.invalidateQueries).toHaveBeenCalledWith({
       queryKey: savedTaskKey,
     });
+    expect(derivedProjectionInvalidationKeys()).toEqual([
+      propertiesKeys.taskSubtaskProgress._def,
+      propertiesKeys.taskDependencyRelations._def,
+    ]);
     expect(entityQuery.data?.[0]?.value).toEqual([
       PROPERTY_OPTION_IDS.STATUS.NOT_STARTED,
     ]);
