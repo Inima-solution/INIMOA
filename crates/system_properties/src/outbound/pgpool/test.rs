@@ -4,6 +4,7 @@ use models_properties::EntityType;
 
 use super::*;
 use crate::domain::model::{PropertyRow, SystemPropertyKey};
+use crate::domain::service::{SystemPropertiesService, SystemPropertiesServiceImpl};
 use macro_db_migrator::MACRO_DB_MIGRATIONS;
 use sqlx::{Pool, Postgres};
 
@@ -172,6 +173,75 @@ async fn test_bulk_insert_properties_if_absent_keeps_first_write(
 }
 
 // ============================================================================
+// attach_task_properties tests
+// ============================================================================
+
+#[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
+async fn test_attach_task_properties_creates_exactly_all_required_null_rows(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let service = SystemPropertiesServiceImpl::new(PgSystemPropertiesRepository::new(pool.clone()));
+    let task_id = "task-with-attached-system-properties";
+
+    service
+        .attach_task_properties(vec![task_id.to_owned()])
+        .await?;
+
+    assert_eq!(count_task_properties(&pool, task_id).await, 11);
+    assert_eq!(
+        get_task_property_values(&pool, task_id).await,
+        vec![
+            (
+                SystemPropertyKey::Assignees.uuid(),
+                Some(serde_json::Value::Null)
+            ),
+            (
+                SystemPropertyKey::Status.uuid(),
+                Some(serde_json::Value::Null)
+            ),
+            (
+                SystemPropertyKey::Priority.uuid(),
+                Some(serde_json::Value::Null)
+            ),
+            (
+                SystemPropertyKey::DueDate.uuid(),
+                Some(serde_json::Value::Null)
+            ),
+            (
+                SystemPropertyKey::ParentTask.uuid(),
+                Some(serde_json::Value::Null)
+            ),
+            (
+                SystemPropertyKey::Subtasks.uuid(),
+                Some(serde_json::Value::Null)
+            ),
+            (
+                SystemPropertyKey::DependsOn.uuid(),
+                Some(serde_json::Value::Null)
+            ),
+            (
+                SystemPropertyKey::Effort.uuid(),
+                Some(serde_json::Value::Null)
+            ),
+            (
+                SystemPropertyKey::StoryPoints.uuid(),
+                Some(serde_json::Value::Null)
+            ),
+            (
+                SystemPropertyKey::RelevantDocuments.uuid(),
+                Some(serde_json::Value::Null),
+            ),
+            (
+                SystemPropertyKey::Milestone.uuid(),
+                Some(serde_json::Value::Null)
+            ),
+        ]
+    );
+
+    Ok(())
+}
+
+// ============================================================================
 // copy_task_properties tests
 // ============================================================================
 
@@ -185,9 +255,9 @@ async fn test_copy_task_properties_empty_source(pool: Pool<Postgres>) -> anyhow:
     // Copy from empty source - should still create system properties with null values
     repo.copy_task_properties(from_task_id, to_task_id).await?;
 
-    // Should have 10 system properties with null values
+    // Should have 11 system properties with null values.
     let count = count_task_properties(&pool, to_task_id).await;
-    assert_eq!(count, 10, "Should have 10 system task properties");
+    assert_eq!(count, 11, "Should have 11 system task properties");
 
     // All values should be null
     let properties = get_task_property_values(&pool, to_task_id).await;
@@ -213,13 +283,13 @@ async fn test_copy_task_properties_with_existing_properties(
     // Copy properties (source has 2 system + 2 custom properties from fixture)
     repo.copy_task_properties(from_task_id, to_task_id).await?;
 
-    // Destination should have 12 properties:
+    // Destination should have 13 properties:
     // - 4 copied (Status, Priority, Custom Notes, Custom Tags)
-    // - 8 null system properties backfilled
+    // - 9 null system properties backfilled
     let count = count_task_properties(&pool, to_task_id).await;
     assert_eq!(
-        count, 12,
-        "Should have 12 properties (4 copied + 8 backfilled)"
+        count, 13,
+        "Should have 13 properties (4 copied + 9 backfilled)"
     );
 
     // Check that status was copied with correct SelectOption value
@@ -330,12 +400,58 @@ async fn test_copy_task_properties_idempotent(pool: Pool<Postgres>) -> anyhow::R
     repo.copy_task_properties(from_task_id, to_task_id).await?;
     repo.copy_task_properties(from_task_id, to_task_id).await?;
 
-    // Should still have exactly 10 properties
+    // Should still have exactly 11 properties.
     let count = count_task_properties(&pool, to_task_id).await;
     assert_eq!(
-        count, 10,
-        "Should have exactly 10 properties after idempotent copies"
+        count, 11,
+        "Should have exactly 11 properties after idempotent copies"
     );
+
+    Ok(())
+}
+
+#[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
+async fn test_copy_task_properties_preserves_milestone_boolean_values(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgSystemPropertiesRepository::new(pool.clone());
+    let milestone_id = SystemPropertyKey::Milestone.uuid();
+
+    for (source, destination, milestone) in [
+        (
+            "source-task-milestone-true",
+            "destination-task-milestone-true",
+            true,
+        ),
+        (
+            "source-task-milestone-false",
+            "destination-task-milestone-false",
+            false,
+        ),
+    ] {
+        sqlx::query(
+            "INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)",
+        )
+        .bind(Uuid::new_v4())
+        .bind(source)
+        .bind(milestone_id)
+        .bind(serde_json::json!({"type": "Boolean", "value": milestone}))
+        .execute(&pool)
+        .await?;
+
+        repo.copy_task_properties(source, destination).await?;
+
+        assert_eq!(count_task_properties(&pool, destination).await, 11);
+        assert_eq!(
+            get_task_property_values(&pool, destination)
+                .await
+                .into_iter()
+                .find(|(id, _)| *id == milestone_id)
+                .expect("Milestone property is attached to copied task")
+                .1,
+            Some(serde_json::json!({"type": "Boolean", "value": milestone}))
+        );
+    }
 
     Ok(())
 }
@@ -459,5 +575,7 @@ async fn test_copy_task_properties_does_not_copy_hierarchy_or_depends_on(
             .1,
         Some(status_value)
     );
+    assert_eq!(count_task_properties(&pool, absent_destination).await, 11);
+    assert_eq!(count_task_properties(&pool, existing_destination).await, 11);
     Ok(())
 }

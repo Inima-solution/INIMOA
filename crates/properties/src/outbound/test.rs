@@ -373,6 +373,13 @@ async fn task_system_properties_round_trip_through_specialized_writers(
             }),
         )
         .await?;
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::MILESTONE_UUID,
+            Some(SetPropertyValue::Boolean { value: true }),
+        )
+        .await?;
 
     let initial = super::entity_properties_get_query::get_entity_properties_values(
         &pool,
@@ -414,6 +421,11 @@ async fn task_system_properties_round_trip_through_specialized_writers(
                 SystemPropertyKey::EFFORT_UUID,
                 DataType::SelectString,
                 Some(PropertyValue::SelectOption(vec![EffortOption::LARGE_UUID])),
+            ),
+            (
+                SystemPropertyKey::MILESTONE_UUID,
+                DataType::Boolean,
+                Some(PropertyValue::Bool(true)),
             ),
             (
                 SystemPropertyKey::PARENT_TASK_UUID,
@@ -461,6 +473,7 @@ async fn task_system_properties_round_trip_through_specialized_writers(
         SystemPropertyKey::DEPENDS_ON_UUID,
         SystemPropertyKey::SUBTASKS_UUID,
         SystemPropertyKey::PARENT_TASK_UUID,
+        SystemPropertyKey::MILESTONE_UUID,
     ] {
         service
             .set_entity_property(&receipt, property_definition_id, None)
@@ -527,6 +540,13 @@ async fn task_system_properties_round_trip_through_specialized_writers(
             }),
         )
         .await?;
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::MILESTONE_UUID,
+            Some(SetPropertyValue::Boolean { value: false }),
+        )
+        .await?;
 
     let rewritten = super::entity_properties_get_query::get_entity_properties_values(
         &pool,
@@ -534,48 +554,9 @@ async fn task_system_properties_round_trip_through_specialized_writers(
         EntityType::Task,
     )
     .await?;
-    assert_eq!(rewritten.len(), 10);
-    for property_definition_id in [
-        SystemPropertyKey::ASSIGNEES_UUID,
-        SystemPropertyKey::PRIORITY_UUID,
-        SystemPropertyKey::DUE_DATE_UUID,
-        SystemPropertyKey::EFFORT_UUID,
-        SystemPropertyKey::STORY_POINTS_UUID,
-        SystemPropertyKey::RELEVANT_DOCUMENTS_UUID,
-    ] {
-        let initial_property = initial
-            .iter()
-            .find(|property| property.definition.id == property_definition_id)
-            .expect("initial canonical property exists");
-        let rewritten_property = rewritten
-            .iter()
-            .find(|property| property.definition.id == property_definition_id)
-            .expect("rewritten canonical property exists");
-        assert_eq!(
-            (
-                rewritten_property.definition.id,
-                rewritten_property.definition.data_type,
-                rewritten_property.value.clone(),
-            ),
-            (
-                initial_property.definition.id,
-                initial_property.definition.data_type,
-                initial_property.value.clone(),
-            ),
-        );
-    }
     assert_eq!(
         rewritten
             .iter()
-            .filter(|property| {
-                matches!(
-                    property.definition.id,
-                    SystemPropertyKey::STATUS_UUID
-                        | SystemPropertyKey::DEPENDS_ON_UUID
-                        | SystemPropertyKey::SUBTASKS_UUID
-                        | SystemPropertyKey::PARENT_TASK_UUID
-                )
-            })
             .map(|property| {
                 (
                     property.definition.id,
@@ -586,6 +567,11 @@ async fn task_system_properties_round_trip_through_specialized_writers(
             .collect::<Vec<_>>(),
         vec![
             (
+                SystemPropertyKey::ASSIGNEES_UUID,
+                DataType::Entity,
+                Some(PropertyValue::EntityRef(vec![assignee])),
+            ),
+            (
                 SystemPropertyKey::DEPENDS_ON_UUID,
                 DataType::Entity,
                 Some(PropertyValue::EntityRef(vec![
@@ -594,9 +580,37 @@ async fn task_system_properties_round_trip_through_specialized_writers(
                 ]))
             ),
             (
+                SystemPropertyKey::DUE_DATE_UUID,
+                DataType::Date,
+                Some(PropertyValue::Date(due_date))
+            ),
+            (
+                SystemPropertyKey::EFFORT_UUID,
+                DataType::SelectString,
+                Some(PropertyValue::SelectOption(vec![EffortOption::LARGE_UUID]))
+            ),
+            (
+                SystemPropertyKey::MILESTONE_UUID,
+                DataType::Boolean,
+                Some(PropertyValue::Bool(false))
+            ),
+            (
                 SystemPropertyKey::PARENT_TASK_UUID,
                 DataType::Entity,
                 Some(PropertyValue::EntityRef(vec![task_reference(parent)]))
+            ),
+            (
+                SystemPropertyKey::PRIORITY_UUID,
+                DataType::SelectString,
+                Some(PropertyValue::SelectOption(vec![PriorityOption::HIGH_UUID]))
+            ),
+            (
+                SystemPropertyKey::RELEVANT_DOCUMENTS_UUID,
+                DataType::Entity,
+                Some(PropertyValue::EntityRef(vec![
+                    document_reference(relevant_document_one),
+                    document_reference(relevant_document_two),
+                ]))
             ),
             (
                 SystemPropertyKey::STATUS_UUID,
@@ -604,6 +618,11 @@ async fn task_system_properties_round_trip_through_specialized_writers(
                 Some(PropertyValue::SelectOption(vec![
                     StatusOption::IN_REVIEW_UUID
                 ]))
+            ),
+            (
+                SystemPropertyKey::STORY_POINTS_UUID,
+                DataType::Number,
+                Some(PropertyValue::Num(8.0))
             ),
             (
                 SystemPropertyKey::SUBTASKS_UUID,

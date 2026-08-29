@@ -88,6 +88,7 @@ define_system_properties! {
     Effort,            EFFORT_UUID,             0x08, "Effort";
     StoryPoints,       STORY_POINTS_UUID,       0x09, "Story Points";
     RelevantDocuments, RELEVANT_DOCUMENTS_UUID, 0x0a, "Relevant Documents";
+    Milestone,         MILESTONE_UUID,          0x13, "Milestone";
 
     // Emails Attachments
     Source,            SOURCE_UUID,             0x0b, "Source";
@@ -120,6 +121,7 @@ impl SystemPropertyKey {
                 Self::EFFORT_UUID,
                 Self::STORY_POINTS_UUID,
                 Self::RELEVANT_DOCUMENTS_UUID,
+                Self::MILESTONE_UUID,
             ],
             EntityType::Company => &[
                 Self::STAGE_UUID,
@@ -171,7 +173,7 @@ mod tests {
     #[test]
     fn test_all_system_property_keys_returns_all_uuids() {
         let all_keys = SystemPropertyKey::all_system_property_keys();
-        assert_eq!(all_keys.len(), 18);
+        assert_eq!(all_keys.len(), 19);
         assert!(all_keys.contains(&SystemPropertyKey::ASSIGNEES_UUID));
         assert!(all_keys.contains(&SystemPropertyKey::STATUS_UUID));
         assert!(all_keys.contains(&SystemPropertyKey::PRIORITY_UUID));
@@ -182,6 +184,7 @@ mod tests {
         assert!(all_keys.contains(&SystemPropertyKey::EFFORT_UUID));
         assert!(all_keys.contains(&SystemPropertyKey::STORY_POINTS_UUID));
         assert!(all_keys.contains(&SystemPropertyKey::RELEVANT_DOCUMENTS_UUID));
+        assert!(all_keys.contains(&SystemPropertyKey::MILESTONE_UUID));
         assert!(all_keys.contains(&SystemPropertyKey::SOURCE_UUID));
         assert!(all_keys.contains(&SystemPropertyKey::COMPANIES_UUID));
         assert!(all_keys.contains(&SystemPropertyKey::SENDER_UUID));
@@ -204,7 +207,7 @@ mod tests {
     #[test]
     fn test_required_property_ids_for_task() {
         let required = SystemPropertyKey::required_property_ids_for_entity(EntityType::Task);
-        assert_eq!(required.len(), 10);
+        assert_eq!(required.len(), 11);
         assert!(required.contains(&SystemPropertyKey::ASSIGNEES_UUID));
         assert!(required.contains(&SystemPropertyKey::STATUS_UUID));
         assert!(required.contains(&SystemPropertyKey::PRIORITY_UUID));
@@ -215,6 +218,7 @@ mod tests {
         assert!(required.contains(&SystemPropertyKey::EFFORT_UUID));
         assert!(required.contains(&SystemPropertyKey::STORY_POINTS_UUID));
         assert!(required.contains(&SystemPropertyKey::RELEVANT_DOCUMENTS_UUID));
+        assert!(required.contains(&SystemPropertyKey::MILESTONE_UUID));
     }
 
     #[test]
@@ -278,6 +282,7 @@ mod tests {
             SystemPropertyKey::Effort,
             SystemPropertyKey::StoryPoints,
             SystemPropertyKey::RelevantDocuments,
+            SystemPropertyKey::Milestone,
             SystemPropertyKey::Source,
             SystemPropertyKey::Companies,
             SystemPropertyKey::Sender,
