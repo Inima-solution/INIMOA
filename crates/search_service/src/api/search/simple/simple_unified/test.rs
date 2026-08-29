@@ -539,6 +539,88 @@ fn enforce_term_limits_truncates_on_char_boundary() {
     assert_eq!(out[0].chars().count(), MAX_TERM_CHARS);
 }
 
+#[test]
+fn property_filter_args_translate_true_boolean_value() {
+    let filters = vec![item_filters::PropertyFilter {
+        property_definition_id: "is-completed".to_string(),
+        boolean_value: Some(true),
+        ..Default::default()
+    }];
+
+    let args = to_property_filter_args(&filters);
+
+    assert_eq!(args.len(), 1);
+    assert_eq!(args[0].definition_id, "is-completed");
+    assert_eq!(args[0].values, vec!["true"]);
+}
+
+#[test]
+fn property_filter_args_translate_false_boolean_value() {
+    let filters = vec![item_filters::PropertyFilter {
+        property_definition_id: "is-archived".to_string(),
+        boolean_value: Some(false),
+        ..Default::default()
+    }];
+
+    let args = to_property_filter_args(&filters);
+
+    assert_eq!(args.len(), 1);
+    assert_eq!(args[0].definition_id, "is-archived");
+    assert_eq!(args[0].values, vec!["false"]);
+}
+
+#[test]
+fn property_filter_args_skip_empty_filter_without_boolean_value() {
+    let filters = vec![item_filters::PropertyFilter {
+        property_definition_id: "empty".to_string(),
+        ..Default::default()
+    }];
+
+    assert!(to_property_filter_args(&filters).is_empty());
+}
+
+#[test]
+fn property_filter_args_preserve_option_entity_boolean_value_order() {
+    let filters = vec![item_filters::PropertyFilter {
+        property_definition_id: "mixed".to_string(),
+        option_ids: vec!["option-1".to_string(), "option-2".to_string()],
+        entity_ids: vec!["entity-1".to_string(), "entity-2".to_string()],
+        boolean_value: Some(false),
+        ..Default::default()
+    }];
+
+    let args = to_property_filter_args(&filters);
+
+    assert_eq!(
+        args[0].values,
+        vec!["option-1", "option-2", "entity-1", "entity-2", "false"]
+    );
+}
+
+#[test]
+fn property_filter_args_preserve_multiple_filters_for_and_handoff() {
+    let filters = vec![
+        item_filters::PropertyFilter {
+            property_definition_id: "first".to_string(),
+            boolean_value: Some(true),
+            ..Default::default()
+        },
+        item_filters::PropertyFilter {
+            property_definition_id: "second".to_string(),
+            option_ids: vec!["option-1".to_string()],
+            ..Default::default()
+        },
+    ];
+
+    let args = to_property_filter_args(&filters);
+
+    assert_eq!(args.len(), 2);
+    assert_eq!(args[0].definition_id, "first");
+    assert_eq!(args[0].values, vec!["true"]);
+    assert_eq!(args[1].definition_id, "second");
+    assert_eq!(args[1].values, vec!["option-1"]);
+}
+
 /// The flag is the only thing keeping calendar events out of a deployed
 /// environment's search results, so the override direction matters: a request
 /// that asks for them must still get nothing while the flag is off.

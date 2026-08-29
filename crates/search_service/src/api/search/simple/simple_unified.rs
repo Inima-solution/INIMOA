@@ -162,18 +162,22 @@ fn enforce_term_limits(terms: Vec<String>) -> Result<Vec<String>, SearchError> {
 ///
 /// `entity_type` is dropped: the indexed `properties` field carries only
 /// `definition_id` + `values`, and definition ids are globally unique, so the
-/// entity type adds nothing to the query. Select-option UUIDs and entity-ref
-/// ids both match against `values`. Filters with no values are skipped.
+/// entity type adds nothing to the query. Select-option UUIDs, entity-ref ids,
+/// and boolean values all match against `values`. Filters with no values are
+/// skipped.
 fn to_property_filter_args(filters: &[item_filters::PropertyFilter]) -> Vec<PropertyFilterArg> {
     filters
         .iter()
         .filter_map(|f| {
-            let values: Vec<String> = f
+            let mut values: Vec<String> = f
                 .option_ids
                 .iter()
                 .chain(f.entity_ids.iter())
                 .cloned()
                 .collect();
+            if let Some(boolean_value) = f.boolean_value {
+                values.push(boolean_value.to_string());
+            }
             if values.is_empty() {
                 return None;
             }
