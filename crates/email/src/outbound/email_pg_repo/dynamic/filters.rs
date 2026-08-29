@@ -928,7 +928,9 @@ fn build_thread_property_predicate(lit: &PropertiesLiteral) -> SqlFragment {
             f.extend(SqlFragment::bind_string(entity_id.to_string()));
             f.push_raw("::text))");
         }
-        PropertyMatchValue::Boolean(_) => return SqlFragment::raw("FALSE"),
+        PropertyMatchValue::Boolean(_) | PropertyMatchValue::DateRange(_) => {
+            return SqlFragment::raw("FALSE");
+        }
     }
     f.push_raw(
         r#"

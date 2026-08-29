@@ -13,7 +13,7 @@ use item_filters::ast::{
     date::DateLiteral,
     document::DocumentLiteral,
     project::ProjectLiteral,
-    properties::{PropertiesLiteral, PropertyEntityType, PropertyMatchValue},
+    properties::{PropertiesLiteral, PropertyDateRange, PropertyEntityType, PropertyMatchValue},
 };
 use macro_user_id::{cowlike::CowLike, user_id::MacroUserIdStr};
 use models_pagination::{Query, SimpleSortMethod};
@@ -740,6 +740,29 @@ fn date_predicate(col: &str, lit: &DateLiteral) -> String {
     }
 }
 
+/// PostgreSQL 14-safe Date JSON predicate. JSONPath's `silent` mode turns
+/// malformed or non-string values into a non-match instead of aborting Soup's
+/// query. An unbounded range still requires a value that can be parsed as a
+/// datetime, rather than merely a `{ "type": "Date" }` shape.
+fn property_date_range_predicate(range: &PropertyDateRange) -> String {
+    let mut predicate =
+        String::from("@.type == \"Date\" && @.value.datetime() == @.value.datetime()");
+    for (operator, bound) in [
+        (">", range.gt.as_ref()),
+        (">=", range.gte.as_ref()),
+        ("<", range.lt.as_ref()),
+        ("<=", range.lte.as_ref()),
+    ] {
+        if let Some(bound) = bound {
+            predicate.push_str(&format!(
+                " && @.value.datetime() {operator} \"{}\".datetime()",
+                bound.to_rfc3339()
+            ));
+        }
+    }
+    format!("jsonb_path_exists(ep_prop.values, '$ ? ({predicate})', '{{}}'::jsonb, true)")
+}
+
 pub(in crate::outbound::pg_soup_repo) fn build_document_filter(
     ast: Option<&Expr<DocumentLiteral>>,
 ) -> String {
@@ -1013,6 +1036,19 @@ pub(in crate::outbound::pg_soup_repo) fn build_properties_filter(
                 }
                 PropertyMatchValue::Boolean(value) => {
                     format!("ep_prop.values @> '{{\"type\":\"Boolean\",\"value\":{value}}}'::jsonb")
+                }
+                PropertyMatchValue::DateRange(range) => {
+                    // DateRange is the canonical Task-only value. Do not let
+                    // a malformed/cross-typed property row turn a non-task
+                    // document into a task match.
+                    if entity_type != Some(PropertyEntityType::Task) {
+                        "FALSE".to_string()
+                    } else {
+                        format!(
+                            "{} AND EXISTS (SELECT 1 FROM document_sub_type due_task WHERE due_task.document_id = {entity_id_sql} AND due_task.sub_type = 'task')",
+                            property_date_range_predicate(&range)
+                        )
+                    }
                 }
             };
             let entity_type_clause = match entity_type {

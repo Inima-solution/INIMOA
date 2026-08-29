@@ -2875,7 +2875,7 @@ async fn test_viewed_updated_sort_falls_back_to_view_timestamp(
     )
 )]
 async fn test_dynamic_query_thread_property_filter(pool: Pool<Postgres>) -> anyhow::Result<()> {
-    use item_filters::ast::properties::{PropertiesLiteral, PropertyMatchValue};
+    use item_filters::ast::properties::{PropertiesLiteral, PropertyDateRange, PropertyMatchValue};
 
     let link_id = Uuid::parse_str("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")?;
     let view = PreviewView::StandardLabel(PreviewViewStandardLabel::Inbox);
@@ -2921,6 +2921,16 @@ async fn test_dynamic_query_thread_property_filter(pool: Pool<Postgres>) -> anyh
         results.is_empty(),
         "Boolean properties never match email threads"
     );
+
+    let date_range = Arc::new(Expr::Literal(EmailLiteral::Property(PropertiesLiteral {
+        property_definition_id: definition_id,
+        entity_type: None,
+        value: PropertyMatchValue::DateRange(PropertyDateRange::default()),
+    })));
+    let query = Query::new(None, SimpleSortMethod::UpdatedAt, date_range);
+    let results =
+        dynamic::dynamic_email_thread_cursor(&pool, &[link_id], 50, &view, query, "", None).await?;
+    assert!(results.is_empty(), "Date ranges never match email threads");
 
     Ok(())
 }

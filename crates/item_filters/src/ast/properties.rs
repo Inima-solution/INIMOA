@@ -1,6 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -121,6 +122,23 @@ impl<'de> Deserialize<'de> for EntityRefId {
     }
 }
 
+/// A compact UTC range for matching Date property values.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+pub struct PropertyDateRange {
+    /// Match values strictly after this UTC timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gt: Option<DateTime<Utc>>,
+    /// Match values at or after this UTC timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gte: Option<DateTime<Utc>>,
+    /// Match values strictly before this UTC timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lt: Option<DateTime<Utc>>,
+    /// Match values at or before this UTC timestamp.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lte: Option<DateTime<Utc>>,
+}
+
 /// Describes how to match against a property value in the entity_properties table.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum PropertyMatchValue {
@@ -133,6 +151,9 @@ pub enum PropertyMatchValue {
     /// Match a boolean property value.
     #[serde(rename = "b")]
     Boolean(bool),
+    /// Match a valid Date property value within the supplied UTC bounds.
+    #[serde(rename = "dr")]
+    DateRange(PropertyDateRange),
 }
 
 /// A single property-based filter condition for the AST.

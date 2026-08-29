@@ -23,6 +23,7 @@ use models_soup::item::SoupItem;
 use sqlx::{PgPool, Pool, Postgres};
 use std::collections::HashSet;
 use std::sync::Arc;
+use system_properties::SystemPropertyKey;
 use uuid::Uuid;
 
 macro_rules! unwrap_enum {
@@ -5200,7 +5201,13 @@ async fn test_property_filter_scoped_entity_type(db: Pool<Postgres>) -> anyhow::
         scripts("soup_items_with_properties")
     )
 )]
-async fn test_property_filter_by_task_milestone_boolean(db: Pool<Postgres>) -> anyhow::Result<()> {
+async fn test_property_filter_by_task_milestone_boolean_and_due_date_range(
+    db: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    use chrono::{DateTime, Utc};
+    use item_filters::ast::properties::{
+        PropertiesLiteral, PropertyDateRange, PropertyEntityType, PropertyMatchValue,
+    };
     let milestone_id = Uuid::parse_str("00000001-0000-0000-0000-000000000013")?;
     let true_task_id = Uuid::parse_str("11111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa")?;
     let false_task_id = Uuid::parse_str("11111111-bbbb-bbbb-bbbb-bbbbbbbbbbbb")?;
@@ -5209,6 +5216,9 @@ async fn test_property_filter_by_task_milestone_boolean(db: Pool<Postgres>) -> a
     let missing_value_task_id = Uuid::new_v4();
     let inaccessible_true_task_id = Uuid::new_v4();
     let corrupt_non_task_id = Uuid::new_v4();
+    let malformed_date_task_id = Uuid::new_v4();
+    let deleted_date_task_id = Uuid::new_v4();
+    let non_date_value_task_id = Uuid::new_v4();
 
     sqlx::query(
         r#"
@@ -5235,7 +5245,10 @@ async fn test_property_filter_by_task_milestone_boolean(db: Pool<Postgres>) -> a
             ($2, 'Null milestone task', 'macro|user-1@test.com', 'txt', NOW(), NOW()),
             ($3, 'Missing milestone task', 'macro|user-1@test.com', 'txt', NOW(), NOW()),
             ($4, 'Inaccessible milestone task', 'macro|user-2@test.com', 'txt', NOW(), NOW()),
-            ($5, 'Corrupt non-task milestone document', 'macro|user-1@test.com', 'txt', NOW(), NOW())
+            ($5, 'Corrupt non-task milestone document', 'macro|user-1@test.com', 'txt', NOW(), NOW()),
+            ($6, 'Malformed due-date task', 'macro|user-1@test.com', 'txt', NOW(), NOW()),
+            ($7, 'Deleted due-date task', 'macro|user-1@test.com', 'txt', NOW(), NOW()),
+            ($8, 'Non-date due-value task', 'macro|user-1@test.com', 'txt', NOW(), NOW())
         "#,
     )
     .bind(personal_true_task_id)
@@ -5243,6 +5256,9 @@ async fn test_property_filter_by_task_milestone_boolean(db: Pool<Postgres>) -> a
     .bind(missing_value_task_id)
     .bind(inaccessible_true_task_id)
     .bind(corrupt_non_task_id)
+    .bind(malformed_date_task_id)
+    .bind(deleted_date_task_id)
+    .bind(non_date_value_task_id)
     .execute(&db)
     .await?;
 
@@ -5254,7 +5270,10 @@ async fn test_property_filter_by_task_milestone_boolean(db: Pool<Postgres>) -> a
             (90002, $2, 'milestone-null-value', NOW(), NOW()),
             (90003, $3, 'milestone-missing-value', NOW(), NOW()),
             (90004, $4, 'milestone-inaccessible-true', NOW(), NOW()),
-            (90005, $5, 'milestone-corrupt-non-task', NOW(), NOW())
+            (90005, $5, 'milestone-corrupt-non-task', NOW(), NOW()),
+            (90006, $6, 'malformed-due-date', NOW(), NOW()),
+            (90007, $7, 'deleted-due-date', NOW(), NOW()),
+            (90008, $8, 'non-date-due-value', NOW(), NOW())
         "#,
     )
     .bind(personal_true_task_id)
@@ -5262,6 +5281,9 @@ async fn test_property_filter_by_task_milestone_boolean(db: Pool<Postgres>) -> a
     .bind(missing_value_task_id)
     .bind(inaccessible_true_task_id)
     .bind(corrupt_non_task_id)
+    .bind(malformed_date_task_id)
+    .bind(deleted_date_task_id)
+    .bind(non_date_value_task_id)
     .execute(&db)
     .await?;
 
@@ -5270,7 +5292,8 @@ async fn test_property_filter_by_task_milestone_boolean(db: Pool<Postgres>) -> a
         INSERT INTO document_sub_type (document_id, sub_type)
         VALUES
             ($1, 'task'), ($2, 'task'), ($3, 'task'),
-            ($4, 'task'), ($5, 'task'), ($6, 'task')
+            ($4, 'task'), ($5, 'task'), ($6, 'task'), ($7, 'task'), ($8, 'task'),
+            ($9, 'task')
         "#,
     )
     .bind(true_task_id)
@@ -5279,6 +5302,9 @@ async fn test_property_filter_by_task_milestone_boolean(db: Pool<Postgres>) -> a
     .bind(null_value_task_id)
     .bind(missing_value_task_id)
     .bind(inaccessible_true_task_id)
+    .bind(malformed_date_task_id)
+    .bind(deleted_date_task_id)
+    .bind(non_date_value_task_id)
     .execute(&db)
     .await?;
 
@@ -5288,13 +5314,19 @@ async fn test_property_filter_by_task_milestone_boolean(db: Pool<Postgres>) -> a
         VALUES ($1, 'document', 'macro|user-1@test.com', 'user', 'view'),
                ($2, 'document', 'macro|user-1@test.com', 'user', 'view'),
                ($3, 'document', 'macro|user-1@test.com', 'user', 'view'),
-               ($4, 'document', 'macro|user-1@test.com', 'user', 'view')
+               ($4, 'document', 'macro|user-1@test.com', 'user', 'view'),
+               ($5, 'document', 'macro|user-1@test.com', 'user', 'view'),
+               ($6, 'document', 'macro|user-1@test.com', 'user', 'view'),
+               ($7, 'document', 'macro|user-1@test.com', 'user', 'view')
         "#,
     )
     .bind(personal_true_task_id)
     .bind(null_value_task_id)
     .bind(missing_value_task_id)
     .bind(corrupt_non_task_id)
+    .bind(malformed_date_task_id)
+    .bind(deleted_date_task_id)
+    .bind(non_date_value_task_id)
     .execute(&db)
     .await?;
 
@@ -5393,6 +5425,251 @@ async fn test_property_filter_by_task_milestone_boolean(db: Pool<Postgres>) -> a
         bounded.len(),
         1,
         "Boolean filtering must preserve the result limit"
+    );
+
+    // Date ranges use the Task-only AST directly: public PropertyFilter has
+    // deliberately not grown a request field yet. Cover a project task, a
+    // personal task, all invalid storage shapes, and inaccessible/non-task
+    // rows in the same scoped fixture.
+    let due_date_id = SystemPropertyKey::DUE_DATE_UUID;
+    sqlx::query(
+        r#"
+        INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values)
+        VALUES
+            (gen_random_uuid(), $1, 'TASK', $7, '{"type":"Date","value":"2026-01-10T00:00:00Z"}'::jsonb),
+            (gen_random_uuid(), $2, 'TASK', $7, '{"type":"Date","value":"2026-01-20T00:00:00Z"}'::jsonb),
+            (gen_random_uuid(), $3, 'TASK', $7, '{"type":"Date","value":"2026-01-15T00:00:00Z"}'::jsonb),
+            (gen_random_uuid(), $4, 'TASK', $7, NULL),
+            (gen_random_uuid(), $5, 'TASK', $7, '{"type":"Date","value":"2026-01-15T00:00:00Z"}'::jsonb),
+            (gen_random_uuid(), $6, 'TASK', $7, '{"type":"Date","value":"2026-01-15T00:00:00Z"}'::jsonb),
+            (gen_random_uuid(), $8, 'TASK', $7, '{"type":"Date","value":"not-a-date"}'::jsonb),
+            (gen_random_uuid(), $9, 'TASK', $7, '{"type":"Date","value":"2026-01-12T00:00:00Z"}'::jsonb),
+            (gen_random_uuid(), $10, 'TASK', $7, '{"type":"Boolean","value":true}'::jsonb)
+        "#,
+    )
+    .bind(true_task_id.to_string())
+    .bind(false_task_id.to_string())
+    .bind(personal_true_task_id.to_string())
+    .bind(null_value_task_id.to_string())
+    .bind(inaccessible_true_task_id.to_string())
+    .bind(corrupt_non_task_id.to_string())
+    .bind(due_date_id)
+    .bind(malformed_date_task_id.to_string())
+    .bind(deleted_date_task_id.to_string())
+    .bind(non_date_value_task_id.to_string())
+    .execute(&db)
+    .await?;
+    sqlx::query(r#"UPDATE "Document" SET "deletedAt" = NOW() WHERE id = $1"#)
+        .bind(deleted_date_task_id.to_string())
+        .execute(&db)
+        .await?;
+
+    let utc = |value| {
+        DateTime::parse_from_rfc3339(value)
+            .unwrap()
+            .with_timezone(&Utc)
+    };
+    let due_literal = |range| {
+        Expr::Literal(PropertiesLiteral {
+            property_definition_id: due_date_id,
+            entity_type: Some(PropertyEntityType::Task),
+            value: PropertyMatchValue::DateRange(range),
+        })
+    };
+    let due_filter = |expr| EntityFilterAst {
+        document_filter: Some(Arc::new(Expr::Literal(DocumentLiteral::SubType(
+            document_sub_type::DocumentSubType::Task,
+        )))),
+        properties_filter: Some(Arc::new(expr)),
+        ..Default::default()
+    };
+    let doc_ids = |items: Vec<SoupItem>| {
+        items
+            .into_iter()
+            .filter_map(|item| match item {
+                SoupItem::Document(document) => Some(document.id),
+                _ => None,
+            })
+            .collect::<HashSet<_>>()
+    };
+
+    let half_open_ids = doc_ids(
+        dyn_fetch(
+            &db,
+            "macro|user-1@test.com",
+            100,
+            SimpleSortMethod::UpdatedAt,
+            due_filter(due_literal(PropertyDateRange {
+                gte: Some(utc("2026-01-10T00:00:00Z")),
+                lt: Some(utc("2026-01-20T00:00:00Z")),
+                ..Default::default()
+            })),
+            false,
+        )
+        .await?,
+    );
+    assert_eq!(
+        half_open_ids,
+        HashSet::from([true_task_id, personal_true_task_id])
+    );
+
+    let strict_gt_ids = doc_ids(
+        dyn_fetch(
+            &db,
+            "macro|user-1@test.com",
+            100,
+            SimpleSortMethod::UpdatedAt,
+            due_filter(due_literal(PropertyDateRange {
+                gt: Some(utc("2026-01-10T00:00:00Z")),
+                lt: Some(utc("2026-01-20T00:00:00Z")),
+                ..Default::default()
+            })),
+            false,
+        )
+        .await?,
+    );
+    assert_eq!(strict_gt_ids, HashSet::from([personal_true_task_id]));
+
+    let exact_lower_ids = doc_ids(
+        dyn_fetch(
+            &db,
+            "macro|user-1@test.com",
+            100,
+            SimpleSortMethod::UpdatedAt,
+            due_filter(due_literal(PropertyDateRange {
+                gte: Some(utc("2026-01-10T00:00:00Z")),
+                lte: Some(utc("2026-01-10T00:00:00Z")),
+                ..Default::default()
+            })),
+            false,
+        )
+        .await?,
+    );
+    assert_eq!(exact_lower_ids, HashSet::from([true_task_id]));
+
+    let exact_upper_ids = doc_ids(
+        dyn_fetch(
+            &db,
+            "macro|user-1@test.com",
+            100,
+            SimpleSortMethod::UpdatedAt,
+            due_filter(due_literal(PropertyDateRange {
+                gte: Some(utc("2026-01-20T00:00:00Z")),
+                lte: Some(utc("2026-01-20T00:00:00Z")),
+                ..Default::default()
+            })),
+            false,
+        )
+        .await?,
+    );
+    assert_eq!(exact_upper_ids, HashSet::from([false_task_id]));
+
+    let disjoint_exact_ids = doc_ids(
+        dyn_fetch(
+            &db,
+            "macro|user-1@test.com",
+            100,
+            SimpleSortMethod::UpdatedAt,
+            due_filter(Expr::or(
+                due_literal(PropertyDateRange {
+                    gte: Some(utc("2026-01-10T00:00:00Z")),
+                    lte: Some(utc("2026-01-10T00:00:00Z")),
+                    ..Default::default()
+                }),
+                due_literal(PropertyDateRange {
+                    gte: Some(utc("2026-01-20T00:00:00Z")),
+                    lte: Some(utc("2026-01-20T00:00:00Z")),
+                    ..Default::default()
+                }),
+            )),
+            false,
+        )
+        .await?,
+    );
+    assert_eq!(
+        disjoint_exact_ids,
+        HashSet::from([true_task_id, false_task_id])
+    );
+
+    let any_valid_date_ids = doc_ids(
+        dyn_fetch(
+            &db,
+            "macro|user-1@test.com",
+            100,
+            SimpleSortMethod::UpdatedAt,
+            due_filter(due_literal(PropertyDateRange::default())),
+            false,
+        )
+        .await?,
+    );
+    assert_eq!(
+        any_valid_date_ids,
+        HashSet::from([true_task_id, false_task_id, personal_true_task_id]),
+        "empty range requires a valid stored Date and excludes null, missing, non-Date, malformed, deleted, inaccessible, and non-task rows"
+    );
+
+    let excluded_half_open_ids = doc_ids(
+        dyn_fetch(
+            &db,
+            "macro|user-1@test.com",
+            100,
+            SimpleSortMethod::UpdatedAt,
+            due_filter(Expr::Not(Box::new(due_literal(PropertyDateRange {
+                gte: Some(utc("2026-01-10T00:00:00Z")),
+                lt: Some(utc("2026-01-20T00:00:00Z")),
+                ..Default::default()
+            })))),
+            false,
+        )
+        .await?,
+    );
+    assert_eq!(
+        excluded_half_open_ids,
+        HashSet::from([
+            false_task_id,
+            null_value_task_id,
+            missing_value_task_id,
+            malformed_date_task_id,
+            non_date_value_task_id,
+        ])
+    );
+
+    let date_and_milestone = Expr::and(
+        due_literal(PropertyDateRange::default()),
+        Expr::Literal(PropertiesLiteral {
+            property_definition_id: milestone_id,
+            entity_type: Some(PropertyEntityType::Task),
+            value: PropertyMatchValue::Boolean(true),
+        }),
+    );
+    let date_and_milestone_ids = doc_ids(
+        dyn_fetch(
+            &db,
+            "macro|user-1@test.com",
+            100,
+            SimpleSortMethod::UpdatedAt,
+            due_filter(date_and_milestone.clone()),
+            false,
+        )
+        .await?,
+    );
+    assert_eq!(
+        date_and_milestone_ids,
+        HashSet::from([true_task_id, personal_true_task_id])
+    );
+    let date_and_milestone_bounded = dyn_fetch(
+        &db,
+        "macro|user-1@test.com",
+        1,
+        SimpleSortMethod::UpdatedAt,
+        due_filter(date_and_milestone),
+        false,
+    )
+    .await?;
+    assert_eq!(
+        date_and_milestone_bounded.len(),
+        1,
+        "date/property AND remains bounded"
     );
 
     Ok(())

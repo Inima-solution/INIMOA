@@ -1092,6 +1092,65 @@ fn entity_type_ast_deserialization_rejects_invalid() {
 }
 
 #[test]
+fn property_date_range_ast_uses_compact_dr_serialization() {
+    use chrono::{DateTime, Utc};
+    use properties::{
+        PropertiesLiteral, PropertyDateRange, PropertyEntityType, PropertyMatchValue,
+    };
+
+    let property_definition_id = Uuid::new_v4();
+    let lower = DateTime::parse_from_rfc3339("2026-01-10T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let upper = DateTime::parse_from_rfc3339("2026-01-20T00:00:00Z")
+        .unwrap()
+        .with_timezone(&Utc);
+    let literal = |range| {
+        Expr::Literal(PropertiesLiteral {
+            property_definition_id,
+            entity_type: Some(PropertyEntityType::Task),
+            value: PropertyMatchValue::DateRange(range),
+        })
+    };
+
+    let empty = literal(PropertyDateRange::default());
+    assert_eq!(
+        serde_json::to_value(&empty).unwrap(),
+        json!({
+            "l": { "pd": property_definition_id, "et": "TASK", "v": { "dr": {} } }
+        })
+    );
+    let empty_roundtrip: Expr<PropertiesLiteral> =
+        serde_json::from_value(serde_json::to_value(&empty).unwrap()).unwrap();
+    assert_eq!(
+        serde_json::to_value(empty_roundtrip).unwrap(),
+        serde_json::to_value(empty).unwrap()
+    );
+
+    let bounded = literal(PropertyDateRange {
+        gte: Some(lower),
+        lt: Some(upper),
+        ..Default::default()
+    });
+    assert_eq!(
+        serde_json::to_value(&bounded).unwrap(),
+        json!({
+            "l": {
+                "pd": property_definition_id,
+                "et": "TASK",
+                "v": { "dr": { "gte": "2026-01-10T00:00:00Z", "lt": "2026-01-20T00:00:00Z" } }
+            }
+        })
+    );
+    let bounded_roundtrip: Expr<PropertiesLiteral> =
+        serde_json::from_value(serde_json::to_value(&bounded).unwrap()).unwrap();
+    assert_eq!(
+        serde_json::to_value(bounded_roundtrip).unwrap(),
+        serde_json::to_value(bounded).unwrap()
+    );
+}
+
+#[test]
 fn call_filter_status_expands_status_only() {
     let f = CallFilters {
         status: Some(CallStatus::Missed),
