@@ -1997,3 +1997,31 @@ export const promoteTagResponse = zod
       ),
   })
   .describe('Property option response (API representation).');
+
+export const getTaskSubtaskProgressBodyTaskIdsMax = 200;
+
+export const getTaskSubtaskProgressBody = zod.object({
+  taskIds: zod.array(zod.uuid()).max(getTaskSubtaskProgressBodyTaskIdsMax),
+});
+
+export const getTaskSubtaskProgressResponseCompletedSubtasksMin = 0;
+
+export const getTaskSubtaskProgressResponseTotalSubtasksMin = 0;
+
+export const getTaskSubtaskProgressResponseItem = zod
+  .object({
+    completedSubtasks: zod
+      .number()
+      .min(getTaskSubtaskProgressResponseCompletedSubtasksMin),
+    hasUnavailableSubtasks: zod.boolean(),
+    taskId: zod.uuid(),
+    totalSubtasks: zod
+      .number()
+      .min(getTaskSubtaskProgressResponseTotalSubtasksMin),
+  })
+  .describe(
+    'Computed direct-subtask progress for one task. This read model never\nexposes child identities.'
+  );
+export const getTaskSubtaskProgressResponse = zod.array(
+  getTaskSubtaskProgressResponseItem
+);

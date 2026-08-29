@@ -11,6 +11,9 @@ export const propertiesKeys = createQueryKeys('properties', {
   options: (params: { propertyDefinitionId: string }) => ({
     queryKey: ['options', params.propertyDefinitionId],
   }),
+  taskSubtaskProgress: (taskIds: readonly string[]) => ({
+    queryKey: [[...taskIds]],
+  }),
   definitions: (params: {
     scope: PropertyScope;
     includeOptions: boolean;

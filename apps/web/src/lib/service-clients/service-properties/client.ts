@@ -17,6 +17,7 @@ import type { EnsureTagSetRequest } from './generated/schemas/ensureTagSetReques
 import type { EntityPropertiesResponse } from './generated/schemas/entityPropertiesResponse';
 import type { GetBulkEntityProperties200 } from './generated/schemas/getBulkEntityProperties200';
 import type { GetEntityPropertiesParams } from './generated/schemas/getEntityPropertiesParams';
+import type { GetTaskSubtaskProgress200Item } from './generated/schemas/getTaskSubtaskProgress200Item';
 import type { ListPropertiesParams } from './generated/schemas/listPropertiesParams';
 import type { MergeTagRequest } from './generated/schemas/mergeTagRequest';
 import type { PromoteTagRequest } from './generated/schemas/promoteTagRequest';
@@ -28,6 +29,7 @@ import type { PropertyTargetEntityType } from './generated/schemas/propertyTarge
 import type { SetEntityPropertyRequest } from './generated/schemas/setEntityPropertyRequest';
 import type { TagPromotionConflictResponse } from './generated/schemas/tagPromotionConflictResponse';
 import type { TagSetResponse } from './generated/schemas/tagSetResponse';
+import type { TaskSubtaskProgressBatchRequest } from './generated/schemas/taskSubtaskProgressBatchRequest';
 import type { UpdatePropertyOptionRequest } from './generated/schemas/updatePropertyOptionRequest';
 
 type PropertiesEntityType = PropertyTargetEntityType;
@@ -124,6 +126,9 @@ type DeletePropertyOptionArgs = {
 };
 type GetBulkEntityPropertiesArgs = {
   body: BulkEntityPropertiesRequest;
+};
+type GetTaskSubtaskProgressArgs = {
+  body: TaskSubtaskProgressBatchRequest;
 };
 type EnsureTagSetArgs = {
   body: EnsureTagSetRequest;
@@ -295,6 +300,16 @@ export const propertiesServiceClient = {
   getBulkEntityProperties: async (args: GetBulkEntityPropertiesArgs) => {
     return await propertiesFetch<GetBulkEntityProperties200>(
       `/properties/entities/bulk`,
+      {
+        method: 'POST',
+        body: JSON.stringify(args.body),
+      }
+    );
+  },
+
+  getTaskSubtaskProgress: async (args: GetTaskSubtaskProgressArgs) => {
+    return await propertiesFetch<GetTaskSubtaskProgress200Item[]>(
+      `/properties/task-subtask-progress`,
       {
         method: 'POST',
         body: JSON.stringify(args.body),

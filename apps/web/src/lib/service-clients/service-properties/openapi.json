@@ -956,6 +956,113 @@
           }
         }
       }
+    },
+    "/properties/task-subtask-progress": {
+      "post": {
+        "tags": ["properties"],
+        "operationId": "getTaskSubtaskProgress",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskSubtaskProgressBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "description": "Computed direct-subtask progress for one task. This read model never\nexposes child identities.",
+                    "required": [
+                      "taskId",
+                      "completedSubtasks",
+                      "totalSubtasks",
+                      "hasUnavailableSubtasks"
+                    ],
+                    "properties": {
+                      "completedSubtasks": {
+                        "type": "integer",
+                        "format": "int32",
+                        "minimum": 0
+                      },
+                      "hasUnavailableSubtasks": {
+                        "type": "boolean"
+                      },
+                      "taskId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "totalSubtasks": {
+                        "type": "integer",
+                        "format": "int32",
+                        "minimum": 0
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSubtaskProgressErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSubtaskProgressErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSubtaskProgressErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSubtaskProgressErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSubtaskProgressErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -2417,6 +2524,33 @@
           }
         }
       },
+      "TaskSubtaskProgressBatchRequest": {
+        "type": "object",
+        "required": ["taskIds"],
+        "properties": {
+          "taskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 200
+          }
+        },
+        "additionalProperties": false
+      },
+      "TaskSubtaskProgressErrorResponse": {
+        "type": "object",
+        "required": ["error", "message"],
+        "properties": {
+          "error": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
       "TaskTransitionBlockedResponse": {
         "oneOf": [
           {
@@ -2444,6 +2578,38 @@
           "value": {
             "type": ["string", "null"],
             "description": "New string value (label text). Only valid for SelectString and Tag properties."
+          }
+        }
+      },
+      "Vec": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "description": "Computed direct-subtask progress for one task. This read model never\nexposes child identities.",
+          "required": [
+            "taskId",
+            "completedSubtasks",
+            "totalSubtasks",
+            "hasUnavailableSubtasks"
+          ],
+          "properties": {
+            "completedSubtasks": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            },
+            "hasUnavailableSubtasks": {
+              "type": "boolean"
+            },
+            "taskId": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "totalSubtasks": {
+              "type": "integer",
+              "format": "int32",
+              "minimum": 0
+            }
           }
         }
       }
