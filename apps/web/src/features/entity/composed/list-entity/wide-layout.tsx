@@ -266,7 +266,11 @@ export function WideLayout(props: LayoutProps) {
             <>
               <Entity.Properties entity={entity()} />
               <TaskSubtaskProgressIndicator taskId={entity().id} mode="row" />
-              <TaskDependencyRelations taskId={entity().id} mode="row" />
+              <TaskDependencyRelations
+                taskId={entity().id}
+                task={entity()}
+                mode="row"
+              />
             </>
           )}
         </Show>

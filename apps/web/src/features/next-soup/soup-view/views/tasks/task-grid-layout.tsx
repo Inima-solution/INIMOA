@@ -8,6 +8,7 @@ import {
   isProjectContainedEntity,
   MultiSelectCheckbox,
   ProjectBreadCrumb,
+  type TaskEntityWithProperties,
   UnreadIndicator,
 } from '@entity';
 import {
@@ -172,7 +173,11 @@ export function TaskGridLayout(props: LayoutProps) {
           <span class="truncate min-w-0">
             <Entity.Title entity={props.entity} />
           </span>
-          <TaskDependencyRelations taskId={props.entity.id} mode="row" />
+          <TaskDependencyRelations
+            taskId={props.entity.id}
+            task={props.entity as TaskEntityWithProperties}
+            mode="row"
+          />
           <Show when={isProjectContainedEntity(props.entity) && props.entity}>
             {(entity) => (
               <span class="ph-no-capture text-ink text-xs shrink-0 truncate border border-edge-muted px-2 rounded-sm py-0.5">

@@ -12,6 +12,7 @@ import { ProjectTaskStatusBoard } from './ProjectTaskStatusBoard';
 
 const mocks = vi.hoisted(() => ({
   contextMenuEntities: [] as TaskEntityWithProperties[],
+  relationTasks: [] as TaskEntityWithProperties[],
 }));
 
 vi.mock('@core/component/LoadingBlock', () => ({
@@ -32,10 +33,25 @@ vi.mock('@app/features/next-soup/soup-view/soup-entity-context-menu', () => ({
     return <div data-testid="task-context-menu">{props.children}</div>;
   },
 }));
+vi.mock('@property/task-dependency-relations', () => ({
+  TaskDependencyRelations: (props: {
+    taskId: string;
+    task?: TaskEntityWithProperties;
+    mode?: string;
+  }) => {
+    if (props.task) mocks.relationTasks.push(props.task);
+    return (
+      <span data-testid="task-dependency-relation" data-mode={props.mode}>
+        {props.task?.name}
+      </span>
+    );
+  },
+}));
 
 afterEach(() => {
   cleanup();
   mocks.contextMenuEntities = [];
+  mocks.relationTasks = [];
 });
 
 function task(name: string, status?: unknown): TaskEntityWithProperties {
@@ -192,6 +208,19 @@ describe('ProjectTaskStatusBoard', () => {
     await user.keyboard('{Enter}');
     await user.keyboard(' ');
     expect(onOpenTask).toHaveBeenCalledTimes(3);
+  });
+
+  it('places each task under the existing board row with its row-mode relation component', () => {
+    const milestone = task('Milestone task');
+    const view = render(() => (
+      <ProjectTaskStatusBoard tasks={[milestone]} onOpenTask={() => {}} />
+    ));
+
+    const relation = view.getByTestId('task-dependency-relation');
+    expect(relation.getAttribute('data-mode')).toBe('row');
+    expect(relation.textContent).toBe('Milestone task');
+    expect(mocks.relationTasks).toEqual([milestone]);
+    expect(relation.closest('[data-testid="task-context-menu"]')).toBeTruthy();
   });
 
   it('keeps populated board content during loading and distinguishes loading from empty', () => {

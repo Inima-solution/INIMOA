@@ -1,5 +1,8 @@
 /** @vitest-environment jsdom */
 
+import type { TaskEntityWithProperties } from '@entity';
+import { PROPERTY_OPTION_IDS, SYSTEM_PROPERTY_IDS } from '@property/constants';
+import type { SoupProperty } from '@service-storage/generated/schemas';
 import { cleanup, render } from '@solidjs/testing-library';
 import { createSignal } from 'solid-js';
 import { createMutable } from 'solid-js/store';
@@ -74,22 +77,52 @@ function relation(overrides: Record<string, unknown> = {}) {
 
 function renderRelations(
   ids: () => readonly string[] = () => [taskA],
-  mode: 'detail' | 'row' = 'detail'
+  mode: 'detail' | 'row' = 'detail',
+  task?: TaskEntityWithProperties
 ) {
   return render(() => (
     <TaskDependencyRelationsProvider taskIds={ids}>
-      <TaskDependencyRelations taskId={taskA} mode={mode} />
+      <TaskDependencyRelations taskId={taskA} task={task} mode={mode} />
     </TaskDependencyRelationsProvider>
   ));
 }
 
+function milestoneTask(
+  properties: SoupProperty[] = []
+): TaskEntityWithProperties {
+  return {
+    id: taskA,
+    name: 'Milestone task',
+    ownerId: 'owner-id',
+    type: 'document',
+    fileType: 'md',
+    subType: { type: 'task' },
+    properties: [
+      {
+        definition: { id: SYSTEM_PROPERTY_IDS.MILESTONE },
+        value: { type: 'Boolean', value: true },
+      } as unknown as SoupProperty,
+      ...properties,
+    ],
+  };
+}
+
+function taskProperty(id: string, value: unknown): SoupProperty {
+  return { definition: { id }, value } as SoupProperty;
+}
+
 beforeEach(() => {
+  vi.useFakeTimers();
+  vi.setSystemTime(new Date('2026-08-30T12:00:00.000Z'));
   mocks.fetchTaskDependencyRelations.mockReset();
   mocks.previewLoad.mockReset();
   mocks.queries = [];
   mocks.queryOptions = [];
 });
-afterEach(cleanup);
+afterEach(() => {
+  vi.useRealTimers();
+  cleanup();
+});
 
 describe('TaskDependencyRelationsProvider', () => {
   it('first-seen deduplicates and executes the actual 200-ID query function', async () => {
@@ -347,4 +380,127 @@ describe('TaskDependencyRelations', () => {
       expect(view.container.textContent).not.toContain('server sentinel');
     }
   );
+
+  it.each([
+    [
+      'blocked milestones are at risk',
+      milestoneTask(),
+      query({ data: [relation({ readiness: 'blocked' })] }),
+      'Blocked',
+      'At risk',
+    ],
+    [
+      'overdue beats blocked',
+      milestoneTask([
+        taskProperty(SYSTEM_PROPERTY_IDS.DUE_DATE, {
+          type: 'Date',
+          value: '2026-08-30T11:59:59.999Z',
+        }),
+      ]),
+      query({ data: [relation({ readiness: 'blocked' })] }),
+      'Blocked',
+      'Overdue',
+    ],
+    [
+      'completed beats overdue and blocked',
+      milestoneTask([
+        taskProperty(SYSTEM_PROPERTY_IDS.STATUS, {
+          type: 'SelectOption',
+          value: [PROPERTY_OPTION_IDS.STATUS.COMPLETED],
+        }),
+        taskProperty(SYSTEM_PROPERTY_IDS.DUE_DATE, {
+          type: 'Date',
+          value: '2026-08-30T11:59:59.999Z',
+        }),
+      ]),
+      query({ data: [relation({ readiness: 'blocked' })] }),
+      'Blocked',
+      'Complete',
+    ],
+    [
+      'canceled milestones remain neutral',
+      milestoneTask([
+        taskProperty(SYSTEM_PROPERTY_IDS.STATUS, {
+          type: 'SelectOption',
+          value: [PROPERTY_OPTION_IDS.STATUS.CANCELED],
+        }),
+      ]),
+      query({ data: [relation({ readiness: 'blocked' })] }),
+      'Blocked',
+      'Milestone',
+    ],
+    [
+      'an equal due date remains neutral',
+      milestoneTask([
+        taskProperty(SYSTEM_PROPERTY_IDS.DUE_DATE, {
+          type: 'Date',
+          value: '2026-08-30T12:00:00.000Z',
+        }),
+      ]),
+      query({ data: [relation()] }),
+      'Ready',
+      'Milestone',
+    ],
+    [
+      'an invalid due date remains neutral',
+      milestoneTask([
+        taskProperty(SYSTEM_PROPERTY_IDS.DUE_DATE, {
+          type: 'Date',
+          value: 'invalid',
+        }),
+      ]),
+      query({ data: [relation()] }),
+      'Ready',
+      'Milestone',
+    ],
+  ])('%s', (_name, task, relationQuery, relationLabel, milestoneLabel) => {
+    mocks.queries = [relationQuery];
+    const view = renderRelations(() => [taskA], 'row', task);
+    expect(view.getByLabelText(relationLabel)).toBeTruthy();
+    expect(
+      view.getByLabelText(`Milestone status: ${milestoneLabel}`).textContent
+    ).toBe(milestoneLabel);
+    expect(mocks.queryOptions).toHaveLength(1);
+    expect(mocks.previewLoad).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['loading', query({ isPending: true }), 'Loading…'],
+    ['offline', query({ fetchStatus: 'paused' }), 'Offline'],
+    [
+      'error',
+      query({ isError: true, error: new Error('server sentinel') }),
+      'Load failed',
+    ],
+    ['unavailable', query({ data: [] }), 'Unavailable'],
+  ])(
+    'keeps a non-authoritative %s relation label without At risk',
+    (_name, relationQuery, relationLabel) => {
+      mocks.queries = [relationQuery];
+      const view = renderRelations(() => [taskA], 'row', milestoneTask());
+      expect(view.getByLabelText(relationLabel)).toBeTruthy();
+      expect(view.getByLabelText('Milestone status: Milestone')).toBeTruthy();
+      expect(view.queryByLabelText('Milestone status: At risk')).toBeNull();
+      expect(view.container.textContent).not.toContain('server sentinel');
+      expect(mocks.queryOptions).toHaveLength(1);
+      expect(mocks.previewLoad).not.toHaveBeenCalled();
+    }
+  );
+
+  it('does not render milestone status for false or null markers', () => {
+    for (const value of [false, null]) {
+      mocks.queries = [query({ data: [relation()] })];
+      const view = renderRelations(() => [taskA], 'row', {
+        ...milestoneTask(),
+        properties: [
+          taskProperty(SYSTEM_PROPERTY_IDS.MILESTONE, {
+            type: 'Boolean',
+            value,
+          }),
+        ],
+      });
+      expect(view.queryByLabelText(/^Milestone status:/)).toBeNull();
+      view.unmount();
+    }
+  });
 });

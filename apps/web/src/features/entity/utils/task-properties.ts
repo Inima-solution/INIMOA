@@ -90,6 +90,13 @@ const isEntityReferenceArray = (
   );
 };
 
+export type MilestoneDependencyReadiness = {
+  isAuthoritative: boolean;
+  readiness?: 'blocked' | 'ready';
+};
+
+export type MilestoneState = 'milestone' | 'at-risk' | 'overdue' | 'complete';
+
 /**
  * Extracts assignee user ids from task properties.
  */
@@ -139,6 +146,76 @@ export const getTaskStatusOptionId = (
   }
 
   return value.value[0];
+};
+
+/**
+ * Checks whether a task has the exact milestone marker value.
+ */
+export const isTaskMilestone = (entity: TaskEntityWithProperties): boolean => {
+  const milestoneProperty = getTaskPropertyByDefinitionId(
+    entity,
+    SYSTEM_PROPERTY_IDS.MILESTONE
+  );
+
+  const value = milestoneProperty?.value;
+  return value?.type === 'Boolean' && value.value === true;
+};
+
+/**
+ * Gets a valid due date from the exact Date property shape.
+ */
+export const getTaskDueDate = (
+  entity: TaskEntityWithProperties
+): Date | undefined => {
+  const dueDateProperty = getTaskPropertyByDefinitionId(
+    entity,
+    SYSTEM_PROPERTY_IDS.DUE_DATE
+  );
+
+  const value = dueDateProperty?.value;
+  if (value?.type !== 'Date' || typeof value.value !== 'string') {
+    return undefined;
+  }
+
+  const dueDate = new Date(value.value);
+  return Number.isNaN(dueDate.getTime()) ? undefined : dueDate;
+};
+
+/**
+ * Derives the display state for a milestone without performing any I/O.
+ */
+export const getTaskMilestoneState = (
+  entity: TaskEntityWithProperties,
+  now: Date,
+  dependencyReadiness: MilestoneDependencyReadiness
+): MilestoneState | undefined => {
+  if (!isTaskMilestone(entity)) {
+    return undefined;
+  }
+
+  const statusOptionId = getTaskStatusOptionId(entity);
+  if (statusOptionId === PROPERTY_OPTION_IDS.STATUS.COMPLETED) {
+    return 'complete';
+  }
+
+  const dueDate = getTaskDueDate(entity);
+  if (
+    statusOptionId !== PROPERTY_OPTION_IDS.STATUS.CANCELED &&
+    dueDate !== undefined &&
+    dueDate.getTime() < now.getTime()
+  ) {
+    return 'overdue';
+  }
+
+  if (
+    statusOptionId !== PROPERTY_OPTION_IDS.STATUS.CANCELED &&
+    dependencyReadiness.isAuthoritative &&
+    dependencyReadiness.readiness === 'blocked'
+  ) {
+    return 'at-risk';
+  }
+
+  return 'milestone';
 };
 
 /**

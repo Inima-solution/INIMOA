@@ -4,9 +4,12 @@ import { describe, expect, it } from 'vitest';
 import type { TaskEntityWithProperties } from '../types/entity';
 import {
   getTaskAssigneeIds,
+  getTaskDueDate,
+  getTaskMilestoneState,
   getTaskStatusOptionId,
   isCurrentUserAssigned,
   isTaskClosed,
+  isTaskMilestone,
 } from '../utils/task-properties';
 
 const createSoupProperty = (
@@ -117,6 +120,210 @@ describe('task property helpers', () => {
       });
 
       expect(isTaskClosed(entity)).toBe(false);
+    });
+  });
+
+  describe('milestone helpers', () => {
+    const now = new Date('2026-08-30T12:00:00.000Z');
+    const authoritativeReady = {
+      isAuthoritative: true,
+      readiness: 'ready',
+    } as const;
+    const authoritativeBlocked = {
+      isAuthoritative: true,
+      readiness: 'blocked',
+    } as const;
+
+    const milestoneTask = (properties: SoupProperty[] = []) =>
+      createTask({
+        properties: [
+          createSoupProperty(SYSTEM_PROPERTY_IDS.MILESTONE, {
+            type: 'Boolean',
+            value: true,
+          }),
+          ...properties,
+        ],
+      });
+
+    it('recognizes only the exact true Boolean milestone marker', () => {
+      expect(isTaskMilestone(milestoneTask())).toBe(true);
+      expect(
+        isTaskMilestone(
+          createTask({
+            properties: [
+              createSoupProperty(SYSTEM_PROPERTY_IDS.MILESTONE, {
+                type: 'Boolean',
+                value: false,
+              }),
+            ],
+          })
+        )
+      ).toBe(false);
+      expect(
+        isTaskMilestone(
+          createTask({
+            properties: [
+              createSoupProperty(SYSTEM_PROPERTY_IDS.MILESTONE, null),
+            ],
+          })
+        )
+      ).toBe(false);
+      expect(
+        isTaskMilestone(
+          createTask({
+            properties: [
+              createSoupProperty(SYSTEM_PROPERTY_IDS.MILESTONE, {
+                type: 'Boolean',
+                value: 'true',
+              }),
+            ],
+          })
+        )
+      ).toBe(false);
+    });
+
+    it('returns undefined for missing or malformed due dates', () => {
+      expect(getTaskDueDate(createTask())).toBeUndefined();
+      expect(
+        getTaskDueDate(
+          createTask({
+            properties: [
+              createSoupProperty(SYSTEM_PROPERTY_IDS.DUE_DATE, {
+                type: 'Date',
+                value: 'not-a-date',
+              }),
+            ],
+          })
+        )
+      ).toBeUndefined();
+      expect(
+        getTaskDueDate(
+          createTask({
+            properties: [
+              createSoupProperty(SYSTEM_PROPERTY_IDS.DUE_DATE, {
+                type: 'String',
+                value: now.toISOString(),
+              }),
+            ],
+          })
+        )
+      ).toBeUndefined();
+    });
+
+    it('returns a valid Date property instant', () => {
+      const dueDate = getTaskDueDate(
+        createTask({
+          properties: [
+            createSoupProperty(SYSTEM_PROPERTY_IDS.DUE_DATE, {
+              type: 'Date',
+              value: now.toISOString(),
+            }),
+          ],
+        })
+      );
+
+      expect(dueDate?.toISOString()).toBe(now.toISOString());
+    });
+
+    it('returns undefined for non-milestones', () => {
+      expect(
+        getTaskMilestoneState(createTask(), now, authoritativeBlocked)
+      ).toBeUndefined();
+    });
+
+    it('derives overdue only for a due date strictly before now', () => {
+      const before = milestoneTask([
+        createSoupProperty(SYSTEM_PROPERTY_IDS.DUE_DATE, {
+          type: 'Date',
+          value: '2026-08-30T11:59:59.999Z',
+        }),
+      ]);
+      const equal = milestoneTask([
+        createSoupProperty(SYSTEM_PROPERTY_IDS.DUE_DATE, {
+          type: 'Date',
+          value: now.toISOString(),
+        }),
+      ]);
+      const after = milestoneTask([
+        createSoupProperty(SYSTEM_PROPERTY_IDS.DUE_DATE, {
+          type: 'Date',
+          value: '2026-08-30T12:00:00.001Z',
+        }),
+      ]);
+
+      expect(getTaskMilestoneState(before, now, authoritativeReady)).toBe(
+        'overdue'
+      );
+      expect(getTaskMilestoneState(equal, now, authoritativeReady)).toBe(
+        'milestone'
+      );
+      expect(getTaskMilestoneState(after, now, authoritativeReady)).toBe(
+        'milestone'
+      );
+    });
+
+    it('gives Completed precedence over overdue and blocked', () => {
+      const entity = milestoneTask([
+        createSoupProperty(SYSTEM_PROPERTY_IDS.STATUS, {
+          type: 'SelectOption',
+          value: [PROPERTY_OPTION_IDS.STATUS.COMPLETED],
+        }),
+        createSoupProperty(SYSTEM_PROPERTY_IDS.DUE_DATE, {
+          type: 'Date',
+          value: '2026-08-30T11:59:59.999Z',
+        }),
+      ]);
+
+      expect(getTaskMilestoneState(entity, now, authoritativeBlocked)).toBe(
+        'complete'
+      );
+    });
+
+    it('gives overdue precedence over blocked', () => {
+      const entity = milestoneTask([
+        createSoupProperty(SYSTEM_PROPERTY_IDS.DUE_DATE, {
+          type: 'Date',
+          value: '2026-08-30T11:59:59.999Z',
+        }),
+      ]);
+
+      expect(getTaskMilestoneState(entity, now, authoritativeBlocked)).toBe(
+        'overdue'
+      );
+    });
+
+    it('keeps Canceled milestones neutral', () => {
+      const entity = milestoneTask([
+        createSoupProperty(SYSTEM_PROPERTY_IDS.STATUS, {
+          type: 'SelectOption',
+          value: [PROPERTY_OPTION_IDS.STATUS.CANCELED],
+        }),
+        createSoupProperty(SYSTEM_PROPERTY_IDS.DUE_DATE, {
+          type: 'Date',
+          value: '2026-08-30T11:59:59.999Z',
+        }),
+      ]);
+
+      expect(getTaskMilestoneState(entity, now, authoritativeBlocked)).toBe(
+        'milestone'
+      );
+    });
+
+    it('uses blocked readiness only when it is authoritative', () => {
+      const entity = milestoneTask();
+
+      expect(getTaskMilestoneState(entity, now, authoritativeReady)).toBe(
+        'milestone'
+      );
+      expect(getTaskMilestoneState(entity, now, authoritativeBlocked)).toBe(
+        'at-risk'
+      );
+      expect(
+        getTaskMilestoneState(entity, now, {
+          isAuthoritative: false,
+          readiness: 'blocked',
+        })
+      ).toBe('milestone');
     });
   });
 

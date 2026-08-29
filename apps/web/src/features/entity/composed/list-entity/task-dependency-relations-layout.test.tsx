@@ -193,6 +193,7 @@ vi.mock('../../../next-soup/soup-view/views/tasks/task-grid-template', () => ({
   TASK_GRID_TEMPLATE_COLUMNS_WIDE_NO_INDICATOR: '1fr',
 }));
 
+import { SYSTEM_PROPERTY_IDS } from '@property/constants';
 import { TaskDependencyRelationsProvider } from '@property/task-dependency-relations';
 import { TaskGridLayout } from '../../../next-soup/soup-view/views/tasks/task-grid-layout';
 import { NarrowLayout } from './narrow-layout';
@@ -220,7 +221,10 @@ function relationQuery(readiness: 'blocked' | 'ready') {
   };
 }
 
-function entity(kind: 'task' | 'document'): LayoutProps['entity'] {
+function entity(
+  kind: 'task' | 'document',
+  milestone = false
+): LayoutProps['entity'] {
   return {
     fileType: 'md',
     id: taskId,
@@ -228,7 +232,17 @@ function entity(kind: 'task' | 'document'): LayoutProps['entity'] {
     ownerId: 'owner-id',
     type: 'document',
     ...(kind === 'task'
-      ? { subType: { type: 'task' }, properties: [] }
+      ? {
+          subType: { type: 'task' },
+          properties: milestone
+            ? [
+                {
+                  definition: { id: SYSTEM_PROPERTY_IDS.MILESTONE },
+                  value: { type: 'Boolean', value: true },
+                },
+              ]
+            : [],
+        }
       : { subType: null }),
   } as LayoutProps['entity'];
 }
@@ -243,6 +257,10 @@ function props(kind: 'task' | 'document'): LayoutProps {
     showHitSnippet: false,
     unread: false,
   };
+}
+
+function milestoneProps(): LayoutProps {
+  return { ...props('task'), entity: entity('task', true) };
 }
 
 function withRelations(layout: () => JSX.Element) {
@@ -322,4 +340,21 @@ describe('task dependency relation list placement', () => {
       withoutProvider.getByLabelText(`Subtask progress for ${taskId}`)
     ).toBeTruthy();
   });
+
+  it.each([
+    ['wide', () => <WideLayout {...milestoneProps()} />],
+    ['narrow/mobile', () => <NarrowLayout {...milestoneProps()} />],
+    ['task grid', () => <TaskGridLayout {...milestoneProps()} />],
+  ] as const)(
+    'forwards the task and renders the same milestone state in %s without a preview',
+    (_name, layout) => {
+      mocks.queries = [relationQuery('blocked')];
+      const view = withRelations(layout);
+
+      expect(view.getByLabelText('Blocked')).toBeTruthy();
+      expect(view.getByLabelText('Milestone status: At risk')).toBeTruthy();
+      expect(mocks.queryOptions).toHaveLength(1);
+      expect(mocks.previewLoad).not.toHaveBeenCalled();
+    }
+  );
 });

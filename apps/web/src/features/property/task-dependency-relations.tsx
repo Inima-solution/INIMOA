@@ -1,5 +1,7 @@
 import { ItemPreview } from '@core/component/ItemPreview';
 import { thrownResultErrorHasCode } from '@core/util/result';
+import type { TaskEntityWithProperties } from '@entity';
+import { getTaskMilestoneState } from '@entity/utils/task-properties';
 import { isAccessiblePreviewItem } from '@queries/preview';
 import { previewDataLoader } from '@queries/preview/dataloader';
 import { previewKeys } from '@queries/preview/keys';
@@ -206,13 +208,37 @@ function rowStatusLabel(state: RelationState) {
   }[state.kind];
 }
 
+function milestoneStateLabel(
+  state: NonNullable<ReturnType<typeof getTaskMilestoneState>>
+) {
+  return {
+    milestone: 'Milestone',
+    complete: 'Complete',
+    overdue: 'Overdue',
+    'at-risk': 'At risk',
+  }[state];
+}
+
 export function TaskDependencyRelations(props: {
   taskId: string;
+  task?: TaskEntityWithProperties;
   mode?: 'detail' | 'row';
 }) {
   const context = useContext(TaskDependencyRelationsContext);
   const state = () => context?.relationsForTask(props.taskId);
   const isRow = () => props.mode === 'row';
+  const milestoneState = () => {
+    const currentState = state();
+    if (!props.task || !currentState) return undefined;
+
+    return getTaskMilestoneState(props.task, new Date(), {
+      isAuthoritative: currentState.kind === 'ready',
+      readiness:
+        currentState.kind === 'ready'
+          ? currentState.relation.readiness
+          : undefined,
+    });
+  };
 
   return (
     <Show when={state()}>
@@ -295,6 +321,16 @@ export function TaskDependencyRelations(props: {
           >
             {rowStatusLabel(current())}
           </span>
+          <Show when={milestoneState()}>
+            {(milestone) => (
+              <span
+                aria-label={`Milestone status: ${milestoneStateLabel(milestone())}`}
+                class="shrink-0 whitespace-nowrap text-xs text-ink-muted"
+              >
+                {milestoneStateLabel(milestone())}
+              </span>
+            )}
+          </Show>
         </Show>
       )}
     </Show>
