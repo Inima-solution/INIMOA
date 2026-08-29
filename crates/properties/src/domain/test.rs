@@ -92,6 +92,37 @@ fn blocked_transition_readiness_serializes_exactly_five_camel_case_keys_and_reda
     }
 }
 
+#[test]
+fn blocked_completion_readiness_serializes_exactly_five_camel_case_keys_and_redacts_debug() {
+    let source = Uuid::new_v4();
+    let visible = Uuid::new_v4();
+    let readiness = crate::domain::model::TaskSubtaskCompletionReadiness {
+        task_id: source,
+        readiness: crate::domain::model::TaskReadiness::Blocked,
+        subtask_ids: vec![visible],
+        blocking_subtask_ids: vec![visible],
+        has_unavailable_subtasks: true,
+    };
+    let object = serde_json::to_value(&readiness).unwrap();
+    assert_eq!(object.as_object().unwrap().len(), 5);
+    for key in [
+        "taskId",
+        "readiness",
+        "subtaskIds",
+        "blockingSubtaskIds",
+        "hasUnavailableSubtasks",
+    ] {
+        assert!(object.get(key).is_some(), "missing {key}");
+    }
+    let error = PropertiesErr::TaskCompletionBlockedBySubtasks(
+        crate::domain::model::TaskSubtaskCompletionBlockedDetails::new(readiness),
+    );
+    assert_eq!(error.to_string(), "Task completion is blocked by subtasks");
+    let debug = format!("{error:?}");
+    assert!(!debug.contains(&source.to_string()));
+    assert!(!debug.contains(&visible.to_string()));
+}
+
 fn entity_property_for_event(
     id: Uuid,
     entity_id: &str,
@@ -1694,6 +1725,15 @@ fn structured_blocked_readiness(
     details.into_inner()
 }
 
+fn structured_subtask_blocked_readiness(
+    error: PropertiesErr,
+) -> crate::domain::model::TaskSubtaskCompletionReadiness {
+    let PropertiesErr::TaskCompletionBlockedBySubtasks(details) = error else {
+        panic!("expected structured subtask completion blocker");
+    };
+    details.into_inner()
+}
+
 #[tokio::test]
 async fn structured_status_blocker_filters_visible_ids_and_publishes_nothing() {
     let task_id = Uuid::from_u128(0xC01);
@@ -1927,6 +1967,240 @@ async fn structured_blocker_operational_access_error_fails_closed() {
             has_unavailable_dependencies: true,
         }
     );
+}
+
+#[tokio::test]
+async fn subtask_completion_blocker_fails_closed_after_any_receipt_error() {
+    let task_id = Uuid::from_u128(0xC41);
+    let first = Uuid::from_u128(0xC42);
+    let denied = Uuid::from_u128(0xC43);
+    let mut permission = MockPermissionService::new();
+    permission
+        .expect_mint_view_receipt()
+        .times(2)
+        .returning(move |_, id, entity_type| {
+            let result = if id == first.to_string() {
+                Ok(ViewReceipt::dangerously_assert_authenticated_user(
+                    caller_user_id(),
+                    id,
+                    entity_type,
+                ))
+            } else {
+                assert_eq!(id, denied.to_string());
+                Err(anyhow!("receipt denied"))
+            };
+            Box::pin(async move { result })
+        });
+    let error = PropertiesServiceImpl::new(
+        MockPropertiesRepo::new(),
+        Some(permission),
+        None::<MockNotificationService>,
+    )
+    .filter_task_subtask_completion_readiness(
+        &edit_receipt(&task_id.to_string(), EntityType::Task),
+        crate::domain::model::TaskSubtaskCompletionReadiness {
+            task_id,
+            readiness: crate::domain::model::TaskReadiness::Blocked,
+            subtask_ids: vec![first, denied],
+            blocking_subtask_ids: vec![denied],
+            has_unavailable_subtasks: false,
+        },
+    )
+    .await;
+    assert_eq!(
+        structured_subtask_blocked_readiness(error),
+        crate::domain::model::TaskSubtaskCompletionReadiness {
+            task_id,
+            readiness: crate::domain::model::TaskReadiness::Blocked,
+            subtask_ids: vec![],
+            blocking_subtask_ids: vec![],
+            has_unavailable_subtasks: true,
+        }
+    );
+}
+
+#[tokio::test]
+async fn subtask_completion_blocker_keeps_all_visible_ids_in_source_and_blocker_order() {
+    let task_id = Uuid::from_u128(0xC44);
+    let completed = Uuid::from_u128(0xC45);
+    let blocking = Uuid::from_u128(0xC46);
+    let canceled = Uuid::from_u128(0xC47);
+    let expected = [canceled, completed, blocking];
+    let call = Arc::new(Mutex::new(0_usize));
+    let mut permission = MockPermissionService::new();
+    permission.expect_mint_view_receipt().times(3).returning({
+        let call = call.clone();
+        move |_, id, entity_type| {
+            let index = {
+                let mut index = call.lock().unwrap();
+                let current = *index;
+                *index += 1;
+                current
+            };
+            assert_eq!(id, expected[index].to_string());
+            let receipt = ViewReceipt::dangerously_assert_authenticated_user(
+                caller_user_id(),
+                id,
+                entity_type,
+            );
+            Box::pin(async move { Ok(receipt) })
+        }
+    });
+    let error = PropertiesServiceImpl::new(
+        MockPropertiesRepo::new(),
+        Some(permission),
+        None::<MockNotificationService>,
+    )
+    .filter_task_subtask_completion_readiness(
+        &edit_receipt(&task_id.to_string(), EntityType::Task),
+        crate::domain::model::TaskSubtaskCompletionReadiness {
+            task_id,
+            readiness: crate::domain::model::TaskReadiness::Blocked,
+            subtask_ids: expected.to_vec(),
+            blocking_subtask_ids: vec![blocking],
+            has_unavailable_subtasks: false,
+        },
+    )
+    .await;
+    assert_eq!(
+        structured_subtask_blocked_readiness(error),
+        crate::domain::model::TaskSubtaskCompletionReadiness {
+            task_id,
+            readiness: crate::domain::model::TaskReadiness::Blocked,
+            subtask_ids: expected.to_vec(),
+            blocking_subtask_ids: vec![blocking],
+            has_unavailable_subtasks: false,
+        }
+    );
+}
+
+#[tokio::test]
+async fn subtask_completion_blocker_missing_service_internal_and_bot_fail_closed() {
+    let task_id = Uuid::from_u128(0xC51);
+    let child = Uuid::from_u128(0xC52);
+    let readiness = crate::domain::model::TaskSubtaskCompletionReadiness {
+        task_id,
+        readiness: crate::domain::model::TaskReadiness::Blocked,
+        subtask_ids: vec![child],
+        blocking_subtask_ids: vec![child],
+        has_unavailable_subtasks: false,
+    };
+    for error in [
+        PropertiesServiceImpl::new(
+            MockPropertiesRepo::new(),
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        )
+        .filter_task_subtask_completion_readiness(
+            &edit_receipt(&task_id.to_string(), EntityType::Task),
+            readiness.clone(),
+        )
+        .await,
+        PropertiesServiceImpl::new(
+            MockPropertiesRepo::new(),
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        )
+        .filter_task_subtask_completion_readiness(
+            &EditReceipt::dangerously_assert_internal_user(
+                &task_id.to_string(),
+                AccessEntityType::Document,
+            ),
+            readiness.clone(),
+        )
+        .await,
+        PropertiesServiceImpl::new(
+            MockPropertiesRepo::new(),
+            None::<MockPermissionService>,
+            None::<MockNotificationService>,
+        )
+        .filter_task_subtask_completion_readiness(
+            &EditReceipt::dangerously_assert_bot(
+                BotId::new_from_uuid(Uuid::from_u128(0xC53)).into_storage_id(),
+                BotReceiptScope::User {
+                    acting_user: caller_user_id(),
+                },
+                &task_id.to_string(),
+                AccessEntityType::Document,
+            ),
+            readiness.clone(),
+        )
+        .await,
+    ] {
+        assert_eq!(
+            structured_subtask_blocked_readiness(error),
+            crate::domain::model::TaskSubtaskCompletionReadiness {
+                task_id,
+                readiness: crate::domain::model::TaskReadiness::Blocked,
+                subtask_ids: vec![],
+                blocking_subtask_ids: vec![],
+                has_unavailable_subtasks: true,
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn subtask_completion_blocker_does_not_upsert_publish_or_schedule_ready() {
+    let task_id = Uuid::from_u128(0xC61);
+    let child = Uuid::from_u128(0xC62);
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_document_sub_types().return_once(move |_| {
+        Box::pin(async move { Ok(HashMap::from([(task_id, DocumentSubType::Task)])) })
+    });
+    repo.expect_get_property_definition()
+        .return_once(|_| Box::pin(async { Ok(Some(task_status_definition())) }));
+    repo.expect_count_valid_property_options()
+        .return_once(|_, _| Box::pin(async { Ok(1) }));
+    repo.expect_transition_task_status()
+        .return_once(move |_, _| {
+            Box::pin(async move {
+                Ok(
+                    crate::domain::model::TaskStatusMutationOutcome::BlockedBySubtasks(
+                        crate::domain::model::TaskSubtaskCompletionReadiness {
+                            task_id,
+                            readiness: crate::domain::model::TaskReadiness::Blocked,
+                            subtask_ids: vec![child],
+                            blocking_subtask_ids: vec![child],
+                            has_unavailable_subtasks: false,
+                        },
+                    ),
+                )
+            })
+        });
+    repo.expect_upsert_entity_property().never();
+    let mut permission = MockPermissionService::new();
+    permission
+        .expect_mint_view_receipt()
+        .once()
+        .returning(|_, id, entity_type| {
+            let receipt = ViewReceipt::dangerously_assert_authenticated_user(
+                caller_user_id(),
+                id,
+                entity_type,
+            );
+            Box::pin(async move { Ok(receipt) })
+        });
+    let broker = RecordingEventBroker::default();
+    let service =
+        PropertiesServiceImpl::new(repo, Some(permission), None::<MockNotificationService>)
+            .with_event_broker(broker.clone());
+    let result = service
+        .set_entity_property(
+            &edit_receipt(&task_id.to_string(), EntityType::Task),
+            SystemPropertyKey::STATUS_UUID,
+            Some(
+                models_properties::api::requests::SetPropertyValue::SelectOption {
+                    option_id: StatusOption::COMPLETED_UUID,
+                },
+            ),
+        )
+        .await;
+    assert!(matches!(
+        result,
+        Err(PropertiesErr::TaskCompletionBlockedBySubtasks(_))
+    ));
+    assert!(broker.events().is_empty());
 }
 
 #[tokio::test]

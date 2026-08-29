@@ -49,6 +49,22 @@ pub struct TaskDependencyReadiness {
     pub has_unavailable_dependencies: bool,
 }
 
+/// Computed direct-subtask completion state for one parent task.
+///
+/// This is a transition-time snapshot only. It is deliberately not a
+/// persistent invariant and contains no task names or counts.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "inbound", derive(utoipa::ToSchema))]
+#[cfg_attr(feature = "ai_tools", derive(schemars::JsonSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct TaskSubtaskCompletionReadiness {
+    pub task_id: Uuid,
+    pub readiness: TaskReadiness,
+    pub subtask_ids: Vec<Uuid>,
+    pub blocking_subtask_ids: Vec<Uuid>,
+    pub has_unavailable_subtasks: bool,
+}
+
 #[doc(hidden)]
 pub struct TaskTransitionBlockedDetails(Box<TaskDependencyReadiness>);
 
@@ -67,6 +83,27 @@ impl TaskTransitionBlockedDetails {
 impl std::fmt::Debug for TaskTransitionBlockedDetails {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter.write_str("TaskTransitionBlockedDetails(<redacted>)")
+    }
+}
+
+#[doc(hidden)]
+pub struct TaskSubtaskCompletionBlockedDetails(Box<TaskSubtaskCompletionReadiness>);
+
+impl TaskSubtaskCompletionBlockedDetails {
+    pub fn new(readiness: TaskSubtaskCompletionReadiness) -> Self {
+        Self(Box::new(readiness))
+    }
+    pub fn readiness(&self) -> &TaskSubtaskCompletionReadiness {
+        &self.0
+    }
+    pub fn into_inner(self) -> TaskSubtaskCompletionReadiness {
+        *self.0
+    }
+}
+
+impl std::fmt::Debug for TaskSubtaskCompletionBlockedDetails {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("TaskSubtaskCompletionBlockedDetails(<redacted>)")
     }
 }
 
@@ -340,6 +377,8 @@ pub enum TaskStatusMutationOutcome {
     /// The guarded write was rejected with the locked transaction snapshot.
     /// This is internal-only until the domain has applied per-document access.
     BlockedWithReadiness(TaskDependencyReadiness),
+    /// Completion was rejected with the locked canonical subtask snapshot.
+    BlockedBySubtasks(TaskSubtaskCompletionReadiness),
 }
 
 /// The reconciled final option ids for one property after a bulk update. The

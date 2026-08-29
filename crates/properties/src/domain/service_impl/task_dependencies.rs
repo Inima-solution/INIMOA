@@ -10,7 +10,7 @@ use uuid::Uuid;
 use crate::domain::error::PropertiesErr;
 use crate::domain::model::{
     EditReceipt, PropertyAccessReceiptExt, TaskDependencyMutationOutcome, TaskDependencyReadiness,
-    ViewReceipt,
+    TaskSubtaskCompletionReadiness, ViewReceipt,
 };
 use crate::domain::ports::{NotificationService, PermissionService, PropertiesRepo};
 use crate::domain::service::ProjectWorkReadReceipt;
@@ -176,6 +176,66 @@ where
         readiness.blocking_task_ids = blocking_task_ids;
         PropertiesErr::TaskTransitionBlockedWithReadiness(
             crate::domain::model::TaskTransitionBlockedDetails::new(readiness),
+        )
+    }
+
+    /// Apply the same per-document visibility boundary to a completion
+    /// snapshot. This intentionally remains separate from dependency readiness:
+    /// a canceled child satisfies completion whereas it does not satisfy a
+    /// dependency transition.
+    pub(crate) async fn filter_task_subtask_completion_readiness(
+        &self,
+        access: &EditReceipt,
+        mut readiness: TaskSubtaskCompletionReadiness,
+    ) -> PropertiesErr {
+        let Some(user_id) = access.authenticated_user() else {
+            readiness.subtask_ids.clear();
+            readiness.blocking_subtask_ids.clear();
+            readiness.has_unavailable_subtasks = true;
+            return PropertiesErr::TaskCompletionBlockedBySubtasks(
+                crate::domain::model::TaskSubtaskCompletionBlockedDetails::new(readiness),
+            );
+        };
+        let Ok(permission_service) = self.permission_service() else {
+            readiness.subtask_ids.clear();
+            readiness.blocking_subtask_ids.clear();
+            readiness.has_unavailable_subtasks = true;
+            return PropertiesErr::TaskCompletionBlockedBySubtasks(
+                crate::domain::model::TaskSubtaskCompletionBlockedDetails::new(readiness),
+            );
+        };
+        let blockers = HashSet::<Uuid>::from_iter(readiness.blocking_subtask_ids.iter().copied());
+        let candidate_ids = std::mem::take(&mut readiness.subtask_ids);
+        let mut subtask_ids = Vec::with_capacity(candidate_ids.len());
+        let mut blocking_subtask_ids = Vec::with_capacity(readiness.blocking_subtask_ids.len());
+        for id in candidate_ids {
+            match permission_service
+                .mint_view_receipt(Some(user_id), &id.to_string(), AccessEntityType::Document)
+                .await
+            {
+                Ok(_) => {
+                    subtask_ids.push(id);
+                    if blockers.contains(&id) {
+                        blocking_subtask_ids.push(id);
+                    }
+                }
+                // The current port deliberately does not classify denial vs
+                // backend receipt failure. Both are fail-closed: a partial
+                // list could otherwise disclose which later children exist.
+                Err(_) => {
+                    readiness.subtask_ids.clear();
+                    readiness.blocking_subtask_ids.clear();
+                    readiness.has_unavailable_subtasks = true;
+                    return PropertiesErr::TaskCompletionBlockedBySubtasks(
+                        crate::domain::model::TaskSubtaskCompletionBlockedDetails::new(readiness),
+                    );
+                }
+            }
+        }
+        readiness.subtask_ids = subtask_ids;
+        readiness.blocking_subtask_ids = blocking_subtask_ids;
+        PropertiesErr::TaskCompletionBlockedBySubtasks(
+            crate::domain::model::TaskSubtaskCompletionBlockedDetails::new(readiness),
         )
     }
 }

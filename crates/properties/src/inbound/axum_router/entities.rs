@@ -53,6 +53,16 @@ pub struct SetEntityPropertyRequest {
     pub value: Option<SetPropertyValue>,
 }
 
+/// The two structured conflict snapshots returned by the existing Status PUT.
+/// Runtime responses remain the direct five-field object for the matching
+/// guard; this union exists only to describe that established 409 contract.
+#[derive(Debug, Serialize, ToSchema)]
+#[serde(untagged)]
+pub enum TaskTransitionBlockedResponse {
+    Dependency(TaskDependencyReadiness),
+    SubtaskCompletion(crate::domain::model::TaskSubtaskCompletionReadiness),
+}
+
 /// Request for getting properties for multiple entities in bulk
 #[derive(Debug, Serialize, Deserialize, ToSchema)]
 pub struct BulkEntityPropertiesRequest {
@@ -343,6 +353,9 @@ impl IntoResponse for SetEntityPropertyErr {
             Self::Properties(PropertiesErr::TaskTransitionBlockedWithReadiness(readiness)) => {
                 (status_code, Json(readiness.into_inner())).into_response()
             }
+            Self::Properties(PropertiesErr::TaskCompletionBlockedBySubtasks(readiness)) => {
+                (status_code, Json(readiness.into_inner())).into_response()
+            }
             other => (status_code, other.to_string()).into_response(),
         }
     }
@@ -363,7 +376,7 @@ impl IntoResponse for SetEntityPropertyErr {
         (status = 400, description = "Invalid request or entity type"),
         (status = 403, description = "No edit access to the entity"),
         (status = 404, description = "Entity or property not found"),
-        (status = 409, description = "Task transition blocked by dependencies", body = TaskDependencyReadiness),
+        (status = 409, description = "Task transition blocked", body = TaskTransitionBlockedResponse),
         (status = 500, description = "Internal server error")
     ),
     tags = ["Properties"]

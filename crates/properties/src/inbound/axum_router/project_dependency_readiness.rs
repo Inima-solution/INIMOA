@@ -99,6 +99,7 @@ impl ProjectTaskDependencyReadinessError {
             | PropertiesErr::TaskHierarchyCycle
             | PropertiesErr::TaskTransitionBlocked
             | PropertiesErr::TaskTransitionBlockedWithReadiness(_)
+            | PropertiesErr::TaskCompletionBlockedBySubtasks(_)
             | PropertiesErr::Repo(_)
             | PropertiesErr::PermissionServiceNotConfigured
             | PropertiesErr::EntityPropertyNotFound => Self::Internal,

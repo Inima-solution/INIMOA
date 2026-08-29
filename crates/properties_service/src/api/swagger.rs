@@ -1,4 +1,5 @@
 use models_properties::api;
+use properties::inbound::axum_router::entities::TaskTransitionBlockedResponse;
 use properties::inbound::axum_router::{
     definitions::{ListPropertiesQuery, PropertyDefinitionResponse},
     entities::{
@@ -57,7 +58,9 @@ use utoipa::OpenApi;
             api::PropertyDefinitionWithOptionsResponse,
             EntityPropertiesResponse,
             SetEntityPropertyRequest,
+            TaskTransitionBlockedResponse,
             properties::domain::model::TaskDependencyReadiness,
+            properties::domain::model::TaskSubtaskCompletionReadiness,
             EntityQueryParams,
             BulkEntityPropertiesRequest,
             BulkUpdateEntityPropertyOptionsRequest,

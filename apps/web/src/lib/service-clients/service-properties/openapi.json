@@ -602,11 +602,11 @@
             "description": "Entity or property not found"
           },
           "409": {
-            "description": "Task transition blocked by dependencies",
+            "description": "Task transition blocked",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/TaskDependencyReadiness"
+                  "$ref": "#/components/schemas/TaskTransitionBlockedResponse"
                 }
               }
             }
@@ -2379,6 +2379,54 @@
         "type": "string",
         "description": "Computed direct-dependency readiness for one task.\n\nThis is a read model only. Its value is intentionally never stored as a\nproperty or status option.",
         "enum": ["ready", "blocked"]
+      },
+      "TaskSubtaskCompletionReadiness": {
+        "type": "object",
+        "description": "Computed direct-subtask completion state for one parent task.\n\nThis is a transition-time snapshot only. It is deliberately not a\npersistent invariant and contains no task names or counts.",
+        "required": [
+          "taskId",
+          "readiness",
+          "subtaskIds",
+          "blockingSubtaskIds",
+          "hasUnavailableSubtasks"
+        ],
+        "properties": {
+          "blockingSubtaskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "hasUnavailableSubtasks": {
+            "type": "boolean"
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/TaskReadiness"
+          },
+          "subtaskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "taskId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "TaskTransitionBlockedResponse": {
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/TaskDependencyReadiness"
+          },
+          {
+            "$ref": "#/components/schemas/TaskSubtaskCompletionReadiness"
+          }
+        ],
+        "description": "The two structured conflict snapshots returned by the existing Status PUT.\nRuntime responses remain the direct five-field object for the matching\nguard; this union exists only to describe that established 409 contract."
       },
       "UpdatePropertyOptionRequest": {
         "type": "object",

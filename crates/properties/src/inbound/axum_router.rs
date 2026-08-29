@@ -97,7 +97,8 @@ pub fn properties_err_status(e: &PropertiesErr) -> StatusCode {
         | PropertiesErr::TaskDependencyCycle
         | PropertiesErr::TaskHierarchyCycle
         | PropertiesErr::TaskTransitionBlocked
-        | PropertiesErr::TaskTransitionBlockedWithReadiness(_) => StatusCode::CONFLICT,
+        | PropertiesErr::TaskTransitionBlockedWithReadiness(_)
+        | PropertiesErr::TaskCompletionBlockedBySubtasks(_) => StatusCode::CONFLICT,
         PropertiesErr::PermissionDenied
         | PropertiesErr::SystemPropertyNotModifiable
         | PropertiesErr::RequiredProperty

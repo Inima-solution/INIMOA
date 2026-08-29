@@ -217,6 +217,7 @@ fn set_entity_property_response_omits_readiness_for_success_and_exposes_exact_bl
             success: true,
             message: "Property updated successfully.".to_owned(),
             task_dependency_readiness: None,
+            task_subtask_completion_readiness: None,
         })
         .unwrap(),
         serde_json::json!({
@@ -235,6 +236,7 @@ fn set_entity_property_response_omits_readiness_for_success_and_exposes_exact_bl
                 blocking_task_ids: vec![blocking_id],
                 has_unavailable_dependencies: true,
             }),
+            task_subtask_completion_readiness: None,
         })
         .unwrap(),
         serde_json::json!({
@@ -263,6 +265,10 @@ fn set_entity_property_response_schema_contains_optional_five_field_readiness() 
         "dependsOnTaskIds",
         "blockingTaskIds",
         "hasUnavailableDependencies",
+        "taskSubtaskCompletionReadiness",
+        "subtaskIds",
+        "blockingSubtaskIds",
+        "hasUnavailableSubtasks",
     ] {
         assert!(
             schema_text.contains(key),
@@ -275,6 +281,47 @@ fn set_entity_property_response_schema_contains_optional_five_field_readiness() 
             .unwrap()
             .iter()
             .any(|field| field == "taskDependencyReadiness")
+    );
+    assert!(
+        !schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "taskSubtaskCompletionReadiness")
+    );
+}
+
+#[test]
+fn set_entity_property_completion_blocker_is_structured_and_exact() {
+    let task_id = uuid::Uuid::from_u128(0xB21);
+    let blocker = uuid::Uuid::from_u128(0xB22);
+    let response = map_set_entity_property_error(
+        crate::domain::error::PropertiesErr::TaskCompletionBlockedBySubtasks(
+            crate::domain::model::TaskSubtaskCompletionBlockedDetails::new(
+                crate::domain::model::TaskSubtaskCompletionReadiness {
+                    task_id,
+                    readiness: crate::domain::model::TaskReadiness::Blocked,
+                    subtask_ids: vec![blocker],
+                    blocking_subtask_ids: vec![blocker],
+                    has_unavailable_subtasks: true,
+                },
+            ),
+        ),
+    )
+    .unwrap();
+    assert_eq!(
+        serde_json::to_value(response).unwrap(),
+        serde_json::json!({
+            "success": false,
+            "message": "Task completion is blocked by subtasks",
+            "taskSubtaskCompletionReadiness": {
+                "taskId": task_id,
+                "readiness": "blocked",
+                "subtaskIds": [blocker],
+                "blockingSubtaskIds": [blocker],
+                "hasUnavailableSubtasks": true,
+            }
+        })
     );
 }
 

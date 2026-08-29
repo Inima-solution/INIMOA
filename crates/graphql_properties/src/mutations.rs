@@ -431,6 +431,28 @@ where
                         extensions.set("taskDependencyReadiness", readiness);
                     });
                 }
+                if let Some(properties::PropertiesErr::TaskCompletionBlockedBySubtasks(
+                    details,
+                )) = error.downcast_current_context::<properties::PropertiesErr>()
+                {
+                    let readiness = details.readiness();
+                    let readiness_state = match readiness.readiness {
+                        properties::domain::model::TaskReadiness::Ready => "ready",
+                        properties::domain::model::TaskReadiness::Blocked => "blocked",
+                    };
+                    let readiness = async_graphql::value!({
+                        "taskId": readiness.task_id.to_string(),
+                        "readiness": readiness_state,
+                        "subtaskIds": readiness.subtask_ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                        "blockingSubtaskIds": readiness.blocking_subtask_ids.iter().map(ToString::to_string).collect::<Vec<_>>(),
+                        "hasUnavailableSubtasks": readiness.has_unavailable_subtasks,
+                    });
+                    return async_graphql::Error::new("Task completion is blocked by subtasks")
+                        .extend_with(|_, extensions| {
+                            extensions.set("code", "TASK_COMPLETION_BLOCKED");
+                            extensions.set("taskSubtaskCompletionReadiness", readiness);
+                        });
+                }
                 async_graphql::Error::new(error.to_string())
             })?;
 
@@ -574,6 +596,42 @@ mod tests {
         }
     }
 
+    struct SubtaskBlockingWriter;
+
+    impl EntityPropertyWriter for SubtaskBlockingWriter {
+        async fn set_entity_property(
+            &self,
+            _: model_entity::EntityType,
+            _: String,
+            _: Uuid,
+            _: Option<SetPropertyValue>,
+        ) -> Result<EntityPropertyWithDefinition, rootcause::Report> {
+            Err(
+                rootcause::report!(properties::PropertiesErr::TaskCompletionBlockedBySubtasks(
+                    properties::domain::model::TaskSubtaskCompletionBlockedDetails::new(
+                        properties::domain::model::TaskSubtaskCompletionReadiness {
+                            task_id: Uuid::from_u128(0xA11),
+                            readiness: properties::domain::model::TaskReadiness::Blocked,
+                            subtask_ids: vec![Uuid::from_u128(0xA12)],
+                            blocking_subtask_ids: vec![Uuid::from_u128(0xA12)],
+                            has_unavailable_subtasks: true,
+                        },
+                    ),
+                ))
+                .into(),
+            )
+        }
+
+        async fn update_entity_property_options(
+            &self,
+            _: model_entity::EntityType,
+            _: String,
+            _: Vec<EntityPropertyOptionDelta>,
+        ) -> Result<Vec<EntityPropertyWithDefinition>, rootcause::Report> {
+            unreachable!("this test only invokes set_entity_property")
+        }
+    }
+
     #[tokio::test]
     async fn structured_task_transition_blocker_has_exact_graphql_extensions() {
         let definition_id = Uuid::from_u128(0xA03);
@@ -611,6 +669,39 @@ mod tests {
         );
         assert!(!format!("{extensions:?}").contains("redacted"));
         assert!(!format!("{extensions:?}").contains(&hidden_sentinel.to_string()));
+    }
+
+    #[tokio::test]
+    async fn structured_task_completion_blocker_has_exact_graphql_extensions() {
+        let definition_id = Uuid::from_u128(0xA13);
+        let schema = Schema::build(
+            QueryRoot,
+            PropertiesMutationRoot::<SubtaskBlockingWriter>::new(),
+            EmptySubscription,
+        )
+        .data(SubtaskBlockingWriter)
+        .finish();
+        let response = schema.execute(format!(
+            r#"mutation {{ setEntityProperty(input: {{ entityType: DOCUMENT, entityId: "task", propertyDefinitionId: "{definition_id}" }}) {{ id }} }}"#
+        )).await;
+        assert_eq!(response.errors.len(), 1);
+        let error = &response.errors[0];
+        assert_eq!(error.message, "Task completion is blocked by subtasks");
+        let extensions = error.extensions.as_ref().unwrap();
+        assert_eq!(
+            extensions.get("code"),
+            Some(&async_graphql::value!("TASK_COMPLETION_BLOCKED"))
+        );
+        assert_eq!(
+            extensions.get("taskSubtaskCompletionReadiness"),
+            Some(&async_graphql::value!({
+                "taskId": Uuid::from_u128(0xA11).to_string(),
+                "readiness": "blocked",
+                "subtaskIds": [Uuid::from_u128(0xA12).to_string()],
+                "blockingSubtaskIds": [Uuid::from_u128(0xA12).to_string()],
+                "hasUnavailableSubtasks": true,
+            }))
+        );
     }
 
     #[tokio::test]

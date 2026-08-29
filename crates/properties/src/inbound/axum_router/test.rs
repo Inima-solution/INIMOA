@@ -161,6 +161,37 @@ async fn structured_task_transition_blocker_renders_exact_json_conflict() {
     assert!(!body.to_string().contains(&hidden_sentinel.to_string()));
 }
 
+#[tokio::test]
+async fn structured_task_completion_blocker_renders_exact_json_conflict() {
+    let task_id = Uuid::from_u128(0x911);
+    let blocker = Uuid::from_u128(0x912);
+    let response = SetEntityPropertyErr::from(PropertiesErr::TaskCompletionBlockedBySubtasks(
+        crate::domain::model::TaskSubtaskCompletionBlockedDetails::new(
+            crate::domain::model::TaskSubtaskCompletionReadiness {
+                task_id,
+                readiness: crate::domain::model::TaskReadiness::Blocked,
+                subtask_ids: vec![blocker],
+                blocking_subtask_ids: vec![blocker],
+                has_unavailable_subtasks: true,
+            },
+        ),
+    ))
+    .into_response();
+    assert_eq!(response.status(), StatusCode::CONFLICT);
+    let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(
+        body,
+        serde_json::json!({
+            "taskId": task_id,
+            "readiness": "blocked",
+            "subtaskIds": [blocker],
+            "blockingSubtaskIds": [blocker],
+            "hasUnavailableSubtasks": true,
+        })
+    );
+}
+
 const DEFAULT_INTERNAL_USER_ID: &str = "macro|internal@macro.com";
 const INTERNAL_API_KEY: &str = "test-internal-key";
 const ORGANIZATION_ID: i32 = 42;

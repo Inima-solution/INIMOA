@@ -193,6 +193,9 @@ pub struct SetEntityPropertyResponse {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub task_dependency_readiness: Option<TaskDependencyReadiness>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_subtask_completion_readiness:
+        Option<crate::domain::model::TaskSubtaskCompletionReadiness>,
 }
 
 pub(super) fn map_set_entity_property_error(
@@ -204,6 +207,15 @@ pub(super) fn map_set_entity_property_error(
                 success: false,
                 message: "Task transition is blocked by dependencies".to_string(),
                 task_dependency_readiness: Some(readiness.into_inner()),
+                task_subtask_completion_readiness: None,
+            })
+        }
+        PropertiesErr::TaskCompletionBlockedBySubtasks(readiness) => {
+            Ok(SetEntityPropertyResponse {
+                success: false,
+                message: "Task completion is blocked by subtasks".to_string(),
+                task_dependency_readiness: None,
+                task_subtask_completion_readiness: Some(readiness.into_inner()),
             })
         }
         error => Err(ToolCallError {
@@ -305,6 +317,7 @@ where
                 success: true,
                 message: "Property options updated successfully.".to_string(),
                 task_dependency_readiness: None,
+                task_subtask_completion_readiness: None,
             });
         }
 
@@ -324,6 +337,7 @@ where
             success: true,
             message: "Property updated successfully.".to_string(),
             task_dependency_readiness: None,
+            task_subtask_completion_readiness: None,
         })
     }
 }
