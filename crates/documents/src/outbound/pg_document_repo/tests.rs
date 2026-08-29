@@ -372,6 +372,71 @@ async fn soft_delete_serializes_behind_taskdeps_lock(pool: Pool<Postgres>) -> an
     migrator = "MACRO_DB_MIGRATIONS",
     fixtures(path = "../../../fixtures", scripts("documents_test_data"))
 )]
+async fn soft_delete_serializes_behind_taskhier_lock(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    let repo = PgDocumentRepo::new(pool.clone());
+    let mut lock_transaction = pool.begin().await?;
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKHIER")
+    )
+    .fetch_one(&mut *lock_transaction)
+    .await?;
+    let mut delete = tokio::spawn(async move { repo.soft_delete_document(TEST_DOCUMENT_ID).await });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(25), &mut delete)
+            .await
+            .is_err()
+    );
+    lock_transaction.commit().await?;
+    delete.await??;
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("documents_test_data"))
+)]
+async fn soft_delete_preserves_task_hierarchy_values_exactly(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgDocumentRepo::new(pool.clone());
+    let parent = serde_json::json!({"type":"EntityReference","value":[{"entity_id":"parent","entity_type":"TASK","specific_message_id":"exact"}]});
+    let subtasks = serde_json::json!({"type":"EntityReference","value":[{"entity_id":"child-b","entity_type":"TASK"},{"entity_id":"child-a","entity_type":"TASK","specific_message_id":null}]});
+    set_task_relation(
+        &pool,
+        TEST_DOCUMENT_ID,
+        PARENT_TASK_PROPERTY_ID,
+        parent.clone(),
+    )
+    .await;
+    set_task_relation(
+        &pool,
+        TEST_DOCUMENT_ID,
+        SUBTASKS_PROPERTY_ID,
+        subtasks.clone(),
+    )
+    .await;
+    repo.soft_delete_document(TEST_DOCUMENT_ID).await?;
+    for (property_id, expected) in [
+        (PARENT_TASK_PROPERTY_ID, parent),
+        (SUBTASKS_PROPERTY_ID, subtasks),
+    ] {
+        let actual: serde_json::Value = sqlx::query_scalar(
+            "SELECT values FROM entity_properties WHERE entity_id = $1 AND property_definition_id = $2::uuid",
+        )
+        .bind(TEST_DOCUMENT_ID)
+        .bind(property_id)
+        .fetch_one(&pool)
+        .await?;
+        assert_eq!(actual, expected);
+    }
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("documents_test_data"))
+)]
 async fn test_update_document_modified(pool: Pool<Postgres>) {
     let document_id = "d0000000-0000-0000-0000-000000000001";
     sqlx::query!(

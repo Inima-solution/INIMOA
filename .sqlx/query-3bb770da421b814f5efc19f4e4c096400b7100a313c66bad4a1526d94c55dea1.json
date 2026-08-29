@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        WITH source AS (\n            SELECT d.id\n            FROM \"Document\" d\n            JOIN document_sub_type dst\n              ON dst.document_id = d.id AND dst.sub_type = 'task'\n            WHERE d.id = $1\n        ), replacement AS (\n            SELECT ep.id,\n                CASE WHEN ep.entity_id = source.id THEN NULL\n                     ELSE COALESCE(\n                        jsonb_set(\n                            ep.values,\n                            '{value}',\n                            (\n                                SELECT jsonb_agg(reference ORDER BY ordinality)\n                                FROM jsonb_array_elements(ep.values->'value')\n                                     WITH ORDINALITY refs(reference, ordinality)\n                                WHERE reference->>'entity_id' IS DISTINCT FROM source.id\n                            ),\n                            false\n                        ),\n                        NULL\n                     )\n                END AS values\n            FROM entity_properties ep\n            CROSS JOIN source\n            WHERE ep.entity_type = 'TASK'\n              AND ep.property_definition_id IN ($2, $3)\n              AND (\n                  ep.entity_id = source.id\n                  OR EXISTS (\n                      SELECT 1\n                      FROM jsonb_array_elements(\n                          CASE WHEN jsonb_typeof(ep.values->'value') = 'array'\n                               THEN ep.values->'value' ELSE '[]'::jsonb END\n                      ) reference\n                      WHERE reference->>'entity_id' = source.id\n                  )\n              )\n        )\n        UPDATE entity_properties ep\n        SET values = replacement.values, updated_at = NOW()\n        FROM replacement\n        WHERE ep.id = replacement.id\n          AND ep.values IS DISTINCT FROM replacement.values\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "3bb770da421b814f5efc19f4e4c096400b7100a313c66bad4a1526d94c55dea1"
+}

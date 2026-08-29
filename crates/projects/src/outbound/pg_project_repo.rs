@@ -42,6 +42,18 @@ impl PgProjectRepo {
     }
 }
 
+async fn lock_task_hierarchy(
+    transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+) -> Result<(), sqlx::Error> {
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKHIER")
+    )
+    .fetch_one(transaction.as_mut())
+    .await?;
+    Ok(())
+}
+
 impl ProjectRepo for PgProjectRepo {
     type Err = sqlx::Error;
 
@@ -316,6 +328,7 @@ impl ProjectRepo for PgProjectRepo {
         )
         .fetch_one(&mut *transaction)
         .await?;
+        lock_task_hierarchy(&mut transaction).await?;
         let result = delete::soft_delete_project(&mut transaction, project_id).await?;
         transaction.commit().await?;
         Ok(result)
@@ -354,6 +367,7 @@ impl ProjectRepo for PgProjectRepo {
         )
         .fetch_one(&mut *transaction)
         .await?;
+        lock_task_hierarchy(&mut transaction).await?;
         let result = revert_delete::revert_delete_project(
             &mut transaction,
             project_id,

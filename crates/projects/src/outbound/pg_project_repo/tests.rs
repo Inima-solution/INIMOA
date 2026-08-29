@@ -1423,6 +1423,109 @@ async fn subtree_delete_and_restore_serialize_behind_taskdeps_lock(
     migrator = "MACRO_DB_MIGRATIONS",
     fixtures(path = "../../../fixtures", scripts("projects_test_data"))
 )]
+async fn subtree_lifecycle_serializes_behind_taskhier_lock(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    let mut delete_lock = pool.begin().await?;
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKHIER")
+    )
+    .fetch_one(&mut *delete_lock)
+    .await?;
+    let delete_repo = repo.clone();
+    let mut delete = tokio::spawn(async move { delete_repo.soft_delete_project(ROOT_ID).await });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(25), &mut delete)
+            .await
+            .is_err()
+    );
+    delete_lock.commit().await?;
+    delete.await??;
+    let mut restore_lock = pool.begin().await?;
+    sqlx::query_scalar!(
+        r#"SELECT 1 AS "locked!" FROM pg_advisory_xact_lock($1)"#,
+        i64::from_be_bytes(*b"TASKHIER")
+    )
+    .fetch_one(&mut *restore_lock)
+    .await?;
+    let restore_repo = repo.clone();
+    let mut restore =
+        tokio::spawn(async move { restore_repo.revert_delete_project(ROOT_ID, None).await });
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(25), &mut restore)
+            .await
+            .is_err()
+    );
+    restore_lock.commit().await?;
+    restore.await??;
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn subtree_lifecycle_preserves_task_hierarchy_and_document_projects(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    let parent = "20000000-0000-0000-0000-000000000102";
+    let child = "20000000-0000-0000-0000-000000000107";
+    let parent_value = serde_json::json!({"type":"EntityReference","value":[{"entity_id":child,"entity_type":"TASK","specific_message_id":null}]});
+    let child_value = serde_json::json!({"type":"EntityReference","value":[{"entity_id":parent,"entity_type":"TASK","specific_message_id":null}]});
+    for (entity_id, definition, value) in [
+        (
+            parent,
+            system_properties::SystemPropertyKey::SUBTASKS_UUID,
+            parent_value.clone(),
+        ),
+        (
+            child,
+            system_properties::SystemPropertyKey::PARENT_TASK_UUID,
+            child_value.clone(),
+        ),
+    ] {
+        sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)")
+            .bind(uuid::Uuid::new_v4()).bind(entity_id).bind(definition).bind(value).execute(&pool).await?;
+    }
+    let before_projects: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT \"projectId\" FROM \"Document\" WHERE id = ANY($1) ORDER BY id")
+            .bind(vec![parent, child])
+            .fetch_all(&pool)
+            .await?;
+    repo.soft_delete_project(ROOT_ID).await?;
+    repo.revert_delete_project(ROOT_ID, None).await?;
+    let after_projects: Vec<Option<String>> =
+        sqlx::query_scalar("SELECT \"projectId\" FROM \"Document\" WHERE id = ANY($1) ORDER BY id")
+            .bind(vec![parent, child])
+            .fetch_all(&pool)
+            .await?;
+    assert_eq!(after_projects, before_projects);
+    let stored_parent: serde_json::Value = sqlx::query_scalar(
+        "SELECT values FROM entity_properties WHERE entity_id = $1 AND property_definition_id = $2",
+    )
+    .bind(parent)
+    .bind(system_properties::SystemPropertyKey::SUBTASKS_UUID)
+    .fetch_one(&pool)
+    .await?;
+    let stored_child: serde_json::Value = sqlx::query_scalar(
+        "SELECT values FROM entity_properties WHERE entity_id = $1 AND property_definition_id = $2",
+    )
+    .bind(child)
+    .bind(system_properties::SystemPropertyKey::PARENT_TASK_UUID)
+    .fetch_one(&pool)
+    .await?;
+    assert_eq!(stored_parent, parent_value);
+    assert_eq!(stored_child, child_value);
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
 async fn revert_restores_subtree_and_handles_parent_state(
     pool: Pool<Postgres>,
 ) -> anyhow::Result<()> {

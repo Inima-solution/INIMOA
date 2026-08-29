@@ -13,11 +13,11 @@ pub(crate) async fn restore_document<B: MacroEventBroker>(
     db: &PgPool,
     event_broker: &B,
     document_id: &str,
-) -> anyhow::Result<Vec<Uuid>> {
-    let ready_task_ids =
+) -> anyhow::Result<macro_db_client::document::revert_delete::DocumentRestoreOutcome> {
+    let outcome =
         macro_db_client::document::revert_delete::revert_delete_document(db, document_id).await?;
-    schedule_task_ready_events(event_broker, &ready_task_ids);
-    Ok(ready_task_ids)
+    schedule_task_ready_events(event_broker, &outcome.ready_task_ids);
+    Ok(outcome)
 }
 
 fn schedule_task_ready_events<B: MacroEventBroker>(event_broker: &B, task_ids: &[Uuid]) {

@@ -102,12 +102,13 @@ async fn coordinator_emits_once_for_actual_restore_and_not_retry(
     schema(&pool).await?;
     let (predecessor, dependent) = ready_fixture(&pool).await?;
     let broker = RecordingBroker::default();
+    let first = restore_document(&pool, &broker, &predecessor.to_string()).await?;
+    assert_eq!(first.ready_task_ids, vec![dependent]);
+    assert_eq!(first.project_id, None);
     assert_eq!(
-        restore_document(&pool, &broker, &predecessor.to_string()).await?,
-        vec![dependent]
-    );
-    assert_eq!(
-        restore_document(&pool, &broker, &predecessor.to_string()).await?,
+        restore_document(&pool, &broker, &predecessor.to_string())
+            .await?
+            .ready_task_ids,
         Vec::<Uuid>::new()
     );
     let events = broker.0.lock().unwrap();
@@ -136,7 +137,9 @@ async fn coordinator_blocks_incomplete_and_rolls_back_fanout_failure(
     sqlx::query("UPDATE entity_properties SET values = $1 WHERE entity_id = $2 AND property_definition_id = $3").bind(serde_json::json!({"type":"EntityReference","value":[{"entity_id":predecessor,"entity_type":"TASK","specific_message_id":null},{"entity_id":incomplete,"entity_type":"TASK","specific_message_id":null}]})).bind(dependent.to_string()).bind(system_properties::SystemPropertyKey::DEPENDS_ON_UUID).execute(&pool).await?;
     let broker = RecordingBroker::default();
     assert_eq!(
-        restore_document(&pool, &broker, &predecessor.to_string()).await?,
+        restore_document(&pool, &broker, &predecessor.to_string())
+            .await?
+            .ready_task_ids,
         Vec::<Uuid>::new()
     );
     assert!(broker.0.lock().unwrap().is_empty());
@@ -168,7 +171,9 @@ async fn immediate_broker_failure_keeps_committed_restore_successful(
     schema(&pool).await?;
     let (predecessor, dependent) = ready_fixture(&pool).await?;
     assert_eq!(
-        restore_document(&pool, &FailingBroker, &predecessor.to_string()).await?,
+        restore_document(&pool, &FailingBroker, &predecessor.to_string())
+            .await?
+            .ready_task_ids,
         vec![dependent]
     );
     let deleted: Option<chrono::DateTime<chrono::Utc>> =

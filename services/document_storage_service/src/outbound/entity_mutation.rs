@@ -104,13 +104,14 @@ impl<B: MacroEventBroker> EntityLifecycleService for DssEntityLifecycleAdapter<B
         _actor: &EntityMutationActor,
         entity: &Entity<'static>,
     ) -> Result<Vec<Entity<'static>>, LifecycleError> {
-        let document = macro_db_client::document::get_basic_document(&self.db, &entity.entity_id)
+        macro_db_client::document::get_basic_document(&self.db, &entity.entity_id)
             .await
             .map_err(row_error)?;
-        document_restore::restore_document(&self.db, &self.event_broker, &entity.entity_id)
-            .await
-            .map_err(|error| internal!(error))?;
-        Ok(document
+        let outcome =
+            document_restore::restore_document(&self.db, &self.event_broker, &entity.entity_id)
+                .await
+                .map_err(|error| internal!(error))?;
+        Ok(outcome
             .project_id
             .into_iter()
             .map(|id| EntityType::Project.with_entity_string(id))

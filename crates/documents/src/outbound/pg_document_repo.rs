@@ -251,6 +251,8 @@ impl DocumentRepo for PgDocumentRepo {
         .fetch_one(&mut *transaction)
         .await?;
 
+        edit::lock_task_hierarchy(&mut transaction).await?;
+
         // Delete pins
         sqlx::query!(
             r#"
