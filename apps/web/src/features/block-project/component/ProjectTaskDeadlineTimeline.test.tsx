@@ -8,6 +8,14 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectTaskDeadlineTimeline } from './ProjectTaskDeadlineTimeline';
 
+const mocks = vi.hoisted(() => ({
+  relationCalls: [] as Array<{
+    taskId: string;
+    task?: TaskEntityWithProperties;
+    mode?: string;
+  }>,
+}));
+
 vi.mock('@core/component/LoadingBlock', () => ({
   LoadingBlock: () => <div data-testid="loading-block">Loading tasks</div>,
 }));
@@ -17,8 +25,27 @@ vi.mock('@entity', () => ({
     Title: (props: { entity: TaskEntityWithProperties }) => props.entity.name,
   },
 }));
+vi.mock('@property/task-dependency-relations', () => ({
+  TaskDependencyRelations: (props: {
+    taskId: string;
+    task?: TaskEntityWithProperties;
+    mode?: string;
+  }) => {
+    mocks.relationCalls.push(props);
+    return (
+      <span
+        aria-hidden="true"
+        data-testid="task-dependency-relation"
+        data-mode={props.mode}
+      />
+    );
+  },
+}));
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  mocks.relationCalls = [];
+});
 
 function task(
   name: string,
@@ -161,6 +188,7 @@ describe('ProjectTaskDeadlineTimeline', () => {
     }).format(new Date('2026-04-12T08:00:00'));
     const formattedSpan = `${startLabel} – ${dueLabel}`;
     const spanText = view.getByText(formattedSpan);
+    const metadata = spanText.parentElement;
     expect(spanText.classList.contains('text-ink-muted')).toBe(true);
     expect(spanText.classList.contains('max-w-40')).toBe(true);
     expect(spanText.classList.contains('min-w-0')).toBe(true);
@@ -168,6 +196,19 @@ describe('ProjectTaskDeadlineTimeline', () => {
     expect(spanText.getAttribute('aria-label')).toBe(
       `Start ${startLabel}; due ${dueLabel}`
     );
+    expect(spanText.getAttribute('title')).toBe(
+      `Start ${startLabel}; due ${dueLabel}`
+    );
+    expect(metadata?.classList.contains('flex')).toBe(true);
+    expect(metadata?.classList.contains('max-w-1/2')).toBe(true);
+    expect(metadata?.classList.contains('min-w-0')).toBe(true);
+    expect(metadata?.classList.contains('shrink-0')).toBe(true);
+    expect(metadata?.classList.contains('items-center')).toBe(true);
+    expect(metadata?.classList.contains('gap-2')).toBe(true);
+    expect(metadata?.classList.contains('overflow-hidden')).toBe(true);
+    expect(
+      metadata?.querySelector('[data-testid="task-dependency-relation"]')
+    ).toBeTruthy();
     expect(
       view.getByRole('button', {
         name: `Span Start ${startLabel}; due ${dueLabel}`,
@@ -208,7 +249,7 @@ describe('ProjectTaskDeadlineTimeline', () => {
     ).toEqual(headings.map((heading) => [heading.textContent, heading.id]));
   });
 
-  it('uses native task buttons, exposes a labeled region, and only labels true milestones', async () => {
+  it('uses native task buttons and exposes a labeled region', async () => {
     const milestone = task(
       'Deadline milestone',
       due('2026-04-10T08:00:00'),
@@ -230,12 +271,6 @@ describe('ProjectTaskDeadlineTimeline', () => {
     expect(view.getAllByRole('region')).toHaveLength(1);
     expect(button.tagName).toBe('BUTTON');
     expect(button.classList.contains('touch:min-h-11')).toBe(true);
-    expect(
-      view.getByText('Milestone').classList.contains('text-ink-muted')
-    ).toBe(true);
-    expect(
-      view.queryByRole('button', { name: /Ordinary task.*Milestone/ })
-    ).toBeNull();
     fireEvent.click(button, { altKey: true });
     expect(onOpenTask).toHaveBeenCalledWith(milestone, expect.any(MouseEvent));
     expect(onOpenTask.mock.calls[0][1].altKey).toBe(true);
@@ -243,6 +278,34 @@ describe('ProjectTaskDeadlineTimeline', () => {
     button.focus();
     await user.keyboard('{Enter}');
     expect(onOpenTask).toHaveBeenCalledTimes(2);
+  });
+
+  it('renders one row-mode dependency relation for every visible task in source order without a standalone milestone label', () => {
+    const first = task('First', due('2026-04-10T08:00:00'), true);
+    const second = task('Second', due('2026-04-10T10:00:00'));
+    const third = task('Third', due('2026-04-10T12:00:00'));
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={[first, second, third]}
+        onOpenTask={() => {}}
+      />
+    ));
+
+    expect(mocks.relationCalls).toEqual([
+      { taskId: first.id, task: first, mode: 'row' },
+      { taskId: second.id, task: second, mode: 'row' },
+      { taskId: third.id, task: third, mode: 'row' },
+    ]);
+    expect(view.getAllByTestId('task-dependency-relation')).toHaveLength(3);
+    expect(view.queryByText('Milestone')).toBeNull();
+  });
+
+  it('does not invoke the relation renderer when the timeline has no visible tasks', () => {
+    render(() => (
+      <ProjectTaskDeadlineTimeline tasks={[]} onOpenTask={() => {}} />
+    ));
+
+    expect(mocks.relationCalls).toEqual([]);
   });
 
   it('distinguishes loading, initial error, empty/search-empty, retained error, and bounded paging', () => {

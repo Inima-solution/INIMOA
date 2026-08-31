@@ -4,8 +4,8 @@ import {
   getLocalDateKey,
   getTaskDueDate,
   getTaskScheduleProjection,
-  isTaskMilestone,
 } from '@entity/utils/task-properties';
+import { TaskDependencyRelations } from '@property/task-dependency-relations';
 import { Button, EmptyStatePanel } from '@ui';
 import { createUniqueId, For, Show } from 'solid-js';
 
@@ -155,21 +155,24 @@ export function ProjectTaskDeadlineTimeline(props: {
                                 <span class="min-w-0 flex-1 truncate">
                                   <Entity.Title entity={task} />
                                 </span>
-                                <Show when={scheduleText()}>
-                                  {(text) => (
-                                    <span
-                                      aria-label={scheduleAccessibleLabel()}
-                                      class="max-w-40 min-w-0 truncate text-xs text-ink-muted"
-                                    >
-                                      {text()}
-                                    </span>
-                                  )}
-                                </Show>
-                                <Show when={isTaskMilestone(task)}>
-                                  <span class="shrink-0 text-xs text-ink-muted">
-                                    Milestone
-                                  </span>
-                                </Show>
+                                <span class="flex max-w-1/2 min-w-0 shrink-0 items-center gap-2 overflow-hidden">
+                                  <Show when={scheduleText()}>
+                                    {(text) => (
+                                      <span
+                                        aria-label={scheduleAccessibleLabel()}
+                                        title={scheduleAccessibleLabel()}
+                                        class="max-w-40 min-w-0 truncate text-xs text-ink-muted"
+                                      >
+                                        {text()}
+                                      </span>
+                                    )}
+                                  </Show>
+                                  <TaskDependencyRelations
+                                    taskId={task.id}
+                                    task={task}
+                                    mode="row"
+                                  />
+                                </span>
                               </button>
                             </li>
                           );
