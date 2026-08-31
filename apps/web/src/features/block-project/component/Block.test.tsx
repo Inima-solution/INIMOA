@@ -1,5 +1,6 @@
 /** @vitest-environment jsdom */
 
+import type { UploadInput } from '@core/util/upload';
 import { cleanup, render } from '@solidjs/testing-library';
 import type { Accessor, ParentProps } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -47,6 +48,15 @@ const mocks = vi.hoisted(() => ({
   controllerSplit: false,
   duplicatePreview: false,
   entryStateCalls: [] as Array<{ key: string; options: { default: string } }>,
+  fileFolderDropOptions: undefined as
+    | {
+        disabled?: boolean;
+        onDrop?: (
+          fileEntries: FileSystemFileEntry[],
+          folderEntries: FileSystemDirectoryEntry[]
+        ) => void;
+      }
+    | undefined,
   focusSet: vi.fn(),
   milestoneFilterProps: undefined as { viewOverride?: string } | undefined,
   milestoneToolbarItem: undefined as
@@ -92,6 +102,9 @@ const mocks = vi.hoisted(() => ({
       }
     | undefined,
   viewMode: 'list' as 'list' | 'board' | 'timeline',
+  uploadCallback: undefined as
+    | ((files: UploadInput[]) => Promise<void>)
+    | undefined,
   rows: [] as Array<{
     getIsGrouped: () => boolean;
     getIsLoadMore: () => boolean;
@@ -201,13 +214,28 @@ vi.mock('@core/component/FileDropOverlay', () => ({
 vi.mock('@core/component/Toast/Toast', () => ({
   toast: { failure: vi.fn() },
 }));
-vi.mock('@core/directive/fileFolderDrop', () => ({ fileFolderDrop: () => {} }));
+vi.mock('@core/directive/fileFolderDrop', () => ({
+  fileFolderDrop: (
+    _element: HTMLElement,
+    accessor: Accessor<typeof mocks.fileFolderDropOptions>
+  ) => {
+    mocks.fileFolderDropOptions = accessor();
+  },
+}));
 vi.mock('@core/directive/fileSelector', () => ({ fileSelector: () => {} }));
 vi.mock('@core/signal/blockElement', () => ({
   blockHotkeyScopeSignal: { get: () => 'scope-id' },
 }));
 vi.mock('@core/util/upload', () => ({
-  handleFileFolderDrop: vi.fn(),
+  handleFileFolderDrop: vi.fn(
+    (
+      _fileEntries: FileSystemFileEntry[],
+      _folderEntries: FileSystemDirectoryEntry[],
+      onFilesReady: (files: UploadInput[]) => Promise<void>
+    ) => {
+      mocks.uploadCallback = onFilesReady;
+    }
+  ),
   uploadFiles: vi.fn(),
 }));
 vi.mock('@entity/types/entity', () => ({
@@ -291,6 +319,10 @@ vi.mock('./TopBar', () => ({
   },
 }));
 
+import { toast } from '@core/component/Toast/Toast';
+import { handleFileFolderDrop, uploadFiles } from '@core/util/upload';
+import { refetchSoupEntity } from '@queries/soup/cache';
+import { refetchResources } from '@service-storage/util/refetchResources';
 import Block from './Block';
 
 afterEach(cleanup);
@@ -304,6 +336,7 @@ beforeEach(() => {
   mocks.controllerSplit = false;
   mocks.duplicatePreview = false;
   mocks.entryStateCalls = [];
+  mocks.fileFolderDropOptions = undefined;
   mocks.focusSet.mockReset();
   mocks.milestoneFilterProps = undefined;
   mocks.milestoneToolbarItem = undefined;
@@ -336,7 +369,215 @@ beforeEach(() => {
   mocks.searchText = '';
   mocks.topBarProps = undefined;
   mocks.viewMode = 'list';
+  mocks.uploadCallback = undefined;
   mocks.rows = [];
+  vi.mocked(handleFileFolderDrop).mockClear();
+  vi.mocked(uploadFiles).mockReset();
+  vi.mocked(refetchSoupEntity).mockReset();
+  vi.mocked(refetchResources).mockReset();
+  vi.mocked(toast.failure).mockReset();
+});
+
+describe('project native drop upload lifecycle', () => {
+  const captureUploadCallback = () => {
+    render(() => <Block />);
+    mocks.fileFolderDropOptions?.onDrop?.([], []);
+    expect(handleFileFolderDrop).toHaveBeenCalledWith(
+      [],
+      [],
+      expect.any(Function)
+    );
+    expect(mocks.uploadCallback).toEqual(expect.any(Function));
+    return mocks.uploadCallback!;
+  };
+
+  it('uploads immediate documents through the captured native drop callback and refreshes their project surfaces', async () => {
+    const callback = captureUploadCallback();
+    const file = new File(['document'], 'proposal.pdf');
+    vi.mocked(uploadFiles).mockResolvedValue([
+      {
+        destination: 'dss',
+        documentId: 'document-id',
+        failed: false,
+        fileType: undefined,
+        name: 'proposal.pdf',
+        pending: false,
+        type: 'document',
+      } as never,
+    ]);
+
+    await callback([file]);
+
+    expect(uploadFiles).toHaveBeenCalledWith([file], 'dss', {
+      projectId: 'project-id',
+    });
+    expect(refetchSoupEntity).toHaveBeenCalledTimes(1);
+    expect(refetchSoupEntity).toHaveBeenCalledWith('document-id', 'document');
+    expect(refetchResources).toHaveBeenCalledTimes(1);
+    expect(toast.failure).not.toHaveBeenCalled();
+  });
+
+  it('does not refresh entities or resources when every upload result failed', async () => {
+    const callback = captureUploadCallback();
+    vi.mocked(uploadFiles).mockResolvedValue([
+      {
+        failed: true,
+        name: 'failed.pdf',
+        error: new Error('transport'),
+      } as never,
+    ]);
+
+    await callback([new File(['document'], 'failed.pdf')]);
+
+    expect(refetchSoupEntity).not.toHaveBeenCalled();
+    expect(refetchResources).not.toHaveBeenCalled();
+    expect(toast.failure).not.toHaveBeenCalled();
+  });
+
+  it('waits for a pending folder project before refreshing that project and resources', async () => {
+    const callback = captureUploadCallback();
+    let resolveProjectId: (projectId: string | undefined) => void = () => {};
+    const projectId = new Promise<string | undefined>((resolve) => {
+      resolveProjectId = resolve;
+    });
+    vi.mocked(uploadFiles).mockResolvedValue([
+      {
+        destination: 'dss',
+        failed: false,
+        name: 'folder.zip',
+        pending: true,
+        projectId,
+        requestId: 'request-id',
+        type: 'folder',
+      } as never,
+    ]);
+
+    const completion = callback([
+      { file: new File(['folder'], 'folder.zip'), isFolder: true },
+    ]);
+    await Promise.resolve();
+    expect(refetchSoupEntity).not.toHaveBeenCalled();
+    expect(refetchResources).not.toHaveBeenCalled();
+
+    resolveProjectId('resolved-project-id');
+    await completion;
+
+    expect(refetchSoupEntity).toHaveBeenCalledTimes(1);
+    expect(refetchSoupEntity).toHaveBeenCalledWith(
+      'resolved-project-id',
+      'project'
+    );
+    expect(refetchResources).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves immediate-document then pending-folder refresh order', async () => {
+    const callback = captureUploadCallback();
+    let resolveProjectId: (projectId: string | undefined) => void = () => {};
+    const projectId = new Promise<string | undefined>((resolve) => {
+      resolveProjectId = resolve;
+    });
+    vi.mocked(uploadFiles).mockResolvedValue([
+      {
+        destination: 'dss',
+        documentId: 'immediate-document-id',
+        failed: false,
+        fileType: undefined,
+        name: 'immediate.pdf',
+        pending: false,
+        type: 'document',
+      } as never,
+      {
+        destination: 'dss',
+        failed: false,
+        name: 'folder.zip',
+        pending: true,
+        projectId,
+        requestId: 'request-id',
+        type: 'folder',
+      } as never,
+    ]);
+
+    const completion = callback([new File(['document'], 'immediate.pdf')]);
+    await Promise.resolve();
+    expect(refetchSoupEntity).toHaveBeenCalledWith(
+      'immediate-document-id',
+      'document'
+    );
+    expect(refetchResources).toHaveBeenCalledTimes(1);
+
+    resolveProjectId('pending-folder-project-id');
+    await completion;
+
+    expect(refetchSoupEntity).toHaveBeenNthCalledWith(
+      1,
+      'immediate-document-id',
+      'document'
+    );
+    expect(refetchResources).toHaveBeenNthCalledWith(1);
+    expect(refetchSoupEntity).toHaveBeenNthCalledWith(
+      2,
+      'pending-folder-project-id',
+      'project'
+    );
+    expect(refetchResources).toHaveBeenCalledTimes(2);
+    const [documentRefetchOrder, folderRefetchOrder] =
+      vi.mocked(refetchSoupEntity).mock.invocationCallOrder;
+    const [immediateResourceOrder, pendingResourceOrder] =
+      vi.mocked(refetchResources).mock.invocationCallOrder;
+    expect(documentRefetchOrder).toBeLessThan(immediateResourceOrder);
+    expect(immediateResourceOrder).toBeLessThan(folderRefetchOrder);
+    expect(folderRefetchOrder).toBeLessThan(pendingResourceOrder);
+  });
+
+  it('does not transport empty input', async () => {
+    const callback = captureUploadCallback();
+
+    await callback([]);
+
+    expect(uploadFiles).not.toHaveBeenCalled();
+    expect(refetchSoupEntity).not.toHaveBeenCalled();
+    expect(refetchResources).not.toHaveBeenCalled();
+  });
+
+  it('keeps special projects disabled and fail-closed when their captured callback is invoked', async () => {
+    mocks.projectId = 'special-project';
+    const callback = captureUploadCallback();
+
+    expect(mocks.fileFolderDropOptions?.disabled).toBe(true);
+    await callback([new File(['document'], 'blocked.pdf')]);
+
+    expect(uploadFiles).not.toHaveBeenCalled();
+    expect(toast.failure).toHaveBeenCalledTimes(1);
+    expect(toast.failure).toHaveBeenCalledWith(
+      'Cannot upload files to this location'
+    );
+    expect(refetchSoupEntity).not.toHaveBeenCalled();
+    expect(refetchResources).not.toHaveBeenCalled();
+  });
+
+  it('shows only the fixed failure toast when upload rejects without exposing the raw error', async () => {
+    const callback = captureUploadCallback();
+    const rawError = new Error('secret transport detail');
+    const consoleError = vi
+      .spyOn(console, 'error')
+      .mockImplementation(() => undefined);
+    vi.mocked(uploadFiles).mockRejectedValue(rawError);
+
+    try {
+      await callback([new File(['document'], 'failed.pdf')]);
+    } finally {
+      consoleError.mockRestore();
+    }
+
+    expect(toast.failure).toHaveBeenCalledTimes(1);
+    expect(toast.failure).toHaveBeenCalledWith(
+      'Upload failed. Please try again.'
+    );
+    expect(toast.failure).not.toHaveBeenCalledWith(rawError);
+    expect(document.body.textContent).not.toContain('secret transport detail');
+    expect(refetchSoupEntity).not.toHaveBeenCalled();
+    expect(refetchResources).not.toHaveBeenCalled();
+  });
 });
 
 describe('project task dependency relation batching', () => {
