@@ -2,7 +2,7 @@
 
 use std::collections::HashSet;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use entity_access::domain::models::{
     EditAccessLevel, EntityAccessAuth, EntityAccessReceipt, EntityPermission, EntityType,
     OwnerAccessLevel, ReadProjectWorkScoped, ViewAccessLevel, WriteProjectWorkStatusScoped,
@@ -33,13 +33,13 @@ use super::events::{
 };
 use super::models::{
     CreateProjectArgs, EditProjectArgs, ProjectError, ProjectOperations, ProjectOverview,
-    ProjectTaskProgress, PurgedProjectTree, PurgedProjectTreeWithRoot, RevertDeleteResult,
-    SoftDeleteResult, UpdateProjectOperationsCommand, UpdateProjectOperationsOutcome,
-    UpdateProjectOperationsRequest, UploadFolderRepoArgs,
+    ProjectTaskProgress, ProjectTaskRisk, PurgedProjectTree, PurgedProjectTreeWithRoot,
+    RevertDeleteResult, SoftDeleteResult, UpdateProjectOperationsCommand,
+    UpdateProjectOperationsOutcome, UpdateProjectOperationsRequest, UploadFolderRepoArgs,
 };
 use super::ports::{
     BulkUploadRequestPort, ProjectRepo, ProjectSearchIndexer, ProjectService,
-    ProjectTaskProgressService, ProjectUploadUrlPort, ShaCounterPort,
+    ProjectTaskProgressService, ProjectTaskRiskService, ProjectUploadUrlPort, ShaCounterPort,
 };
 use super::upload::{build_destination_map, build_root_folder};
 
@@ -971,6 +971,39 @@ where
             .get_project_task_progress_scoped(project_id, team_id)
             .await
             .map_err(|error| internal_error(error, "unable to get project task progress"))?
+            .ok_or_else(|| ProjectError::NotFound(project_id.clone()))
+    }
+}
+
+impl<R, U, D, Sha, Eam, Idx, B> ProjectTaskRiskService
+    for ProjectServiceImpl<R, U, D, Sha, Eam, Idx, B>
+where
+    R: ProjectRepo,
+    U: ProjectUploadUrlPort,
+    D: BulkUploadRequestPort,
+    Sha: ShaCounterPort,
+    Eam: EntityAccessManagementService,
+    Idx: ProjectSearchIndexer,
+    B: MacroEventBroker,
+{
+    async fn get_project_task_risk(
+        &self,
+        receipt: EntityAccessReceipt<ViewAccessLevel>,
+        company_receipt: EntityAccessReceipt<ReadProjectWorkScoped>,
+        as_of_date: NaiveDate,
+    ) -> Result<ProjectTaskRisk, ProjectError> {
+        let actor = receipt
+            .get_authenticated_user()
+            .map_err(|_| ProjectError::Unauthorized)?;
+        let team_id = verified_company_team(&company_receipt, actor)?;
+        if receipt.entity().entity_type != EntityType::Project {
+            return Err(ProjectError::Unauthorized);
+        }
+        let project_id = &receipt.entity().entity_id;
+        self.repo
+            .get_project_task_risk_scoped(project_id, team_id, as_of_date)
+            .await
+            .map_err(|error| internal_error(error, "unable to get project task risk"))?
             .ok_or_else(|| ProjectError::NotFound(project_id.clone()))
     }
 }

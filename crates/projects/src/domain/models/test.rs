@@ -6,8 +6,8 @@ use serde_json::json;
 use super::{
     ProjectOperationalStatus, ProjectOperations, ProjectOperationsValidationError, ProjectOverview,
     ProjectOverviewImmediateChildren, ProjectPriority, ProjectTaskProgress,
-    ProjectTaskProgressValidationError, ReplaceProjectOperationsArgs,
-    is_valid_operations_transition,
+    ProjectTaskProgressValidationError, ProjectTaskRisk, ProjectTaskRiskValidationError,
+    ReplaceProjectOperationsArgs, is_valid_operations_transition,
 };
 use model::project::Project;
 use models_permissions::share_permission::access_level::AccessLevel;
@@ -15,6 +15,22 @@ use utoipa::PartialSchema;
 
 fn timestamp(value: &str) -> DateTime<Utc> {
     value.parse().unwrap()
+}
+
+#[test]
+fn task_risk_serializes_only_bounded_aggregate_facts_and_rejects_negative_totals() {
+    let risk = ProjectTaskRisk::new(0, 2, 3, true).unwrap();
+    assert_eq!(
+        serde_json::to_value(risk).unwrap(),
+        json!({
+            "overdueTasks": 0, "blockedTasks": 2, "unassignedTasks": 3,
+            "hasUnavailableRiskData": true
+        })
+    );
+    assert!(matches!(
+        ProjectTaskRisk::new(-1, 0, 0, false),
+        Err(ProjectTaskRiskValidationError::NegativeTotal)
+    ));
 }
 
 #[test]

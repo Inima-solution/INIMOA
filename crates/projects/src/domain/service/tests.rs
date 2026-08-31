@@ -35,7 +35,7 @@ use crate::domain::models::{
     MarkedUploadedTree, ProjectOverviewImmediateChildren, ProjectOverviewSnapshot,
     PurgedProjectTree,
 };
-use crate::domain::ports::{MockProjectRepo, ProjectTaskProgressService};
+use crate::domain::ports::{MockProjectRepo, ProjectTaskProgressService, ProjectTaskRiskService};
 
 /// A project lifecycle event recorded by [`TestEventBroker`].
 #[derive(Clone, Debug)]
@@ -679,6 +679,116 @@ async fn task_progress_rejects_invalid_receipts_and_hides_repository_results() {
                     team_id,
                     user_id("macro|owner@example.com")
                 )
+            )
+            .await,
+        Err(ProjectError::Internal(_))
+    ));
+}
+
+#[tokio::test]
+async fn task_risk_uses_one_scoped_read_with_the_caller_selected_date() {
+    let project_id = Uuid::from_u128(0x503);
+    let team_id = Uuid::from_u128(0x504);
+    let actor = user_id("macro|owner@example.com");
+    let as_of_date = chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
+    let expected = crate::domain::models::ProjectTaskRisk::new(1, 2, 3, true).unwrap();
+    let mut repo = MockProjectRepo::new();
+    repo.expect_get_project_task_risk_scoped()
+        .once()
+        .return_once(move |id, team, date| {
+            assert_eq!(id, project_id.to_string());
+            assert_eq!(team, team_id);
+            assert_eq!(date, as_of_date);
+            Box::pin(async move { Ok(Some(expected)) })
+        });
+    assert_eq!(
+        service(repo, RecordingBulkUpload::default())
+            .get_project_task_risk(
+                mutation_receipt_with_auth::<ViewAccessLevel>(
+                    project_id,
+                    AccessLevel::View,
+                    EntityAccessAuth::Authenticated(actor.clone())
+                ),
+                company_receipt::<ReadProjectWorkScoped>(team_id, actor),
+                as_of_date,
+            )
+            .await
+            .unwrap()
+            .blocked_tasks,
+        2
+    );
+}
+
+#[tokio::test]
+async fn task_risk_rejects_bad_receipts_before_read_and_hides_absence_or_errors() {
+    let project_id = Uuid::from_u128(0x505);
+    let team_id = Uuid::from_u128(0x506);
+    let as_of_date = chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
+    let actor = user_id("macro|owner@example.com");
+    assert!(matches!(
+        service(MockProjectRepo::new(), RecordingBulkUpload::default())
+            .get_project_task_risk(
+                asserted_receipt_for_entity::<ViewAccessLevel>(
+                    actor.clone(),
+                    &project_id.to_string(),
+                    EntityType::Document
+                ),
+                company_receipt::<ReadProjectWorkScoped>(team_id, actor.clone()),
+                as_of_date
+            )
+            .await,
+        Err(ProjectError::Unauthorized)
+    ));
+    for company_receipt in [
+        company_receipt::<ReadProjectWorkScoped>(team_id, user_id("macro|other@example.com")),
+        asserted_receipt_for_entity::<ReadProjectWorkScoped>(
+            actor.clone(),
+            &team_id.to_string(),
+            EntityType::Project,
+        ),
+        asserted_receipt_for_entity::<ReadProjectWorkScoped>(
+            actor.clone(),
+            "not-a-uuid",
+            EntityType::Team,
+        ),
+    ] {
+        assert!(matches!(
+            service(MockProjectRepo::new(), RecordingBulkUpload::default())
+                .get_project_task_risk(
+                    mutation_receipt::<ViewAccessLevel>(project_id, AccessLevel::View),
+                    company_receipt,
+                    as_of_date,
+                )
+                .await,
+            Err(ProjectError::Unauthorized)
+        ));
+    }
+    let mut absent = MockProjectRepo::new();
+    absent
+        .expect_get_project_task_risk_scoped()
+        .once()
+        .return_once(|_, _, _| Box::pin(async { Ok(None) }));
+    assert!(matches!(
+        service(absent, RecordingBulkUpload::default())
+            .get_project_task_risk(
+                mutation_receipt::<ViewAccessLevel>(project_id, AccessLevel::View),
+                company_receipt::<ReadProjectWorkScoped>(team_id, actor.clone()),
+                as_of_date
+            )
+            .await,
+        Err(ProjectError::NotFound(_))
+    ));
+    let mut failed = MockProjectRepo::new();
+    failed
+        .expect_get_project_task_risk_scoped()
+        .once()
+        .return_once(|_, _, _| Box::pin(async { Err(anyhow::anyhow!("db")) }));
+    assert!(matches!(
+        service(failed, RecordingBulkUpload::default())
+            .get_project_task_risk(
+                mutation_receipt::<ViewAccessLevel>(project_id, AccessLevel::View),
+                company_receipt::<ReadProjectWorkScoped>(team_id, actor),
+                as_of_date
             )
             .await,
         Err(ProjectError::Internal(_))

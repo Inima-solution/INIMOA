@@ -9,6 +9,7 @@ mod overview;
 mod revert_delete;
 mod share;
 mod task_progress;
+mod task_risk;
 mod upload_folder;
 
 #[cfg(test)]
@@ -25,9 +26,9 @@ use sqlx::PgPool;
 
 use crate::domain::models::{
     CreateProjectArgs, EditProjectArgs, MarkedUploadedTree, ProjectOperations,
-    ProjectOverviewSnapshot, ProjectTaskProgress, PurgedProjectTreeWithRoot, RevertDeleteResult,
-    SoftDeleteResult, UpdateProjectOperationsCommand, UpdateProjectOperationsOutcome,
-    UploadFolderRepoArgs,
+    ProjectOverviewSnapshot, ProjectTaskProgress, ProjectTaskRisk, PurgedProjectTreeWithRoot,
+    RevertDeleteResult, SoftDeleteResult, UpdateProjectOperationsCommand,
+    UpdateProjectOperationsOutcome, UploadFolderRepoArgs,
 };
 use crate::domain::ports::ProjectRepo;
 
@@ -152,6 +153,16 @@ impl ProjectRepo for PgProjectRepo {
         team_id: uuid::Uuid,
     ) -> Result<Option<ProjectTaskProgress>, Self::Err> {
         task_progress::get_project_task_progress_scoped(&self.pool, project_id, team_id).await
+    }
+
+    #[tracing::instrument(err, skip(self))]
+    async fn get_project_task_risk_scoped(
+        &self,
+        project_id: &str,
+        team_id: uuid::Uuid,
+        as_of_date: chrono::NaiveDate,
+    ) -> Result<Option<ProjectTaskRisk>, Self::Err> {
+        task_risk::get_project_task_risk_scoped(&self.pool, project_id, team_id, as_of_date).await
     }
 
     #[tracing::instrument(err, skip(self, command))]

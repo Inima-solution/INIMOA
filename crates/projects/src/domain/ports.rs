@@ -5,7 +5,7 @@
 
 use std::future::Future;
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 
 use entity_access::domain::models::{
     EditAccessLevel, EntityAccessReceipt, OwnerAccessLevel, ReadProjectWorkScoped, ViewAccessLevel,
@@ -33,9 +33,9 @@ use uuid::Uuid;
 use super::models::{
     CreateProjectArgs, EditProjectArgs, MarkedUploadedTree, MutatedProject, ProjectError,
     ProjectOperations, ProjectOverview, ProjectOverviewSnapshot, ProjectTaskProgress,
-    PurgedProjectTree, PurgedProjectTreeWithRoot, RevertDeleteResult, SoftDeleteResult,
-    UpdateProjectOperationsCommand, UpdateProjectOperationsOutcome, UpdateProjectOperationsRequest,
-    UploadFolderRepoArgs,
+    ProjectTaskRisk, PurgedProjectTree, PurgedProjectTreeWithRoot, RevertDeleteResult,
+    SoftDeleteResult, UpdateProjectOperationsCommand, UpdateProjectOperationsOutcome,
+    UpdateProjectOperationsRequest, UploadFolderRepoArgs,
 };
 
 /// Repository for reading project data from persistent storage.
@@ -85,6 +85,14 @@ pub trait ProjectRepo: Send + Sync + 'static {
         project_id: &str,
         team_id: Uuid,
     ) -> impl Future<Output = Result<Option<ProjectTaskProgress>, Self::Err>> + Send;
+
+    /// Get bounded direct-task risk totals at the caller-selected calendar date.
+    fn get_project_task_risk_scoped(
+        &self,
+        project_id: &str,
+        team_id: Uuid,
+        as_of_date: NaiveDate,
+    ) -> impl Future<Output = Result<Option<ProjectTaskRisk>, Self::Err>> + Send;
 
     /// Atomically replace one project's operational state and write its audit fact.
     fn update_project_operations(
@@ -507,4 +515,15 @@ pub trait ProjectTaskProgressService: Send + Sync + 'static {
         receipt: EntityAccessReceipt<ViewAccessLevel>,
         company_receipt: EntityAccessReceipt<ReadProjectWorkScoped>,
     ) -> impl Future<Output = Result<ProjectTaskProgress, ProjectError>> + Send;
+}
+
+/// Narrow inbound read port for bounded project task risk.
+pub trait ProjectTaskRiskService: Send + Sync + 'static {
+    /// Reads aggregate direct-task risk at an explicitly supplied business date.
+    fn get_project_task_risk(
+        &self,
+        receipt: EntityAccessReceipt<ViewAccessLevel>,
+        company_receipt: EntityAccessReceipt<ReadProjectWorkScoped>,
+        as_of_date: NaiveDate,
+    ) -> impl Future<Output = Result<ProjectTaskRisk, ProjectError>> + Send;
 }

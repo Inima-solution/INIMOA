@@ -10,6 +10,7 @@ use models_permissions::share_permission::{
     LinkShare, SharePermissionV2, UpdateSharePermissionRequestV2, access_level::AccessLevel,
 };
 use sqlx::{Pool, Postgres, Row};
+use system_properties::{StatusOption, SystemPropertyKey};
 
 use super::PgProjectRepo;
 use crate::domain::models::{
@@ -125,6 +126,601 @@ async fn task_progress_is_scoped_and_aggregates_only_live_direct_canonical_tasks
             None
         );
     }
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn task_risk_is_scoped_fail_closed_and_uses_calendar_date(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let project = "10000000-0000-0000-0000-000000000401";
+    let other_project = "10000000-0000-0000-0000-000000000402";
+    let zero_project = "10000000-0000-0000-0000-000000000403";
+    let deleted_project = "10000000-0000-0000-0000-000000000404";
+    let departed_project = "10000000-0000-0000-0000-000000000405";
+    let team = uuid::Uuid::from_u128(0x401);
+    sqlx::query(
+        r#"INSERT INTO "team" (id,name,owner_id) VALUES ($1,'task-risk','macro|owner@test.com')"#,
+    )
+    .bind(team)
+    .execute(&pool)
+    .await?;
+    sqlx::query("INSERT INTO team_user (user_id,team_id,team_role) VALUES ('macro|owner@test.com',$1,'owner')").bind(team).execute(&pool).await?;
+    sqlx::query(
+        "INSERT INTO macro_user (id,username,email,stripe_customer_id) VALUES ($1::uuid,$2,$2,$3)",
+    )
+    .bind("a4444444-4444-4444-4444-444444444444")
+    .bind("departed@test.com")
+    .bind("stripe-risk-departed")
+    .execute(&pool)
+    .await?;
+    sqlx::query("INSERT INTO \"User\" (id,email,\"stripeCustomerId\",macro_user_id) VALUES ($1,$2,$3,$4::uuid)")
+        .bind("macro|departed@test.com")
+        .bind("departed@test.com")
+        .bind("stripe-risk-departed")
+        .bind("a4444444-4444-4444-4444-444444444444")
+        .execute(&pool)
+        .await?;
+    for (id, owner, deleted) in [
+        (project, "macro|owner@test.com", false),
+        (other_project, "macro|owner@test.com", false),
+        (zero_project, "macro|owner@test.com", false),
+        (deleted_project, "macro|owner@test.com", true),
+        (departed_project, "macro|departed@test.com", false),
+    ] {
+        sqlx::query(r#"INSERT INTO "Project" (id,name,"userId","deletedAt") VALUES ($1,$1,$2,CASE WHEN $3 THEN now() ELSE NULL END)"#).bind(id).bind(owner).bind(deleted).execute(&pool).await?;
+    }
+    let status = SystemPropertyKey::STATUS_UUID;
+    let due = SystemPropertyKey::DUE_DATE_UUID;
+    let assignees = SystemPropertyKey::ASSIGNEES_UUID;
+    let depends = SystemPropertyKey::DEPENDS_ON_UUID;
+    // past/equal/future Date, malformed Date, absent/null/malformed source status,
+    // empty/nonempty/malformed assignees, and direct-child-only scope are all represented.
+    let rows = [
+        (
+            "40000000-0000-0000-0000-000000000401",
+            project,
+            serde_json::json!({"type":"Date","value":"2026-08-31T00:00:00Z"}),
+            None,
+        ),
+        (
+            "40000000-0000-0000-0000-000000000402",
+            project,
+            serde_json::json!({"type":"Date","value":"2026-09-01T00:00:00Z"}),
+            None,
+        ),
+        (
+            "40000000-0000-0000-0000-000000000403",
+            project,
+            serde_json::json!({"type":"Date","value":"2026-09-02T00:00:00Z"}),
+            None,
+        ),
+        (
+            "40000000-0000-0000-0000-000000000404",
+            project,
+            serde_json::json!({"type":"Date","value":"2026-02-31T00:00:00Z"}),
+            None,
+        ),
+        (
+            "40000000-0000-0000-0000-000000000405",
+            project,
+            serde_json::json!({"type":"Date","value":"2026-08-30T00:00:00Z"}),
+            Some(serde_json::json!({"type":"Boolean","value":true})),
+        ),
+        (
+            "40000000-0000-0000-0000-000000000406",
+            project,
+            serde_json::json!({"type":"Date","value":"2026-08-30T00:00:00Z"}),
+            Some(
+                serde_json::json!({"type":"SelectOption","value":[StatusOption::IN_PROGRESS_UUID,StatusOption::IN_REVIEW_UUID]}),
+            ),
+        ),
+        (
+            "40000000-0000-0000-0000-000000000407",
+            project,
+            serde_json::json!({"type":"Date","value":"2026-08-30T00:00:00Z"}),
+            Some(serde_json::json!({"type":"SelectOption","value":[uuid::Uuid::new_v4()]})),
+        ),
+        (
+            "40000000-0000-0000-0000-000000000408",
+            project,
+            serde_json::json!({"type":"Date","value":"2026-08-30T00:00:00Z"}),
+            Some(serde_json::json!({"type":"SelectOption","value":[StatusOption::COMPLETED_UUID]})),
+        ),
+        (
+            "40000000-0000-0000-0000-000000000409",
+            project,
+            serde_json::json!({"type":"Date","value":"2026-08-30T00:00:00Z"}),
+            Some(serde_json::json!({"type":"SelectOption","value":[StatusOption::CANCELED_UUID]})),
+        ),
+        (
+            "40000000-0000-0000-0000-000000000410",
+            other_project,
+            serde_json::json!({"type":"Date","value":"2026-08-30T00:00:00Z"}),
+            None,
+        ),
+    ];
+    for (id, owner_project, due_value, status_value) in rows {
+        sqlx::query(r#"INSERT INTO "Document" (id,name,owner,"projectId") VALUES ($1,$1,'macro|owner@test.com',$2)"#).bind(id).bind(owner_project).execute(&pool).await?;
+        sqlx::query("INSERT INTO document_sub_type (document_id,sub_type) VALUES ($1,'task'::document_sub_type_value)").bind(id).execute(&pool).await?;
+        sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES ($1,$2,'TASK',$3,$4)").bind(uuid::Uuid::new_v4()).bind(id).bind(due).bind(due_value).execute(&pool).await?;
+        if let Some(value) = status_value {
+            sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES ($1,$2,'TASK',$3,$4)").bind(uuid::Uuid::new_v4()).bind(id).bind(status).bind(value).execute(&pool).await?;
+        }
+    }
+    macro_rules! source_property_case {
+        ($id:expr, $status_value:expr, $due_value:expr, $assignee_value:expr) => {{
+            sqlx::query(r#"INSERT INTO "Document" (id,name,owner,"projectId") VALUES ($1,$1,'macro|owner@test.com',$2)"#)
+                .bind($id)
+                .bind(project)
+                .execute(&pool)
+                .await?;
+            sqlx::query("INSERT INTO document_sub_type (document_id,sub_type) VALUES ($1,'task'::document_sub_type_value)")
+                .bind($id)
+                .execute(&pool)
+                .await?;
+            if let Some(value) = $status_value {
+                sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES ($1,$2,'TASK',$3,$4)")
+                    .bind(uuid::Uuid::new_v4()).bind($id).bind(status).bind(value).execute(&pool).await?;
+            }
+            if let Some(value) = $due_value {
+                sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES ($1,$2,'TASK',$3,$4)")
+                    .bind(uuid::Uuid::new_v4()).bind($id).bind(due).bind(value).execute(&pool).await?;
+            }
+            if let Some(value) = $assignee_value {
+                sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES ($1,$2,'TASK',$3,$4)")
+                    .bind(uuid::Uuid::new_v4()).bind($id).bind(assignees).bind(value).execute(&pool).await?;
+            }
+        }};
+    }
+    let valid_assignee = serde_json::json!({"type":"EntityReference","value":[{"entity_type":"USER","entity_id":"macro|a@test.com"}]});
+    // Exact open statuses are evaluable.  The first is past; the other two
+    // verify equal/future dates are not overdue while their empty/null
+    // assignees remain known-unassigned.
+    source_property_case!(
+        "40000000-0000-0000-0000-000000000412",
+        Some(serde_json::json!({"type":"SelectOption","value":[StatusOption::NOT_STARTED_UUID]})),
+        Some(serde_json::json!({"type":"Date","value":"2026-08-31T00:00:00Z"})),
+        None::<serde_json::Value>
+    );
+    source_property_case!(
+        "40000000-0000-0000-0000-000000000413",
+        Some(serde_json::json!({"type":"SelectOption","value":[StatusOption::IN_PROGRESS_UUID]})),
+        Some(serde_json::json!({"type":"Date","value":"2026-09-01T00:00:00Z"})),
+        Some(serde_json::Value::Null)
+    );
+    source_property_case!(
+        "40000000-0000-0000-0000-000000000414",
+        Some(serde_json::json!({"type":"SelectOption","value":[StatusOption::IN_REVIEW_UUID]})),
+        Some(serde_json::json!({"type":"Date","value":"2026-09-02T00:00:00Z"})),
+        Some(serde_json::json!({"type":"EntityReference","value":[]}))
+    );
+    // JSON-null status is open and a JSON-null Due Date is known not overdue.
+    source_property_case!(
+        "40000000-0000-0000-0000-000000000415",
+        Some(serde_json::Value::Null),
+        Some(serde_json::Value::Null),
+        Some(valid_assignee.clone())
+    );
+    // Empty status and malformed Due/Assignee representations are unavailable
+    // conservative non-claims even when another field would otherwise signal risk.
+    source_property_case!(
+        "40000000-0000-0000-0000-000000000416",
+        Some(serde_json::json!({"type":"SelectOption","value":[]})),
+        Some(serde_json::json!({"type":"Date","value":"2026-08-31T00:00:00Z"})),
+        Some(serde_json::json!({"type":"EntityReference","value":[]}))
+    );
+    source_property_case!(
+        "40000000-0000-0000-0000-000000000417",
+        None::<serde_json::Value>,
+        Some(serde_json::json!({"type":"Boolean","value":true})),
+        Some(valid_assignee.clone())
+    );
+    source_property_case!(
+        "40000000-0000-0000-0000-000000000418",
+        None::<serde_json::Value>,
+        Some(serde_json::Value::Null),
+        Some(serde_json::Value::Null)
+    );
+    source_property_case!(
+        "40000000-0000-0000-0000-000000000419",
+        None::<serde_json::Value>,
+        None::<serde_json::Value>,
+        Some(
+            serde_json::json!({"type":"EntityReference","value":[{"entity_type":"USER","entity_id":"macro|a@test.com","specific_message_id":"message"}]})
+        )
+    );
+    source_property_case!(
+        "40000000-0000-0000-0000-000000000420",
+        None::<serde_json::Value>,
+        None::<serde_json::Value>,
+        Some(
+            serde_json::json!({"type":"EntityReference","value":[{"entity_type":"USER","entity_id":""}]})
+        )
+    );
+    source_property_case!(
+        "40000000-0000-0000-0000-000000000421",
+        None::<serde_json::Value>,
+        None::<serde_json::Value>,
+        Some(
+            serde_json::json!({"type":"EntityReference","value":[{"entity_type":"USER","entity_id":"macro|a@test.com"},{"entity_type":"TASK","entity_id":"x"}]})
+        )
+    );
+    // Fractional UTC seconds remain canonical Date values; the date component
+    // is still a strict calendar-date comparison, not a timestamp policy.
+    source_property_case!(
+        "40000000-0000-0000-0000-000000000422",
+        None::<serde_json::Value>,
+        Some(serde_json::json!({"type":"Date","value":"2026-08-31T23:59:59.123456789Z"})),
+        Some(valid_assignee.clone())
+    );
+    for (id, value) in [
+        (
+            "40000000-0000-0000-0000-000000000401",
+            serde_json::json!({"type":"EntityReference","value":[]}),
+        ),
+        (
+            "40000000-0000-0000-0000-000000000402",
+            serde_json::json!({"type":"EntityReference","value":[{"entity_type":"USER","entity_id":"macro|a@test.com"}]}),
+        ),
+        (
+            "40000000-0000-0000-0000-000000000403",
+            serde_json::json!({"type":"EntityReference","value":[{"entity_type":"TASK","entity_id":"x"}]}),
+        ),
+    ] {
+        sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES ($1,$2,'TASK',$3,$4)").bind(uuid::Uuid::new_v4()).bind(id).bind(assignees).bind(value).execute(&pool).await?;
+    }
+    // A missing entity_type is malformed: it is unavailable and must not be
+    // converted into an unassigned aggregate claim.
+    sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES ($1,$2,'TASK',$3,$4)")
+        .bind(uuid::Uuid::new_v4())
+        .bind("40000000-0000-0000-0000-000000000404")
+        .bind(assignees)
+        .bind(serde_json::json!({"type":"EntityReference","value":[{"entity_id":"macro|missing-type@test.com"}]}))
+        .execute(&pool)
+        .await?;
+    let predecessor = "40000000-0000-0000-0000-000000000411";
+    sqlx::query(r#"INSERT INTO "Document" (id,name,owner,"projectId") VALUES ($1,$1,'macro|owner@test.com',$2)"#).bind(predecessor).bind(project).execute(&pool).await?;
+    sqlx::query("INSERT INTO document_sub_type (document_id,sub_type) VALUES ($1,'task'::document_sub_type_value)").bind(predecessor).execute(&pool).await?;
+    sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES ($1,$2,'TASK',$3,$4)").bind(uuid::Uuid::new_v4()).bind(predecessor).bind(status).bind(serde_json::json!({"type":"SelectOption","value":[StatusOption::IN_PROGRESS_UUID]})).execute(&pool).await?;
+    sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES ($1,$2,'TASK',$3,$4)").bind(uuid::Uuid::new_v4()).bind("40000000-0000-0000-0000-000000000401").bind(depends).bind(serde_json::json!({"type":"EntityReference","value":[{"entity_type":"TASK","entity_id":predecessor}]})).execute(&pool).await?;
+    // Null and exact-empty dependencies are both available and ready; they
+    // must not acquire a blocking null row from the lateral expansion.
+    for (id, value) in [
+        (
+            "40000000-0000-0000-0000-000000000402",
+            serde_json::Value::Null,
+        ),
+        (
+            "40000000-0000-0000-0000-000000000403",
+            serde_json::json!({"type":"EntityReference","value":[]}),
+        ),
+    ] {
+        sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES ($1,$2,'TASK',$3,$4)").bind(uuid::Uuid::new_v4()).bind(id).bind(depends).bind(value).execute(&pool).await?;
+    }
+    // These would each add overdue + unassigned if the aggregate accidentally
+    // traversed descendants, accepted non-Tasks, or included deleted Tasks.
+    let child_project = "10000000-0000-0000-0000-000000000406";
+    sqlx::query(r#"INSERT INTO "Project" (id,name,"userId","parentId") VALUES ($1,'child-risk','macro|owner@test.com',$2)"#)
+        .bind(child_project)
+        .bind(project)
+        .execute(&pool)
+        .await?;
+    for (id, task_project, deleted, is_task) in [
+        ("40000000-0000-0000-0000-000000000430", project, true, true),
+        (
+            "40000000-0000-0000-0000-000000000431",
+            project,
+            false,
+            false,
+        ),
+        (
+            "40000000-0000-0000-0000-000000000432",
+            child_project,
+            false,
+            true,
+        ),
+    ] {
+        sqlx::query(r#"INSERT INTO "Document" (id,name,owner,"projectId","deletedAt") VALUES ($1,$1,'macro|owner@test.com',$2,CASE WHEN $3 THEN now() ELSE NULL END)"#)
+            .bind(id).bind(task_project).bind(deleted).execute(&pool).await?;
+        if is_task {
+            sqlx::query("INSERT INTO document_sub_type (document_id,sub_type) VALUES ($1,'task'::document_sub_type_value)").bind(id).execute(&pool).await?;
+        }
+        for (key, value) in [
+            (
+                status,
+                serde_json::json!({"type":"SelectOption","value":[StatusOption::IN_PROGRESS_UUID]}),
+            ),
+            (
+                due,
+                serde_json::json!({"type":"Date","value":"2026-08-31T00:00:00Z"}),
+            ),
+            (
+                assignees,
+                serde_json::json!({"type":"EntityReference","value":[]}),
+            ),
+        ] {
+            sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES ($1,$2,'TASK',$3,$4)")
+                .bind(uuid::Uuid::new_v4()).bind(id).bind(key).bind(value).execute(&pool).await?;
+        }
+    }
+    let risk = PgProjectRepo::new(pool.clone())
+        .get_project_task_risk_scoped(
+            project,
+            team,
+            chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap(),
+        )
+        .await?
+        .unwrap();
+    assert_eq!(
+        (
+            risk.overdue_tasks,
+            risk.blocked_tasks,
+            risk.unassigned_tasks
+        ),
+        // baseline direct cases contribute (1, 1, 2); canonical/null source
+        // cases add (+1, 0, +4), and fractional UTC adds (+1, 0, 0).
+        (3, 1, 6)
+    );
+    assert!(risk.has_unavailable_risk_data);
+    for unavailable in ["missing", deleted_project, departed_project] {
+        assert!(
+            PgProjectRepo::new(pool.clone())
+                .get_project_task_risk_scoped(
+                    unavailable,
+                    team,
+                    chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap()
+                )
+                .await?
+                .is_none()
+        );
+    }
+    assert_eq!(
+        PgProjectRepo::new(pool.clone())
+            .get_project_task_risk_scoped(
+                zero_project,
+                team,
+                chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap()
+            )
+            .await?,
+        Some(crate::domain::models::ProjectTaskRisk::new(0, 0, 0, false)?)
+    );
+    assert!(
+        PgProjectRepo::new(pool)
+            .get_project_task_risk_scoped(
+                project,
+                uuid::Uuid::new_v4(),
+                chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap()
+            )
+            .await?
+            .is_none()
+    );
+    Ok(())
+}
+
+/// Dependency cases deliberately use an absent Due Date and one valid assignee:
+/// the aggregate can therefore prove readiness semantics without a second risk
+/// dimension changing the count.
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn task_risk_dependency_matrix_preserves_ready_blocked_and_unavailable_directions(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let project = "10000000-0000-0000-0000-000000000451";
+    let other_project = "10000000-0000-0000-0000-000000000452";
+    let team = uuid::Uuid::from_u128(0x451);
+    let status = SystemPropertyKey::STATUS_UUID;
+    let depends = SystemPropertyKey::DEPENDS_ON_UUID;
+    let assignees = SystemPropertyKey::ASSIGNEES_UUID;
+    sqlx::query(r#"INSERT INTO "team" (id,name,owner_id) VALUES ($1,'risk-dependency','macro|owner@test.com')"#)
+        .bind(team).execute(&pool).await?;
+    sqlx::query("INSERT INTO team_user (user_id,team_id,team_role) VALUES ('macro|owner@test.com',$1,'owner')")
+        .bind(team).execute(&pool).await?;
+    for id in [project, other_project] {
+        sqlx::query(
+            r#"INSERT INTO "Project" (id,name,"userId") VALUES ($1,$1,'macro|owner@test.com')"#,
+        )
+        .bind(id)
+        .execute(&pool)
+        .await?;
+    }
+    macro_rules! task {
+        ($id:expr, $task_project:expr) => {{
+            sqlx::query(r#"INSERT INTO "Document" (id,name,owner,"projectId") VALUES ($1,$1,'macro|owner@test.com',$2)"#)
+                .bind($id).bind($task_project).execute(&pool).await?;
+            sqlx::query("INSERT INTO document_sub_type (document_id,sub_type) VALUES ($1,'task'::document_sub_type_value)")
+                .bind($id).execute(&pool).await?;
+            sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES ($1,$2,'TASK',$3,$4)")
+                .bind(uuid::Uuid::new_v4()).bind($id).bind(assignees)
+                .bind(serde_json::json!({"type":"EntityReference","value":[{"entity_type":"USER","entity_id":"macro|a@test.com"}]}))
+                .execute(&pool).await?;
+        }};
+    }
+    macro_rules! property {
+        ($id:expr, $key:expr, $value:expr) => {{
+            sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES ($1,$2,'TASK',$3,$4)")
+                .bind(uuid::Uuid::new_v4()).bind($id).bind($key).bind($value).execute(&pool).await?;
+        }};
+    }
+    let completed = "45000000-0000-0000-0000-000000000401";
+    let in_progress = "45000000-0000-0000-0000-000000000402";
+    let canceled = "45000000-0000-0000-0000-000000000403";
+    let malformed_status = "45000000-0000-0000-0000-000000000404";
+    let unknown_status = "45000000-0000-0000-0000-000000000405";
+    for id in [
+        completed,
+        in_progress,
+        canceled,
+        malformed_status,
+        unknown_status,
+    ] {
+        task!(id, project);
+    }
+    property!(
+        completed,
+        status,
+        serde_json::json!({"type":"SelectOption","value":[StatusOption::COMPLETED_UUID]})
+    );
+    property!(
+        in_progress,
+        status,
+        serde_json::json!({"type":"SelectOption","value":[StatusOption::IN_PROGRESS_UUID]})
+    );
+    property!(
+        canceled,
+        status,
+        serde_json::json!({"type":"SelectOption","value":[StatusOption::CANCELED_UUID]})
+    );
+    property!(
+        malformed_status,
+        status,
+        serde_json::json!({"type":"Boolean","value":true})
+    );
+    property!(
+        unknown_status,
+        status,
+        serde_json::json!({"type":"SelectOption","value":[uuid::Uuid::new_v4()]})
+    );
+    // ready: absent, JSON null, exact empty, and exact Completed predecessor.
+    let ready_absent = "45000000-0000-0000-0000-000000000411";
+    let ready_null = "45000000-0000-0000-0000-000000000412";
+    let ready_empty = "45000000-0000-0000-0000-000000000413";
+    let ready_completed = "45000000-0000-0000-0000-000000000414";
+    // available blocked: exact nonterminal and exact Canceled predecessor.
+    let blocked_open = "45000000-0000-0000-0000-000000000415";
+    let blocked_canceled = "45000000-0000-0000-0000-000000000416";
+    // unavailable blocked: malformed container/ref/self/missing/cross-project/nonTask.
+    // Live malformed/unknown predecessor statuses remain available-but-blocked,
+    // matching the established WS-04 dependency readiness query.
+    let unavailable = [
+        "45000000-0000-0000-0000-000000000421",
+        "45000000-0000-0000-0000-000000000422",
+        "45000000-0000-0000-0000-000000000423",
+        "45000000-0000-0000-0000-000000000424",
+        "45000000-0000-0000-0000-000000000425",
+        "45000000-0000-0000-0000-000000000426",
+        "45000000-0000-0000-0000-000000000427",
+        "45000000-0000-0000-0000-000000000428",
+        "45000000-0000-0000-0000-000000000429",
+    ];
+    for id in [
+        ready_absent,
+        ready_null,
+        ready_empty,
+        ready_completed,
+        blocked_open,
+        blocked_canceled,
+    ]
+    .into_iter()
+    .chain(unavailable)
+    {
+        task!(id, project);
+    }
+    property!(ready_null, depends, serde_json::Value::Null);
+    property!(
+        ready_empty,
+        depends,
+        serde_json::json!({"type":"EntityReference","value":[]})
+    );
+    property!(
+        ready_completed,
+        depends,
+        serde_json::json!({"type":"EntityReference","value":[{"entity_type":"TASK","entity_id":completed}]})
+    );
+    property!(
+        blocked_open,
+        depends,
+        serde_json::json!({"type":"EntityReference","value":[{"entity_type":"TASK","entity_id":in_progress}]})
+    );
+    property!(
+        blocked_canceled,
+        depends,
+        serde_json::json!({"type":"EntityReference","value":[{"entity_type":"TASK","entity_id":canceled}]})
+    );
+    property!(
+        unavailable[0],
+        depends,
+        serde_json::json!({"type":"Boolean","value":true})
+    );
+    property!(
+        unavailable[1],
+        depends,
+        serde_json::json!({"type":"EntityReference","value":[{"entity_id":"45000000-0000-0000-0000-000000000401"}]})
+    );
+    property!(
+        unavailable[2],
+        depends,
+        serde_json::json!({"type":"EntityReference","value":[{"entity_type":"TASK","entity_id":unavailable[2]}]})
+    );
+    property!(
+        unavailable[3],
+        depends,
+        serde_json::json!({"type":"EntityReference","value":[{"entity_type":"TASK","entity_id":"45000000-0000-0000-0000-000000000499"}]})
+    );
+    task!("45000000-0000-0000-0000-000000000498", other_project);
+    property!(
+        unavailable[4],
+        depends,
+        serde_json::json!({"type":"EntityReference","value":[{"entity_type":"TASK","entity_id":"45000000-0000-0000-0000-000000000498"}]})
+    );
+    sqlx::query(r#"INSERT INTO "Document" (id,name,owner,"projectId") VALUES ('45000000-0000-0000-0000-000000000497','non-task','macro|owner@test.com',$1)"#).bind(project).execute(&pool).await?;
+    property!(
+        unavailable[5],
+        depends,
+        serde_json::json!({"type":"EntityReference","value":[{"entity_type":"TASK","entity_id":"45000000-0000-0000-0000-000000000497"}]})
+    );
+    property!(
+        unavailable[6],
+        depends,
+        serde_json::json!({"type":"EntityReference","value":[{"entity_type":"TASK","entity_id":malformed_status}]})
+    );
+    property!(
+        unavailable[7],
+        depends,
+        serde_json::json!({"type":"EntityReference","value":[{"entity_type":"TASK","entity_id":unknown_status}]})
+    );
+    // A deleted same-project Task remains an unavailable predecessor even if
+    // its stored status says Completed: live identity is the first boundary.
+    sqlx::query(r#"INSERT INTO "Document" (id,name,owner,"projectId","deletedAt") VALUES ('45000000-0000-0000-0000-000000000496','deleted-task','macro|owner@test.com',$1,now())"#)
+        .bind(project)
+        .execute(&pool)
+        .await?;
+    sqlx::query("INSERT INTO document_sub_type (document_id,sub_type) VALUES ('45000000-0000-0000-0000-000000000496','task'::document_sub_type_value)")
+        .execute(&pool)
+        .await?;
+    property!(
+        "45000000-0000-0000-0000-000000000496",
+        status,
+        serde_json::json!({"type":"SelectOption","value":[StatusOption::COMPLETED_UUID]})
+    );
+    property!(
+        unavailable[8],
+        depends,
+        serde_json::json!({"type":"EntityReference","value":[{"entity_type":"TASK","entity_id":"45000000-0000-0000-0000-000000000496"}]})
+    );
+    let risk = PgProjectRepo::new(pool)
+        .get_project_task_risk_scoped(
+            project,
+            team,
+            chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap(),
+        )
+        .await?
+        .unwrap();
+    // 2 valid blocking predecessors + 9 fail-closed dependency cases; four ready cases contribute none.
+    assert_eq!(
+        (
+            risk.overdue_tasks,
+            risk.blocked_tasks,
+            risk.unassigned_tasks
+        ),
+        (0, 11, 0)
+    );
+    assert!(risk.has_unavailable_risk_data);
     Ok(())
 }
 

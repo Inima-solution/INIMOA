@@ -240,6 +240,51 @@ pub enum ProjectTaskProgressValidationError {
     UnavailableWithoutIncludedTask,
 }
 
+/// Bounded risk totals for the live direct tasks of one project.
+///
+/// The result intentionally contains aggregate facts only; task identities and
+/// raw property values never cross the project-domain boundary.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectTaskRisk {
+    /// Overdue direct live canonical Tasks; individual task details are redacted.
+    pub overdue_tasks: i64,
+    /// Blocked direct live canonical Tasks; individual task details are redacted.
+    pub blocked_tasks: i64,
+    /// Unassigned direct live canonical Tasks; individual task details are redacted.
+    pub unassigned_tasks: i64,
+    /// Whether any aggregate risk input was unavailable without exposing its source.
+    pub has_unavailable_risk_data: bool,
+}
+
+impl ProjectTaskRisk {
+    /// Builds redacted aggregate risk totals for direct live canonical Tasks.
+    pub fn new(
+        overdue_tasks: i64,
+        blocked_tasks: i64,
+        unassigned_tasks: i64,
+        has_unavailable_risk_data: bool,
+    ) -> Result<Self, ProjectTaskRiskValidationError> {
+        if overdue_tasks < 0 || blocked_tasks < 0 || unassigned_tasks < 0 {
+            return Err(ProjectTaskRiskValidationError::NegativeTotal);
+        }
+        Ok(Self {
+            overdue_tasks,
+            blocked_tasks,
+            unassigned_tasks,
+            has_unavailable_risk_data,
+        })
+    }
+}
+
+/// Invalid aggregate task-risk totals.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ProjectTaskRiskValidationError {
+    /// One or more aggregate direct-task counts was negative.
+    #[error("task-risk totals cannot be negative")]
+    NegativeTotal,
+}
+
 /// The authoritative root metadata captured with a committed project-tree purge.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PurgedProjectTreeWithRoot {
