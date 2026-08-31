@@ -35,6 +35,8 @@ type DeadlineGroup = {
   tasks: TaskEntityWithProperties[];
 };
 
+const TASK_WINDOW_LIMIT = 500;
+
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
 });
@@ -112,7 +114,11 @@ export function ProjectTaskDeadlineTimeline(props: {
   onCleanup(() => {
     if (refreshTimer !== undefined) clearTimeout(refreshTimer);
   });
-  const groups = () => groupTasks(props.tasks);
+  const visibleTasks = () => props.tasks.slice(0, TASK_WINDOW_LIMIT);
+  const taskWindowLimited = () =>
+    props.tasks.length > TASK_WINDOW_LIMIT ||
+    (props.tasks.length === TASK_WINDOW_LIMIT && props.hasNextPage);
+  const groups = () => groupTasks(visibleTasks());
   const loadMoreLabel = () => {
     if (props.fetchingNextPage) return 'Loading more…';
     if (props.error) return 'Retry loading more';
@@ -241,6 +247,15 @@ export function ProjectTaskDeadlineTimeline(props: {
         class="project-task-deadline-timeline flex size-full min-w-0 min-h-0 flex-col overflow-y-auto"
       >
         {rangeRuler()}
+        <Show when={taskWindowLimited()}>
+          <p
+            role="status"
+            aria-label="Showing the first 500 tasks. Refine filters to view a smaller set."
+            class="border-b border-edge-muted px-3 py-2 text-xs text-ink-muted"
+          >
+            Showing the first 500 tasks. Refine filters to view a smaller set.
+          </p>
+        </Show>
         <div class="min-w-0 flex-1 divide-y divide-edge-muted">
           <For each={groups()}>
             {(group) => {
@@ -347,10 +362,10 @@ export function ProjectTaskDeadlineTimeline(props: {
             }}
           </For>
         </div>
-        <Show when={props.hasNextPage || props.error}>
+        <Show when={props.error || (!taskWindowLimited() && props.hasNextPage)}>
           <div class="flex shrink-0 justify-center p-2">
             <Show
-              when={props.hasNextPage}
+              when={!taskWindowLimited() && props.hasNextPage}
               fallback={
                 <Button size="sm" onClick={() => props.onRetry?.()}>
                   Retry

@@ -685,4 +685,119 @@ describe('ProjectTaskDeadlineTimeline', () => {
       view.getByRole('img').querySelectorAll('[aria-hidden="true"]')
     ).toHaveLength(2);
   });
+
+  it('limits an over-cap source to the first 500 tasks and relations', () => {
+    const tasks = Array.from({ length: 501 }, (_, index) =>
+      task(`Task ${index}`, due('2026-04-10T08:00:00'))
+    );
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline tasks={tasks} onOpenTask={() => {}} />
+    ));
+
+    const buttons = view.getAllByRole('button');
+    expect(buttons).toHaveLength(500);
+    expect(buttons[0].textContent).toContain('Task 0');
+    expect(buttons.at(-1)?.textContent).toContain('Task 499');
+    expect(view.queryByRole('button', { name: 'Task 500' })).toBeNull();
+    expect(mocks.relationCalls).toHaveLength(500);
+    expect(
+      view.getByRole('status', { name: /Showing the first 500 tasks/ })
+    ).toBeTruthy();
+  });
+
+  it('treats exactly 500 retained tasks as complete without a limit notice', () => {
+    const tasks = Array.from({ length: 500 }, (_, index) =>
+      task(`Task ${index}`, due('2026-04-10T08:00:00'))
+    );
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={tasks}
+        hasNextPage={false}
+        onOpenTask={() => {}}
+      />
+    ));
+
+    expect(view.getAllByRole('button')).toHaveLength(500);
+    expect(view.queryByText(/Showing the first 500 tasks/)).toBeNull();
+  });
+
+  it('shows the accessible limit notice and stops continuation at 500 tasks', () => {
+    const tasks = Array.from({ length: 500 }, (_, index) =>
+      task(`Task ${index}`, due('2026-04-10T08:00:00'))
+    );
+    const loadMore = vi.fn();
+    const onOpenTask = vi.fn();
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={tasks}
+        hasNextPage
+        onLoadMore={loadMore}
+        onOpenTask={onOpenTask}
+      />
+    ));
+
+    expect(
+      view.getByRole('status', {
+        name: 'Showing the first 500 tasks. Refine filters to view a smaller set.',
+      })
+    ).toBeTruthy();
+    expect(
+      view.queryByRole('button', { name: /Load more|Retry loading more/ })
+    ).toBeNull();
+    const finalTask = view.getByRole('button', { name: 'Task 499' });
+    finalTask.focus();
+    fireEvent.click(finalTask);
+    expect(onOpenTask).toHaveBeenCalledWith(tasks[499], expect.any(MouseEvent));
+    expect(loadMore).not.toHaveBeenCalled();
+  });
+
+  it('keeps source error recovery available at the task window limit', () => {
+    const tasks = Array.from({ length: 500 }, (_, index) =>
+      task(`Task ${index}`, due('2026-04-10T08:00:00'))
+    );
+    const onRetry = vi.fn();
+    const onLoadMore = vi.fn();
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={tasks}
+        error
+        hasNextPage
+        onRetry={onRetry}
+        onLoadMore={onLoadMore}
+        onOpenTask={() => {}}
+      />
+    ));
+
+    expect(
+      view.getByRole('status', {
+        name: 'Showing the first 500 tasks. Refine filters to view a smaller set.',
+      })
+    ).toBeTruthy();
+    expect(view.getAllByRole('button', { name: /Task \d+/ })).toHaveLength(500);
+    fireEvent.click(view.getByRole('button', { name: 'Retry' }));
+    expect(onRetry).toHaveBeenCalledTimes(1);
+    expect(onLoadMore).not.toHaveBeenCalled();
+    expect(
+      view.queryByRole('button', { name: 'Retry loading more' })
+    ).toBeNull();
+  });
+
+  it('keeps manual continuation below the 500-task window', () => {
+    const tasks = Array.from({ length: 499 }, (_, index) =>
+      task(`Task ${index}`, due('2026-04-10T08:00:00'))
+    );
+    const loadMore = vi.fn();
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={tasks}
+        hasNextPage
+        onLoadMore={loadMore}
+        onOpenTask={() => {}}
+      />
+    ));
+
+    fireEvent.click(view.getByRole('button', { name: 'Load more tasks' }));
+    expect(loadMore).toHaveBeenCalledTimes(1);
+    expect(view.queryByText(/Showing the first 500 tasks/)).toBeNull();
+  });
 });
