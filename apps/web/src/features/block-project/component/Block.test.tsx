@@ -26,6 +26,20 @@ const mocks = vi.hoisted(() => ({
         tasks: Array<{ id: string }>;
       }
     | undefined,
+  timelineProps: undefined as
+    | {
+        error?: boolean;
+        fetching?: boolean;
+        fetchingNextPage?: boolean;
+        hasNextPage?: boolean;
+        loading?: boolean;
+        onLoadMore?: () => void;
+        onOpenTask: (task: { id: string }, event: MouseEvent) => void;
+        onRetry?: () => void;
+        searching?: boolean;
+        tasks: Array<{ id: string }>;
+      }
+    | undefined,
   canEdit: true,
   controllerSplit: false,
   duplicatePreview: false,
@@ -59,12 +73,12 @@ const mocks = vi.hoisted(() => ({
   searchText: '',
   topBarProps: undefined as
     | {
-        mode: 'list' | 'board';
-        onChange: (mode: 'list' | 'board') => void;
+        mode: 'list' | 'board' | 'timeline';
+        onChange: (mode: 'list' | 'board' | 'timeline') => void;
         selectorVisible: boolean;
       }
     | undefined,
-  viewMode: 'list' as 'list' | 'board',
+  viewMode: 'list' as 'list' | 'board' | 'timeline',
   rows: [] as Array<{
     getIsGrouped: () => boolean;
     getIsLoadMore: () => boolean;
@@ -240,6 +254,14 @@ vi.mock('./ProjectTaskStatusBoard', () => ({
     );
   },
 }));
+vi.mock('./ProjectTaskDeadlineTimeline', () => ({
+  ProjectTaskDeadlineTimeline: (
+    props: NonNullable<typeof mocks.timelineProps>
+  ) => {
+    mocks.timelineProps = props;
+    return <div data-testid="project-task-deadline-timeline" />;
+  },
+}));
 vi.mock('./TopBar', () => ({
   TopBar: (props: NonNullable<typeof mocks.topBarProps>) => {
     mocks.topBarProps = props;
@@ -255,6 +277,7 @@ beforeEach(() => {
   mocks.dependencyProviderCount = 0;
   mocks.dependencyProviderTaskIds = [];
   mocks.boardProps = undefined;
+  mocks.timelineProps = undefined;
   mocks.canEdit = true;
   mocks.controllerSplit = false;
   mocks.duplicatePreview = false;
@@ -319,6 +342,20 @@ describe('project task dependency relation batching', () => {
     expect(mocks.soupViewProviderCount).toBe(1);
     expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
     expect(mocks.boardProps).toBeDefined();
+  });
+
+  it('keeps the timeline on the same filtered source without automatic paging', () => {
+    mocks.viewMode = 'timeline';
+    mocks.source = [
+      { id: 'timeline-task', subType: { type: 'task' }, type: 'document' },
+      { id: 'document-a', subType: null, type: 'document' },
+    ];
+    render(() => <Block />);
+
+    expect(mocks.timelineProps?.tasks).toEqual([mocks.source[0]]);
+    expect(mocks.soupViewProviderCount).toBe(1);
+    expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
+    expect(mocks.boardProps).toBeUndefined();
   });
 
   it('threads bounded continuation state and invokes the active Soup source once', () => {
@@ -432,6 +469,36 @@ describe('project task dependency relation batching', () => {
     });
     expect(document.querySelector('[data-testid="soup-view-list"]')).toBeNull();
     expect(mocks.sourceRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('threads loading, errors, paging, and ordinary split opens through the timeline', () => {
+    mocks.viewMode = 'timeline';
+    const task = { id: 'task-a', subType: { type: 'task' }, type: 'document' };
+    mocks.source = [task];
+    mocks.sourceHasNextPage = true;
+    mocks.sourceError = new Error('source unavailable');
+    mocks.searchText = 'follow up';
+    render(() => <Block />);
+
+    expect(mocks.timelineProps).toMatchObject({
+      error: true,
+      hasNextPage: true,
+      loading: false,
+      searching: true,
+      tasks: [task],
+    });
+    mocks.timelineProps?.onRetry?.();
+    mocks.timelineProps?.onLoadMore?.();
+    mocks.timelineProps?.onOpenTask(
+      task,
+      new MouseEvent('click', { shiftKey: true })
+    );
+    expect(mocks.sourceRefresh).toHaveBeenCalledTimes(1);
+    expect(mocks.sourceFetchNextPage).toHaveBeenCalledTimes(1);
+    expect(mocks.openEntityInSplit).toHaveBeenCalledWith(
+      task,
+      expect.objectContaining({ openInNewSplit: true, replacePreview: false })
+    );
   });
 
   it('submits a canonical task status move through the shared mutation seam', () => {

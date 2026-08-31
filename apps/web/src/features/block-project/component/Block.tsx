@@ -49,6 +49,7 @@ import { EntityType } from '@service-properties/generated/schemas/entityType';
 import { refetchResources } from '@service-storage/util/refetchResources';
 import { type Component, createMemo, createSignal, Show } from 'solid-js';
 import { ModalsProvider } from './ModalsProvider';
+import { ProjectTaskDeadlineTimeline } from './ProjectTaskDeadlineTimeline';
 import { ProjectTaskStatusBoard } from './ProjectTaskStatusBoard';
 import type { ProjectTaskViewMode } from './ProjectViewModeControl';
 import { ProjectSidePanelSections } from './sidepanel/ProjectSidePanelSections';
@@ -285,10 +286,10 @@ const ProjectSoupViewList = (props: {
     props.isSpecialProject
       ? []
       : (source.data().filter(isTaskEntity) as TaskEntityWithProperties[]);
-  const boardLoading = () =>
+  const taskViewLoading = () =>
     tasks().length === 0 &&
     (source.isLoading() || source.isPlaceholderData() || source.isFetching());
-  const retryBoard = () => {
+  const retryTaskView = () => {
     void source.refresh().catch(() => {});
   };
   const loadMoreTasks = () => {
@@ -361,7 +362,7 @@ const ProjectSoupViewList = (props: {
           </SplitToolbarLeft>
         </Show>
         <Show
-          when={!props.isSpecialProject && props.mode === 'board'}
+          when={!props.isSpecialProject && props.mode !== 'list'}
           fallback={
             <SoupViewList
               customScrollbarHidden={true}
@@ -369,23 +370,41 @@ const ProjectSoupViewList = (props: {
             />
           }
         >
-          <ProjectTaskStatusBoard
-            tasks={tasks()}
-            loading={boardLoading()}
-            error={source.error() !== null}
-            searching={searchText().trim().length > 0}
-            onOpenTask={openTask}
-            onRetry={retryBoard}
-            hasNextPage={source.hasNextPage()}
-            fetching={source.isFetching()}
-            fetchingNextPage={source.isFetchingNextPage()}
-            onLoadMore={loadMoreTasks}
-            canEdit={canEdit()}
-            statusProperty={statusProperty()}
-            statusPending={statusMutation.isPending}
-            activeStatusTaskId={activeStatusTaskId()}
-            onMoveTaskStatus={moveTaskStatus}
-          />
+          <Show
+            when={props.mode === 'board'}
+            fallback={
+              <ProjectTaskDeadlineTimeline
+                tasks={tasks()}
+                loading={taskViewLoading()}
+                error={source.error() !== null}
+                searching={searchText().trim().length > 0}
+                onOpenTask={openTask}
+                onRetry={retryTaskView}
+                hasNextPage={source.hasNextPage()}
+                fetching={source.isFetching()}
+                fetchingNextPage={source.isFetchingNextPage()}
+                onLoadMore={loadMoreTasks}
+              />
+            }
+          >
+            <ProjectTaskStatusBoard
+              tasks={tasks()}
+              loading={taskViewLoading()}
+              error={source.error() !== null}
+              searching={searchText().trim().length > 0}
+              onOpenTask={openTask}
+              onRetry={retryTaskView}
+              hasNextPage={source.hasNextPage()}
+              fetching={source.isFetching()}
+              fetchingNextPage={source.isFetchingNextPage()}
+              onLoadMore={loadMoreTasks}
+              canEdit={canEdit()}
+              statusProperty={statusProperty()}
+              statusPending={statusMutation.isPending}
+              activeStatusTaskId={activeStatusTaskId()}
+              onMoveTaskStatus={moveTaskStatus}
+            />
+          </Show>
         </Show>
       </TaskDependencyRelationsProvider>
     </TaskSubtaskProgressProvider>

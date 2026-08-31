@@ -1,6 +1,6 @@
 import { SegmentedControl } from '@ui';
 
-export type ProjectTaskViewMode = 'list' | 'board';
+export type ProjectTaskViewMode = 'list' | 'board' | 'timeline';
 
 export function ProjectViewModeControl(props: {
   mode: ProjectTaskViewMode;
@@ -23,6 +23,7 @@ export function ProjectViewModeControl(props: {
       options={[
         { value: 'list', label: 'List' },
         { value: 'board', label: 'Board' },
+        { value: 'timeline', label: 'Timeline' },
       ]}
     />
   );

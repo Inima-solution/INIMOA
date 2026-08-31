@@ -22,6 +22,8 @@ describe('ProjectViewModeControl', () => {
 
     fireEvent.click(view.getByRole('radio', { name: 'Board' }));
     expect(onChange).toHaveBeenCalledWith('board');
+    fireEvent.click(view.getByRole('radio', { name: 'Timeline' }));
+    expect(onChange).toHaveBeenCalledWith('timeline');
   });
 
   it('uses dense desktop and touch-sized control targets', () => {
@@ -40,7 +42,7 @@ describe('ProjectViewModeControl', () => {
 
     const touch = render(() => (
       <ProjectViewModeControl
-        mode="board"
+        mode="timeline"
         density="touch"
         onChange={() => {}}
       />
@@ -48,5 +50,10 @@ describe('ProjectViewModeControl', () => {
     expect(
       touch.container.firstElementChild?.classList.contains('**:min-h-11')
     ).toBe(true);
+    expect(
+      touch
+        .getByRole('radio', { name: 'Timeline' })
+        .getAttribute('data-checked')
+    ).not.toBeNull();
   });
 });
