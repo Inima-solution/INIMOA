@@ -1,7 +1,287 @@
 use super::set_entity_property::map_set_entity_property_error;
 #[allow(unused_imports)]
 use super::*;
-use ai_toolset::schema::generate_validated_input_schema;
+use ai_toolset::{
+    AsyncTool, RequestContext, ServiceContext, schema::generate_validated_input_schema,
+};
+use document_sub_type::DocumentSubType;
+use entity_access::domain::{
+    models::{
+        AccessError, AccessLevel, BotAccessScope, BotId, CallChannelInfo, EntityAccessReceipt,
+        EntityPermission, EntityType, RequiredPermission, TeamRole, UserTeamInfo,
+    },
+    ports::{EntityAccessService, NoOpEntityAccessService},
+};
+use macro_user_id::{
+    lowercased::Lowercase,
+    user_id::{MacroUserId, MacroUserIdStr},
+};
+use models_properties::EntityType as PropertyEntityType;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
+
+type ToolTestPropertiesService = crate::PropertiesServiceImpl<
+    crate::domain::ports::MockPropertiesRepo,
+    crate::domain::ports::MockPermissionService,
+    crate::domain::ports::MockNotificationService,
+>;
+
+#[derive(Clone, Default)]
+struct RecordingEntityAccessService {
+    calls: Arc<Mutex<Vec<(String, EntityType)>>>,
+}
+
+impl RecordingEntityAccessService {
+    fn calls(&self) -> Vec<(String, EntityType)> {
+        self.calls.lock().expect("calls lock poisoned").clone()
+    }
+}
+
+impl EntityAccessService for RecordingEntityAccessService {
+    async fn generate_entity_access_receipt<T: RequiredPermission>(
+        &self,
+        user_id: &MacroUserId<Lowercase<'_>>,
+        _user_org_id: Option<i64>,
+        entity_id: &str,
+        entity_type: EntityType,
+    ) -> Result<EntityAccessReceipt<T>, AccessError> {
+        self.calls
+            .lock()
+            .expect("calls lock poisoned")
+            .push((entity_id.to_string(), entity_type));
+        Ok(EntityAccessReceipt::dangerously_assert_authenticated_user(
+            MacroUserIdStr::try_from(user_id.as_ref().to_string())
+                .expect("test user id should be valid"),
+            entity_id,
+            entity_type,
+        ))
+    }
+
+    async fn generate_bot_entity_access_receipt<T: RequiredPermission>(
+        &self,
+        _bot_id: BotId,
+        _scope: BotAccessScope,
+        _entity_id: &str,
+        _entity_type: EntityType,
+    ) -> Result<EntityAccessReceipt<T>, AccessError> {
+        Err(AccessError::internal("test access failure"))
+    }
+
+    async fn get_access_level(
+        &self,
+        _user_id: Option<&MacroUserId<Lowercase<'_>>>,
+        _entity_id: &str,
+        _entity_type: EntityType,
+    ) -> Result<Option<AccessLevel>, AccessError> {
+        Err(AccessError::internal("test access failure"))
+    }
+
+    async fn check_access(
+        &self,
+        _user_id: Option<&MacroUserId<Lowercase<'_>>>,
+        _entity_id: &str,
+        _entity_type: EntityType,
+        _required_level: AccessLevel,
+    ) -> Result<AccessLevel, AccessError> {
+        Err(AccessError::internal("test access failure"))
+    }
+
+    async fn check_public_access(
+        &self,
+        _entity_id: &str,
+        _entity_type: EntityType,
+        _required_level: AccessLevel,
+    ) -> Result<AccessLevel, AccessError> {
+        Err(AccessError::internal("test access failure"))
+    }
+
+    async fn get_entity_permission(
+        &self,
+        _user_id: Option<&MacroUserId<Lowercase<'_>>>,
+        _entity_id: &str,
+        _entity_type: EntityType,
+        _user_org_id: Option<i64>,
+    ) -> Result<EntityPermission, AccessError> {
+        Err(AccessError::internal("test access failure"))
+    }
+
+    async fn get_crm_entity_permission_with_team(
+        &self,
+        _user_id: Option<&MacroUserId<Lowercase<'_>>>,
+        _entity_id: &str,
+        _entity_type: EntityType,
+    ) -> Result<(EntityPermission, uuid::Uuid, TeamRole), AccessError> {
+        Err(AccessError::internal("test access failure"))
+    }
+
+    async fn get_users_by_entity(
+        &self,
+        _entity_id: &str,
+        _entity_type: EntityType,
+    ) -> Result<Vec<MacroUserIdStr<'static>>, AccessError> {
+        Err(AccessError::internal("test access failure"))
+    }
+
+    async fn get_call_channel(
+        &self,
+        _call_id: &uuid::Uuid,
+    ) -> Result<Option<CallChannelInfo>, AccessError> {
+        Err(AccessError::internal("test access failure"))
+    }
+
+    async fn get_call_channel_by_channel_id(
+        &self,
+        _channel_id: &uuid::Uuid,
+    ) -> Result<Option<CallChannelInfo>, AccessError> {
+        Err(AccessError::internal("test access failure"))
+    }
+
+    async fn get_user_team(
+        &self,
+        _user_id: &MacroUserId<Lowercase<'_>>,
+    ) -> Result<Option<UserTeamInfo>, AccessError> {
+        Ok(None)
+    }
+}
+
+fn tool_test_user() -> MacroUserIdStr<'static> {
+    MacroUserIdStr::try_from("macro|properties-tool@example.com".to_string())
+        .expect("test user id should be valid")
+}
+
+fn no_op_properties_service() -> ToolTestPropertiesService {
+    ToolTestPropertiesService::new(
+        crate::domain::ports::MockPropertiesRepo::new(),
+        None::<crate::domain::ports::MockPermissionService>,
+        None::<crate::domain::ports::MockNotificationService>,
+    )
+}
+
+#[tokio::test]
+async fn get_entity_properties_denial_stops_before_the_properties_read() {
+    let result = GetEntityProperties {
+        entity_id: "denied-document".to_string(),
+        entity_type: super::get_entity_properties::ToolPropertyTargetEntityType::Document,
+    }
+    .call(
+        ServiceContext(PropertiesToolContext::new(
+            no_op_properties_service(),
+            NoOpEntityAccessService,
+        )),
+        RequestContext::new(tool_test_user()),
+    )
+    .await
+    .expect_err("denied access must stop before the properties service is read");
+
+    assert_eq!(result.description, "You do not have access to this entity");
+}
+
+#[tokio::test]
+async fn set_entity_property_denial_stops_before_any_mutation_or_event() {
+    let result = SetEntityProperty {
+        entity_id: "denied-document".to_string(),
+        entity_type: super::get_entity_properties::ToolPropertyTargetEntityType::Document,
+        property_definition_id: uuid::Uuid::from_u128(0xA01),
+        boolean_value: Some(true),
+        date_value: None,
+        number_value: None,
+        string_value: None,
+        option_id: None,
+        option_ids: None,
+        add_option_ids: None,
+        remove_option_ids: None,
+        entity_ref: None,
+        entity_refs: None,
+        link_url: None,
+        link_urls: None,
+    }
+    .call(
+        ServiceContext(PropertiesToolContext::new(
+            no_op_properties_service(),
+            NoOpEntityAccessService,
+        )),
+        RequestContext::new(tool_test_user()),
+    )
+    .await
+    .expect_err("denied access must stop before the properties service mutates or emits");
+
+    assert_eq!(
+        result.description,
+        "You do not have edit access to this entity"
+    );
+}
+
+#[tokio::test]
+async fn bulk_denied_entity_is_skipped_without_mutation_or_internal_error() {
+    let response = BulkSetEntityPropertyOptions {
+        entities: vec![super::bulk_set_entity_property_options::BulkTargetEntity {
+            entity_id: "denied-document".to_string(),
+            entity_type: super::get_entity_properties::ToolPropertyTargetEntityType::Document,
+        }],
+        property_definition_id: uuid::Uuid::from_u128(0xA02),
+        add_option_ids: Some(vec![uuid::Uuid::from_u128(0xA03)]),
+        remove_option_ids: None,
+    }
+    .call(
+        ServiceContext(PropertiesToolContext::new(
+            no_op_properties_service(),
+            NoOpEntityAccessService,
+        )),
+        RequestContext::new(tool_test_user()),
+    )
+    .await
+    .expect("a denied bulk target should be reported without failing the call");
+
+    assert_eq!(response.results.len(), 1);
+    assert_eq!(response.results[0].status, "skipped_no_permission");
+    assert_eq!(response.results[0].error, None);
+}
+
+#[tokio::test]
+async fn task_property_target_mints_a_document_receipt_and_passes_it_to_properties() {
+    let task_id = uuid::Uuid::from_u128(0xA11);
+    let task_id_string = task_id.to_string();
+    let mut repo = crate::domain::ports::MockPropertiesRepo::new();
+    repo.expect_get_document_sub_types()
+        .withf(move |ids| ids == &[task_id])
+        .return_once(move |_| {
+            Box::pin(async move { Ok(HashMap::from([(task_id, DocumentSubType::Task)])) })
+        });
+    let expected_task_id = task_id_string.clone();
+    repo.expect_get_entity_properties()
+        .withf(move |entity_id, entity_type, viewer_id| {
+            entity_id == expected_task_id
+                && *entity_type == PropertyEntityType::Task
+                && viewer_id == "macro|properties-tool@example.com"
+        })
+        .return_once(|_, _, _| Box::pin(async { Ok(vec![]) }));
+    let service = ToolTestPropertiesService::new(
+        repo,
+        None::<crate::domain::ports::MockPermissionService>,
+        None::<crate::domain::ports::MockNotificationService>,
+    );
+    let access = RecordingEntityAccessService::default();
+
+    let response = GetEntityProperties {
+        entity_id: task_id_string.clone(),
+        entity_type: super::get_entity_properties::ToolPropertyTargetEntityType::Document,
+    }
+    .call(
+        ServiceContext(PropertiesToolContext::new(service, access.clone())),
+        RequestContext::new(tool_test_user()),
+    )
+    .await
+    .expect("authorized task target should reach the properties service");
+
+    assert!(response.properties.is_empty());
+    assert_eq!(
+        access.calls(),
+        vec![(task_id_string, EntityType::Document)],
+        "task transport targets must mint canonical document receipts"
+    );
+}
 
 #[test]
 fn property_target_schemas_expose_document_and_exclude_task() {
