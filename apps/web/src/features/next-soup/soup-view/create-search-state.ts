@@ -16,7 +16,6 @@ import { useUserId } from '@core/context/user';
 import { arrayEquals } from '@core/util/compareUtils';
 import { debouncedDependent } from '@core/util/debounce';
 import { type EntityData, isChannelEntity } from '@entity';
-import { SYSTEM_PROPERTY_IDS } from '@property/constants';
 import {
   useSearchSoupQuery,
   validateSearchServiceText,
@@ -44,7 +43,8 @@ function isSingleQuotedTerm(query: string): boolean {
 // search request shape, mirroring the soup path so search and soup agree. Values
 // are grouped by property id: multiple values on one property are OR'd (a task
 // matches any of them), and different properties are AND'd. Select options go to
-// option_ids, entity refs to entity_ids, and Boolean values to boolean_value.
+// option_ids, entity refs to entity_ids, Boolean values to boolean_value, and
+// dates to TASK-only date ranges.
 
 export function includePropertiesToFilters(
   properties: QueryState['include']['properties']
@@ -59,13 +59,6 @@ export function includePropertiesToFilters(
 
   const result: PropertyFilter[] = [];
   for (const [propertyId, group] of byPropId) {
-    if (
-      group.some((property) => property.type === 'date') &&
-      propertyId !== SYSTEM_PROPERTY_IDS.DUE_DATE
-    ) {
-      throw new Error('Invalid Due Date property filter group');
-    }
-
     const dateFilters = group.filter(
       (p): p is Extract<(typeof group)[number], { type: 'date' }> =>
         p.type === 'date'

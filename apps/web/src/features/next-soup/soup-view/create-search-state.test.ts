@@ -141,12 +141,23 @@ describe('includePropertiesToFilters', () => {
     });
   });
 
-  it('fails closed for a Date filter on a non-Due Date property', () => {
-    expect(() =>
-      includePropertiesToFilters([
-        { propertyId: 'not-due-date', type: 'date', value: 'today' },
-      ])
-    ).toThrow('Invalid Due Date property filter group');
+  it('serializes custom Task Date ranges with their exact property id', () => {
+    withFixedLocalTime('Asia/Seoul', '2026-08-30T03:00:00.000Z', () => {
+      expect(
+        includePropertiesToFilters([
+          { propertyId: 'not-due-date', type: 'date', value: 'today' },
+        ])
+      ).toEqual([
+        {
+          property_definition_id: 'not-due-date',
+          entity_type: 'TASK',
+          date_range: {
+            gte: '2026-08-29T15:00:00.000Z',
+            lt: '2026-08-30T15:00:00.000Z',
+          },
+        },
+      ]);
+    });
   });
 
   it('serializes mixed and duplicate Due Date filters as separate AND clauses', () => {

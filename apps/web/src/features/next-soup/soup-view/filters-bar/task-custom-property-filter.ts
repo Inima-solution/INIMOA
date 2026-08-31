@@ -1,4 +1,5 @@
 import type { PropertyFilter } from '@app/features/next-soup/filters/filter-store';
+import type { DueDateBucket } from '@app/features/next-soup/filters/filter-store/task-due-date';
 import { SYSTEM_PROPERTY_IDS } from '@property/constants';
 import { EntityType } from '@service-properties/generated/schemas/entityType';
 import type { PropertyDefinitionResponse } from '@service-properties/generated/schemas/propertyDefinitionResponse';
@@ -6,11 +7,22 @@ import type { PropertyDefinitionResponse } from '@service-properties/generated/s
 export type TaskCustomProperty = {
   id: string;
   label: string;
-  type: 'select' | 'boolean';
-  options: { id: string; label: string; value: string | boolean }[];
+  type: 'select' | 'boolean' | 'date';
+  options: {
+    id: string;
+    label: string;
+    value: string | boolean | DueDateBucket;
+  }[];
 };
 
 const SYSTEM_IDS = new Set<string>(Object.values(SYSTEM_PROPERTY_IDS));
+
+const DATE_OPTIONS: TaskCustomProperty['options'] = [
+  { id: 'overdue', label: 'Overdue', value: 'overdue' },
+  { id: 'today', label: 'Today', value: 'today' },
+  { id: 'upcoming', label: 'Upcoming', value: 'upcoming' },
+  { id: 'no-due', label: 'No due date', value: 'no-due' },
+];
 
 /** Shared task-only query arguments; callers retain their local enabled accessors. */
 export const taskCustomPropertiesQueryArgs = () => ({
@@ -35,7 +47,8 @@ export function taskCustomProperties(
       SYSTEM_IDS.has(definition.id) ||
       (definition.data_type !== 'SELECT_STRING' &&
         definition.data_type !== 'SELECT_NUMBER' &&
-        definition.data_type !== 'BOOLEAN')
+        definition.data_type !== 'BOOLEAN' &&
+        definition.data_type !== 'DATE')
     ) {
       continue;
     }
@@ -49,6 +62,16 @@ export function taskCustomProperties(
           { id: 'true', label: 'True', value: true },
           { id: 'false', label: 'False', value: false },
         ],
+      });
+      continue;
+    }
+
+    if (definition.data_type === 'DATE') {
+      result.push({
+        id: definition.id,
+        label: definition.display_name,
+        type: 'date',
+        options: DATE_OPTIONS,
       });
       continue;
     }
@@ -92,7 +115,7 @@ export function selectedTaskCustomPropertyValues(
       return [];
     return valid.has(filter.value) ? [String(filter.value)] : [];
   });
-  return property.type === 'boolean' ? selected.slice(0, 1) : selected;
+  return property.type === 'select' ? selected : selected.slice(0, 1);
 }
 
 /** Replaces exactly one definition's values without changing unrelated filters. */
@@ -111,7 +134,7 @@ export function replaceTaskCustomPropertyValues(
     values.get(String(filter.value)) === filter.value;
   const next = (properties ?? []).filter((filter) => !isRecognized(filter));
   const nextValueIds =
-    property.type === 'boolean' ? valueIds.slice(0, 1) : valueIds;
+    property.type === 'select' ? valueIds : valueIds.slice(0, 1);
   for (const valueId of nextValueIds) {
     const value = values.get(valueId);
     if (value !== undefined) {
@@ -125,13 +148,13 @@ export function replaceTaskCustomPropertyValues(
   return next;
 }
 
-/** Boolean properties are radio-like; select properties retain OR semantics. */
+/** Boolean and Date properties are radio-like; select properties retain OR semantics. */
 export function toggleTaskCustomPropertyValue(
   selectedValueIds: readonly string[],
   property: TaskCustomProperty,
   valueId: string
 ): string[] {
-  if (property.type === 'boolean') {
+  if (property.type !== 'select') {
     return selectedValueIds.includes(valueId) ? [] : [valueId];
   }
   return selectedValueIds.includes(valueId)

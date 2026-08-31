@@ -1,4 +1,3 @@
-import { SYSTEM_PROPERTY_IDS } from '@property/constants';
 import { resolveDueDateBucket } from './task-due-date';
 import type {
   DateRangeFilter,
@@ -388,14 +387,6 @@ export function compileToAst(state: QueryState): TargetAstMap {
   for (const propId of allPropIds) {
     const includeVals = includeByPropId.get(propId);
     const excludeVals = excludeByPropId.get(propId);
-
-    const propertyVals = [...(includeVals ?? []), ...(excludeVals ?? [])];
-    if (
-      propertyVals.some((property) => property.type === 'date') &&
-      propId !== SYSTEM_PROPERTY_IDS.DUE_DATE
-    ) {
-      throw new Error('Invalid Due Date property filter group');
-    }
 
     const includeDateVals = includeVals?.filter((p) => p.type === 'date') ?? [];
     const includeKeywordVals =

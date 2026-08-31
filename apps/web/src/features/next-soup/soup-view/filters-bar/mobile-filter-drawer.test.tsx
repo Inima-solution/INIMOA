@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@solidjs/testing-library';
+import { fireEvent, render, screen, within } from '@solidjs/testing-library';
 import type { JSX } from 'solid-js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -258,6 +258,15 @@ describe('MobileFilterDrawer due date', () => {
       },
       {
         definition: {
+          id: 'review-date',
+          display_name: 'Review date',
+          data_type: 'DATE',
+          is_system: false,
+        },
+        property_options: [],
+      },
+      {
+        definition: {
           id: 'unsupported',
           display_name: 'Unsupported',
           data_type: 'STRING',
@@ -281,6 +290,11 @@ describe('MobileFilterDrawer due date', () => {
     expect(screen.getByRole('radio', { name: 'True' })).toBeTruthy();
     expect(screen.getByRole('radio', { name: 'False' })).toBeTruthy();
     expect(screen.getByRole('checkbox', { name: 'Open' })).toBeTruthy();
+    const reviewDate = screen.getByRole('radiogroup', { name: 'Review date' });
+    expect(reviewDate).toBeTruthy();
+    expect(
+      within(reviewDate).getByRole('radio', { name: 'Overdue' })
+    ).toBeTruthy();
     expect(screen.queryByText('Unsupported')).toBeNull();
     expect(screen.queryByText('Empty')).toBeNull();
 
@@ -296,12 +310,22 @@ describe('MobileFilterDrawer due date', () => {
         properties: [{ propertyId: 'ready', type: 'boolean', value: false }],
       },
     });
+    fireEvent.click(within(reviewDate).getByRole('radio', { name: 'Overdue' }));
+    expect(state.queryFilters.set).toHaveBeenLastCalledWith({
+      include: {
+        properties: [
+          { propertyId: 'ready', type: 'boolean', value: false },
+          { propertyId: 'review-date', type: 'date', value: 'overdue' },
+        ],
+      },
+    });
     fireEvent.click(screen.getByRole('checkbox', { name: 'Open' }));
     fireEvent.click(screen.getByRole('checkbox', { name: 'Closed' }));
     expect(state.queryFilters.set).toHaveBeenLastCalledWith({
       include: {
         properties: [
           { propertyId: 'ready', type: 'boolean', value: false },
+          { propertyId: 'review-date', type: 'date', value: 'overdue' },
           { propertyId: 'status', type: 'select', value: 'open' },
           { propertyId: 'status', type: 'select', value: 'closed' },
         ],

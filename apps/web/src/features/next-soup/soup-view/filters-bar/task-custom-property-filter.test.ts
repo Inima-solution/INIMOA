@@ -88,6 +88,17 @@ describe('task custom property filter state', () => {
           { id: 'false', label: 'False', value: false },
         ],
       },
+      {
+        id: 'date',
+        label: 'date',
+        type: 'date',
+        options: [
+          { id: 'overdue', label: 'Overdue', value: 'overdue' },
+          { id: 'today', label: 'Today', value: 'today' },
+          { id: 'upcoming', label: 'Upcoming', value: 'upcoming' },
+          { id: 'no-due', label: 'No due date', value: 'no-due' },
+        ],
+      },
     ]);
   });
 
@@ -179,8 +190,8 @@ describe('task custom property filter state', () => {
     ]);
   });
 
-  it('keeps booleans single-select while select values retain OR semantics', () => {
-    const [, boolean] = properties();
+  it('keeps booleans and dates single-select while select values retain OR semantics', () => {
+    const [, boolean, date] = properties();
     const [select] = properties();
     expect(toggleTaskCustomPropertyValue(['true'], boolean!, 'false')).toEqual([
       'false',
@@ -191,6 +202,9 @@ describe('task custom property filter state', () => {
     expect(toggleTaskCustomPropertyValue(['first'], select!, 'second')).toEqual(
       ['first', 'second']
     );
+    expect(toggleTaskCustomPropertyValue(['today'], date!, 'upcoming')).toEqual(
+      ['upcoming']
+    );
     expect(
       replaceTaskCustomPropertyValues(
         [{ propertyId: 'bool', type: 'boolean', value: true }],
@@ -198,6 +212,16 @@ describe('task custom property filter state', () => {
         ['false', 'true']
       )
     ).toEqual([{ propertyId: 'bool', type: 'boolean', value: false }]);
+    expect(
+      replaceTaskCustomPropertyValues(
+        [
+          { propertyId: 'date', type: 'date', value: 'today' },
+          { propertyId: 'date', type: 'date', value: 'upcoming' },
+        ],
+        date!,
+        ['no-due', 'today']
+      )
+    ).toEqual([{ propertyId: 'date', type: 'date', value: 'no-due' }]);
   });
 
   it('keeps unknown or removed values fail-closed without exposing IDs', () => {

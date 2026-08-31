@@ -442,18 +442,31 @@ describe('compileToAst', () => {
     });
   });
 
-  it('fails closed for a Date filter on a non-Due Date property', () => {
-    expect(() =>
-      compileToAst(
-        queryStateFrom({
-          include: {
-            properties: [
-              { propertyId: 'not-due-date', type: 'date', value: 'today' },
-            ],
+  it('compiles custom Task Date filters with their exact property id', () => {
+    withFixedLocalTime('Asia/Seoul', '2026-08-30T03:00:00.000Z', () => {
+      expect(
+        compileToAst(
+          queryStateFrom({
+            include: {
+              properties: [
+                { propertyId: 'custom-date', type: 'date', value: 'today' },
+              ],
+            },
+          })
+        ).propf
+      ).toEqual({
+        l: {
+          pd: 'custom-date',
+          et: 'TASK',
+          v: {
+            dr: {
+              gte: '2026-08-29T15:00:00.000Z',
+              lt: '2026-08-30T15:00:00.000Z',
+            },
           },
-        })
-      )
-    ).toThrow('Invalid Due Date property filter group');
+        },
+      });
+    });
   });
 
   it('ANDs mixed and duplicate Due Date filters without broadening results', () => {
@@ -523,6 +536,49 @@ describe('compileToAst', () => {
           {
             l: {
               pd: SYSTEM_PROPERTY_IDS.DUE_DATE,
+              et: 'TASK',
+              v: { dr: { gte: '2026-08-30T15:00:00.000Z' } },
+            },
+          },
+        ],
+      });
+    });
+  });
+
+  it('ANDs multiple persisted custom Date filters fail-closed', () => {
+    withFixedLocalTime('Asia/Seoul', '2026-08-30T03:00:00.000Z', () => {
+      expect(
+        compileToAst(
+          queryStateFrom({
+            include: {
+              properties: [
+                { propertyId: 'custom-date', type: 'date', value: 'today' },
+                {
+                  propertyId: 'custom-date',
+                  type: 'date',
+                  value: 'upcoming',
+                },
+              ],
+            },
+          })
+        ).propf
+      ).toEqual({
+        '&': [
+          {
+            l: {
+              pd: 'custom-date',
+              et: 'TASK',
+              v: {
+                dr: {
+                  gte: '2026-08-29T15:00:00.000Z',
+                  lt: '2026-08-30T15:00:00.000Z',
+                },
+              },
+            },
+          },
+          {
+            l: {
+              pd: 'custom-date',
               et: 'TASK',
               v: { dr: { gte: '2026-08-30T15:00:00.000Z' } },
             },

@@ -775,12 +775,12 @@ export const MobileFilterDrawer = (props: {
                           <Accordion.Content>
                             <div
                               role={
-                                property.type === 'boolean'
+                                property.type !== 'select'
                                   ? 'radiogroup'
                                   : undefined
                               }
                               aria-label={
-                                property.type === 'boolean'
+                                property.type !== 'select'
                                   ? property.label
                                   : undefined
                               }
@@ -796,7 +796,7 @@ export const MobileFilterDrawer = (props: {
                                     <button
                                       type="button"
                                       role={
-                                        property.type === 'boolean'
+                                        property.type !== 'select'
                                           ? 'radio'
                                           : 'checkbox'
                                       }

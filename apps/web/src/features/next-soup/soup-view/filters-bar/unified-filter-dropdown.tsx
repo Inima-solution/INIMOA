@@ -110,7 +110,7 @@ const TaskCustomPropertySubmenu = (props: { property: TaskCustomProperty }) => {
       },
     });
   };
-  const selectBoolean = (id: string) => {
+  const selectSingle = (id: string) => {
     queryFilters.set({
       include: {
         properties: replaceTaskCustomPropertyValues(
@@ -129,7 +129,7 @@ const TaskCustomPropertySubmenu = (props: { property: TaskCustomProperty }) => {
       </Dropdown.SubTrigger>
       <Dropdown.SubContent>
         <Show
-          when={props.property.type === 'boolean'}
+          when={props.property.type !== 'select'}
           fallback={
             <Dropdown.Group>
               <For each={props.property.options}>
@@ -154,7 +154,7 @@ const TaskCustomPropertySubmenu = (props: { property: TaskCustomProperty }) => {
           }
         >
           <Dropdown.Group>
-            <Dropdown.RadioGroup value={selected()[0]} onChange={selectBoolean}>
+            <Dropdown.RadioGroup value={selected()[0]} onChange={selectSingle}>
               <For each={props.property.options}>
                 {(option) => (
                   <Dropdown.RadioItem value={option.id}>
