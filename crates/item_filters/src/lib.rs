@@ -625,6 +625,10 @@ pub struct PropertyFilter {
     /// combined with option, entity-reference, or boolean matching.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date_range: Option<PropertyDateRangeFilter>,
+    /// Task Number property range. Number ranges are Task-only and cannot be
+    /// combined with any other property value matching.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub number_range: Option<PropertyNumberRangeFilter>,
 }
 
 /// A Date-property range together with whether matching Task values are excluded.
@@ -635,6 +639,18 @@ pub struct PropertyDateRangeFilter {
     #[serde(flatten)]
     pub range: ast::properties::PropertyDateRange,
     /// Exclude Tasks whose Date property matches these bounds.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub exclude: bool,
+}
+
+/// A Number-property range together with whether matching Task values are excluded.
+#[derive(Debug, Serialize, Deserialize, Default, PartialEq, Clone)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema, schemars::JsonSchema))]
+pub struct PropertyNumberRangeFilter {
+    /// Finite bounds for the Number property value.
+    #[serde(flatten)]
+    pub range: ast::properties::PropertyNumberRange,
+    /// Exclude Tasks whose Number property matches these bounds.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub exclude: bool,
 }
@@ -656,6 +672,42 @@ impl PropertyFilter {
         }
         Ok(())
     }
+
+    /// Validates the Task-only Number-property filter contract.
+    pub fn validate_number_range(&self) -> Result<(), &'static str> {
+        let Some(number_range) = &self.number_range else {
+            return Ok(());
+        };
+        if self.entity_type.as_deref() != Some("TASK") {
+            return Err("number_range requires entity_type TASK");
+        }
+        if !self.option_ids.is_empty()
+            || !self.entity_ids.is_empty()
+            || self.boolean_value.is_some()
+            || self.date_range.is_some()
+        {
+            return Err("number_range cannot be combined with other property values");
+        }
+        if [
+            number_range.range.gt,
+            number_range.range.gte,
+            number_range.range.lt,
+            number_range.range.lte,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|bound| !bound.is_finite())
+        {
+            return Err("number_range bounds must be finite");
+        }
+        Ok(())
+    }
+
+    /// Validates all canonical Task property ranges.
+    pub fn validate_property_range(&self) -> Result<(), &'static str> {
+        self.validate_date_range()?;
+        self.validate_number_range()
+    }
 }
 
 impl IsEmpty for PropertyFilter {
@@ -664,6 +716,7 @@ impl IsEmpty for PropertyFilter {
             && self.entity_ids.is_empty()
             && self.boolean_value.is_none()
             && self.date_range.is_none()
+            && self.number_range.is_none()
     }
 }
 

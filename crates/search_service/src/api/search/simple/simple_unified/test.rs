@@ -665,64 +665,119 @@ fn property_filter_args_translate_date_range_and_exclude() {
 }
 
 #[test]
-fn property_filter_args_reject_invalid_date_ranges_with_safe_error() {
+fn property_filter_args_translate_number_range_and_route_as_task_only() {
     let filters = vec![item_filters::PropertyFilter {
+        property_definition_id: "estimate".to_string(),
+        entity_type: Some("TASK".to_string()),
+        number_range: Some(item_filters::PropertyNumberRangeFilter {
+            range: item_filters::ast::properties::PropertyNumberRange {
+                gte: Some(2.0),
+                lte: Some(8.0),
+                ..Default::default()
+            },
+            exclude: true,
+        }),
+        ..Default::default()
+    }];
+    let args = to_property_filter_args(&filters).unwrap();
+    let number = args[0].number_range.as_ref().unwrap();
+    assert!(args[0].date_range.is_none());
+    assert!(number.exclude);
+    assert_eq!(number.gte, Some(2.0));
+    assert_eq!(number.lte, Some(8.0));
+    assert_eq!(
+        task_range_document_routing(true, true, &["note".to_string()]),
+        (false, None)
+    );
+    assert!(!include_non_document_source(true, true));
+}
+
+#[test]
+fn property_filter_args_reject_invalid_task_ranges_with_safe_error() {
+    let date_non_task = item_filters::PropertyFilter {
         property_definition_id: "due-date".to_string(),
         entity_type: Some("DOCUMENT".to_string()),
         date_range: Some(item_filters::PropertyDateRangeFilter::default()),
         ..Default::default()
-    }];
-    assert!(matches!(
-        to_property_filter_args(&filters),
-        Err(SearchError::InvalidPropertyDateRange)
-    ));
+    };
+    let number_non_task = item_filters::PropertyFilter {
+        property_definition_id: "estimate".to_string(),
+        entity_type: Some("DOCUMENT".to_string()),
+        number_range: Some(item_filters::PropertyNumberRangeFilter::default()),
+        ..Default::default()
+    };
+    let mixed = item_filters::PropertyFilter {
+        property_definition_id: "estimate".to_string(),
+        entity_type: Some("TASK".to_string()),
+        date_range: Some(item_filters::PropertyDateRangeFilter::default()),
+        number_range: Some(item_filters::PropertyNumberRangeFilter::default()),
+        ..Default::default()
+    };
+    let nonfinite = item_filters::PropertyFilter {
+        property_definition_id: "estimate".to_string(),
+        entity_type: Some("TASK".to_string()),
+        number_range: Some(item_filters::PropertyNumberRangeFilter {
+            range: item_filters::ast::properties::PropertyNumberRange {
+                gte: Some(f64::INFINITY),
+                ..Default::default()
+            },
+            ..Default::default()
+        }),
+        ..Default::default()
+    };
+    for filter in [date_non_task, number_non_task, mixed, nonfinite] {
+        assert!(matches!(
+            to_property_filter_args(&[filter]),
+            Err(SearchError::InvalidPropertyRange)
+        ));
+    }
 }
 
 #[test]
-fn date_range_document_routing_intersects_task_subtype_without_broadening() {
+fn task_range_document_routing_intersects_task_subtype_without_broadening() {
     assert_eq!(
-        date_range_document_routing(true, true, &[]),
+        task_range_document_routing(true, true, &[]),
         (true, Some(vec!["task".to_string()]))
     );
     assert_eq!(
-        date_range_document_routing(true, true, &["task".to_string(), "note".to_string()]),
+        task_range_document_routing(true, true, &["task".to_string(), "note".to_string()]),
         (true, Some(vec!["task".to_string()]))
     );
     assert_eq!(
-        date_range_document_routing(true, true, &["note".to_string()]),
+        task_range_document_routing(true, true, &["note".to_string()]),
         (false, None)
     );
     assert_eq!(
-        date_range_document_routing(true, false, &["task".to_string()]),
+        task_range_document_routing(true, false, &["task".to_string()]),
         (false, None),
         "an existing document exclusion remains excluded"
     );
 }
 
 #[test]
-fn date_range_routing_disables_every_non_document_source() {
+fn task_range_routing_disables_every_non_document_source() {
     for source_enabled in [false, true] {
         assert_eq!(
             include_non_document_source(source_enabled, true),
             false,
-            "Date filters must not run a non-document source"
+            "Task property ranges must not run a non-document source"
         );
         assert_eq!(
             include_non_document_source(source_enabled, false),
             source_enabled,
-            "non-Date routing preserves the prior source decision"
+            "non-range routing preserves the prior source decision"
         );
     }
 }
 
 #[tokio::test]
-async fn invalid_date_range_search_error_is_redacted_bad_request() {
-    let response = SearchError::InvalidPropertyDateRange.into_response();
+async fn invalid_task_range_search_error_is_redacted_bad_request() {
+    let response = SearchError::InvalidPropertyRange.into_response();
     assert_eq!(response.status(), axum::http::StatusCode::BAD_REQUEST);
     let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     assert_eq!(
         std::str::from_utf8(&body).unwrap(),
-        r#"{"message":"invalid property date range filter"}"#
+        r#"{"message":"invalid property range filter"}"#
     );
 }
 

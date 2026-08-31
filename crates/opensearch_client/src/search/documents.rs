@@ -66,9 +66,11 @@ pub struct PropertyFilterArg {
     /// Candidate values (OR'd). Select-option UUIDs and entity-ref ids both
     /// live in the indexed `values` keyword array.
     pub values: Vec<String>,
-    /// Task Date-property range, when this is a Date filter rather than a
+    /// Task Date-property range, when this is a Date range rather than a
     /// keyword equality filter.
     pub date_range: Option<PropertyDateRangeArg>,
+    /// Task Number-property range, when this is a Number filter.
+    pub number_range: Option<PropertyNumberRangeArg>,
 }
 
 /// UTC bounds and exclusion mode for an indexed Task Date property.
@@ -83,6 +85,16 @@ pub struct PropertyDateRangeArg {
     /// Match values at or before this instant.
     pub lte: Option<DateTime<Utc>>,
     /// Exclude matching Date values instead of including them.
+    pub exclude: bool,
+}
+
+/// Finite numeric bounds and exclusion mode for an indexed Task Number property.
+#[derive(Debug, Clone)]
+pub struct PropertyNumberRangeArg {
+    pub gt: Option<f64>,
+    pub gte: Option<f64>,
+    pub lt: Option<f64>,
+    pub lte: Option<f64>,
     pub exclude: bool,
 }
 
@@ -292,9 +304,9 @@ impl DocumentQueryBuilder {
 
 /// Build a `nested` query over `properties` for one property filter:
 /// a parent matches when one nested entry has the filter's `definition_id`
-/// and either contains any keyword `values`, or has a valid `date_value`
-/// within the supplied Date range. Returns `None` only for an empty keyword
-/// filter; an empty Date range still requires an indexed Date value.
+/// and either contains keyword `values`, a valid `date_value`, or a valid
+/// `number_value` within the supplied Task range. Returns `None` only for an
+/// empty keyword filter; an empty Task range still requires an indexed value.
 fn build_property_filter<'a>(filter: &PropertyFilterArg) -> Option<(QueryType<'a>, bool)> {
     let mut inner = BoolQueryBuilder::new();
     inner.filter(QueryType::term(
@@ -325,6 +337,30 @@ fn build_property_filter<'a>(filter: &PropertyFilterArg) -> Option<(QueryType<'a
             inner.filter(range.build().into());
         }
         date_range.exclude
+    } else if let Some(number_range) = &filter.number_range {
+        inner.filter(QueryType::exists(format!("{PROPERTIES_PATH}.number_value")));
+        let field = format!("{PROPERTIES_PATH}.number_value");
+        let mut range = QueryType::range(field);
+        if let Some(value) = number_range.gt {
+            range.gt(value);
+        }
+        if let Some(value) = number_range.gte {
+            range.gte(value);
+        }
+        if let Some(value) = number_range.lt {
+            range.lt(value);
+        }
+        if let Some(value) = number_range.lte {
+            range.lte(value);
+        }
+        if number_range.gt.is_some()
+            || number_range.gte.is_some()
+            || number_range.lt.is_some()
+            || number_range.lte.is_some()
+        {
+            inner.filter(range.build().into());
+        }
+        number_range.exclude
     } else {
         if filter.values.is_empty() {
             return None;

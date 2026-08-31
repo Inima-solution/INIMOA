@@ -3,6 +3,7 @@ use std::str::FromStr;
 use super::*;
 use crate::{
     CallFilters, CallStatus, ForeignEntityFilters, PropertyDateRangeFilter, PropertyFilter,
+    PropertyNumberRangeFilter,
 };
 use cool_asserts::assert_matches;
 use model_file_type::FileType;
@@ -624,6 +625,7 @@ fn it_ors_option_entity_ref_and_boolean_within_single_property_filter() {
             entity_ids: vec![entity_id.to_string()],
             boolean_value: Some(false),
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -705,6 +707,7 @@ fn it_expands_single_property_select_option() {
             entity_ids: vec![],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -726,6 +729,7 @@ fn it_expands_multiple_option_ids_as_or() {
             entity_ids: vec![],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -753,6 +757,7 @@ fn it_expands_entity_ref_filter() {
             entity_ids: vec![entity_id.clone()],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -787,6 +792,7 @@ fn it_ands_multiple_property_filters() {
                 entity_ids: vec![],
                 boolean_value: None,
                 date_range: None,
+                number_range: None,
             },
             PropertyFilter {
                 property_definition_id: priority_id.to_string(),
@@ -795,6 +801,7 @@ fn it_ands_multiple_property_filters() {
                 entity_ids: vec![],
                 boolean_value: None,
                 date_range: None,
+                number_range: None,
             },
         ],
         ..Default::default()
@@ -824,6 +831,7 @@ fn it_ors_mixed_option_and_entity_ref_within_single_filter() {
             entity_ids: vec![entity_id],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -863,6 +871,7 @@ fn property_filter_with_empty_values_produce_no_ast() {
             entity_ids: vec![],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -885,6 +894,7 @@ fn it_expands_property_filter_without_entity_type() {
             entity_ids: vec![],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -916,6 +926,7 @@ fn it_expands_property_filter_with_entity_type() {
             entity_ids: vec![],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -1040,6 +1051,7 @@ fn invalid_entity_type_returns_error() {
             entity_ids: vec![],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -1061,6 +1073,7 @@ fn entity_ref_with_single_quote_returns_error() {
             entity_ids: vec!["x'); DROP TABLE documents; --".to_string()],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -1231,6 +1244,106 @@ fn property_date_range_filter_rejects_non_task_and_mixed_values() {
     mixed.entity_type = Some("TASK".to_string());
     mixed.boolean_value = Some(false);
     assert!(Vec::<PropertyFilter>::expand_ast(vec![mixed]).is_err());
+}
+
+#[test]
+fn property_number_range_is_compact_validated_and_excluded_by_not() {
+    use properties::{
+        PropertiesLiteral, PropertyEntityType, PropertyMatchValue, PropertyNumberRange,
+    };
+
+    let property_definition_id = Uuid::new_v4();
+    let filter = PropertyFilter {
+        property_definition_id: property_definition_id.to_string(),
+        entity_type: Some("TASK".to_string()),
+        number_range: Some(PropertyNumberRangeFilter {
+            range: PropertyNumberRange {
+                gte: Some(1.5),
+                lt: Some(9.0),
+                ..Default::default()
+            },
+            exclude: true,
+        }),
+        ..Default::default()
+    };
+    let ast = Vec::<PropertyFilter>::expand_ast(vec![filter])
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        serde_json::to_value(ast).unwrap(),
+        json!({
+            "!": {"l": {"pd": property_definition_id, "et": "TASK", "v": {"nr": {"gte": 1.5, "lt": 9.0}}}}
+        })
+    );
+    let literal = PropertiesLiteral {
+        property_definition_id,
+        entity_type: Some(PropertyEntityType::Task),
+        value: PropertyMatchValue::NumberRange(PropertyNumberRange::default()),
+    };
+    assert_eq!(
+        serde_json::to_value(literal).unwrap()["v"],
+        json!({"nr": {}})
+    );
+
+    for entity_type in [None, Some("DOCUMENT".to_string())] {
+        let invalid = PropertyFilter {
+            property_definition_id: property_definition_id.to_string(),
+            entity_type,
+            number_range: Some(PropertyNumberRangeFilter::default()),
+            ..Default::default()
+        };
+        assert!(Vec::<PropertyFilter>::expand_ast(vec![invalid]).is_err());
+    }
+    for invalid in [
+        PropertyFilter {
+            option_ids: vec![Uuid::new_v4().to_string()],
+            ..Default::default()
+        },
+        PropertyFilter {
+            entity_ids: vec!["entity".to_string()],
+            ..Default::default()
+        },
+        PropertyFilter {
+            boolean_value: Some(true),
+            ..Default::default()
+        },
+        PropertyFilter {
+            date_range: Some(PropertyDateRangeFilter::default()),
+            ..Default::default()
+        },
+    ] {
+        let invalid = PropertyFilter {
+            property_definition_id: property_definition_id.to_string(),
+            entity_type: Some("TASK".to_string()),
+            number_range: Some(PropertyNumberRangeFilter::default()),
+            ..invalid
+        };
+        assert!(Vec::<PropertyFilter>::expand_ast(vec![invalid]).is_err());
+    }
+    for (slot, value) in [
+        (0, f64::NAN),
+        (1, f64::INFINITY),
+        (2, f64::NEG_INFINITY),
+        (3, f64::NAN),
+    ] {
+        let mut range = PropertyNumberRange::default();
+        match slot {
+            0 => range.gt = Some(value),
+            1 => range.gte = Some(value),
+            2 => range.lt = Some(value),
+            _ => range.lte = Some(value),
+        }
+        let invalid = PropertyFilter {
+            property_definition_id: property_definition_id.to_string(),
+            entity_type: Some("TASK".to_string()),
+            number_range: Some(PropertyNumberRangeFilter {
+                range,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        assert!(Vec::<PropertyFilter>::expand_ast(vec![invalid]).is_err());
+    }
 }
 
 #[test]

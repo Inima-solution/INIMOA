@@ -13,7 +13,10 @@ use item_filters::ast::{
     date::DateLiteral,
     document::DocumentLiteral,
     project::ProjectLiteral,
-    properties::{PropertiesLiteral, PropertyDateRange, PropertyEntityType, PropertyMatchValue},
+    properties::{
+        PropertiesLiteral, PropertyDateRange, PropertyEntityType, PropertyMatchValue,
+        PropertyNumberRange,
+    },
 };
 use macro_user_id::{cowlike::CowLike, user_id::MacroUserIdStr};
 use models_pagination::{Query, SimpleSortMethod};
@@ -763,6 +766,25 @@ fn property_date_range_predicate(range: &PropertyDateRange) -> String {
     format!("jsonb_path_exists(ep_prop.values, '$ ? ({predicate})', '{{}}'::jsonb, true)")
 }
 
+/// PostgreSQL 14-safe Number JSON predicate. `silent` makes malformed,
+/// missing, null, and cross-typed values non-matches, while a surrounding NOT
+/// remains their exact logical complement.
+fn property_number_range_predicate(range: &PropertyNumberRange) -> String {
+    let mut predicate =
+        String::from("@.type == \"Number\" && @.value.double() == @.value.double()");
+    for (operator, bound) in [
+        (">", range.gt),
+        (">=", range.gte),
+        ("<", range.lt),
+        ("<=", range.lte),
+    ] {
+        if let Some(bound) = bound {
+            predicate.push_str(&format!(" && @.value.double() {operator} {bound}"));
+        }
+    }
+    format!("jsonb_path_exists(ep_prop.values, '$ ? ({predicate})', '{{}}'::jsonb, true)")
+}
+
 pub(in crate::outbound::pg_soup_repo) fn build_document_filter(
     ast: Option<&Expr<DocumentLiteral>>,
 ) -> String {
@@ -1047,6 +1069,21 @@ pub(in crate::outbound::pg_soup_repo) fn build_properties_filter(
                         format!(
                             "{} AND EXISTS (SELECT 1 FROM document_sub_type due_task WHERE due_task.document_id = {entity_id_sql} AND due_task.sub_type = 'task')",
                             property_date_range_predicate(&range)
+                        )
+                    }
+                }
+                PropertyMatchValue::NumberRange(range) => {
+                    if entity_type != Some(PropertyEntityType::Task)
+                        || [range.gt, range.gte, range.lt, range.lte]
+                            .into_iter()
+                            .flatten()
+                            .any(|bound| !bound.is_finite())
+                    {
+                        "FALSE".to_string()
+                    } else {
+                        format!(
+                            "{} AND EXISTS (SELECT 1 FROM document_sub_type number_task WHERE number_task.document_id = {entity_id_sql} AND number_task.sub_type = 'task')",
+                            property_number_range_predicate(&range)
                         )
                     }
                 }

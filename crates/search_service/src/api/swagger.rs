@@ -5,7 +5,9 @@ use crate::api::search;
 
 use item_filters::{
     ChannelFilters, ChatFilters, DocumentFilters, EmailFilters, EntityFilters, NotificationFilters,
-    ProjectFilters, PropertyDateRangeFilter, PropertyFilter, SharedEmailFilter, TaskFilters,
+    ProjectFilters, PropertyDateRangeFilter, PropertyFilter, PropertyNumberRangeFilter,
+    SharedEmailFilter, TaskFilters,
+    ast::properties::{PropertyDateRange, PropertyNumberRange},
 };
 use model::{document::FileType, response::EmptyResponse};
 use models_search::channel::{
@@ -72,7 +74,7 @@ use models_search::{MatchType, SearchHighlight};
 
                         // Entity filters (shared with soup)
                         EntityFilters, DocumentFilters, ChatFilters, EmailFilters, ChannelFilters, ProjectFilters,
-                        PropertyFilter, PropertyDateRangeFilter, item_filters::ast::properties::PropertyDateRange, NotificationFilters, TaskFilters, SharedEmailFilter,
+                        PropertyFilter, PropertyDateRangeFilter, PropertyNumberRangeFilter, PropertyDateRange, PropertyNumberRange, NotificationFilters, TaskFilters, SharedEmailFilter,
 
                         // Project
                         ProjectSearchRequest, ProjectSearchResponse, ProjectSearchResponseItem, ProjectSearchResult, ProjectSearchMetadata,

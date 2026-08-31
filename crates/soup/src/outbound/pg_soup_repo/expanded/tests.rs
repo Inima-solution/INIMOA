@@ -10,8 +10,14 @@ use filter_ast::Expr;
 use item_filters::{
     PropertyFilter,
     ast::{
-        EntityFilterAst, chat::ChatLiteral, date::DateLiteral, document::DocumentLiteral,
+        EntityFilterAst,
+        chat::ChatLiteral,
+        date::DateLiteral,
+        document::DocumentLiteral,
         project::ProjectLiteral,
+        properties::{
+            PropertiesLiteral, PropertyEntityType, PropertyMatchValue, PropertyNumberRange,
+        },
     },
 };
 use macro_db_migrator::MACRO_DB_MIGRATIONS;
@@ -48,6 +54,32 @@ macro_rules! unwrap_enum {
             ),
         }
     };
+}
+
+#[test]
+fn number_range_sql_is_silent_task_only_and_not_safe() {
+    let ast = Expr::Not(Box::new(Expr::Literal(PropertiesLiteral {
+        property_definition_id: Uuid::nil(),
+        entity_type: Some(PropertyEntityType::Task),
+        value: PropertyMatchValue::NumberRange(PropertyNumberRange {
+            gt: Some(1.0),
+            gte: Some(2.0),
+            lt: Some(9.0),
+            lte: Some(8.0),
+        }),
+    })));
+    let sql = super::dynamic::build_properties_filter(Some(&ast), "d.id");
+    assert!(sql.contains("ep_prop.entity_type = 'TASK'"));
+    assert!(sql.contains("number_task.sub_type = 'task'"));
+    assert!(sql.contains("@.type == \"Number\""));
+    assert!(sql.contains("@.value.double()"));
+    assert!(sql.contains(", true)"), "JSONPath must stay silent: {sql}");
+    assert!(
+        sql.contains("NOT EXISTS"),
+        "exclusion must complement EXISTS: {sql}"
+    );
+    assert!(!sql.contains("::double"));
+    assert!(!sql.contains("::numeric"));
 }
 // 2 items have no viewing history, so they should be last in the response when sorting by viewed_at
 #[sqlx::test(
@@ -146,6 +178,205 @@ async fn test_viewed_at_orders_nulls_last(pool: Pool<Postgres>) -> anyhow::Resul
         panic!("Missing doc-in-B");
     }
 
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(
+        path = "../../../../../macro_db_client/fixtures",
+        scripts("soup_items_with_properties")
+    )
+)]
+async fn test_property_filter_by_task_number_range(db: Pool<Postgres>) -> anyhow::Result<()> {
+    use item_filters::ast::properties::{
+        PropertiesLiteral, PropertyEntityType, PropertyMatchValue, PropertyNumberRange,
+    };
+    let project_low = Uuid::parse_str("11111111-aaaa-aaaa-aaaa-aaaaaaaaaaaa")?;
+    let project_high = Uuid::parse_str("11111111-bbbb-bbbb-bbbb-bbbbbbbbbbbb")?;
+    let personal = Uuid::new_v4();
+    let null = Uuid::new_v4();
+    let missing = Uuid::new_v4();
+    let malformed = Uuid::new_v4();
+    let wrong = Uuid::new_v4();
+    let inaccessible = Uuid::new_v4();
+    let non_task = Uuid::new_v4();
+    let deleted = Uuid::new_v4();
+    let team_id = Uuid::from_u128(0x998);
+    let definition_id = Uuid::from_u128(0x999);
+    let second_definition_id = Uuid::from_u128(0x99a);
+    sqlx::query("INSERT INTO macro_user (id, username, email, stripe_customer_id) VALUES ('a2222222-2222-2222-2222-222222222222', 'number-user-2@test.com', 'number-user-2@test.com', 'number_stripe_2')")
+        .execute(&db)
+        .await?;
+    sqlx::query("INSERT INTO \"User\" (id, email, \"stripeCustomerId\", \"organizationId\", macro_user_id) VALUES ('macro|user-2@test.com', 'number-user-2@test.com', 'number_stripe_2', 1, 'a2222222-2222-2222-2222-222222222222')")
+        .execute(&db)
+        .await?;
+    sqlx::query("INSERT INTO team (id, name, owner_id) VALUES ($1, 'Number range isolated fixture team', 'macro|user-1@test.com')").bind(team_id).execute(&db).await?;
+    sqlx::query("INSERT INTO property_definitions (id, team_id, user_id, display_name, data_type, is_multi_select, specific_entity_type) VALUES ($1, $2, NULL, 'Number range isolated fixture', 'NUMBER', false, 'TASK')").bind(definition_id).bind(team_id).execute(&db).await?;
+    sqlx::query("INSERT INTO property_definitions (id, team_id, user_id, display_name, data_type, is_multi_select, specific_entity_type) VALUES ($1, $2, NULL, 'Number range isolated second fixture', 'NUMBER', false, 'TASK')").bind(second_definition_id).bind(team_id).execute(&db).await?;
+    sqlx::query(r#"INSERT INTO "Document" ("id", "name", "owner", "fileType", "createdAt", "updatedAt") VALUES
+        ($1,'n-personal','macro|user-1@test.com','txt',NOW(),NOW()),($2,'n-null','macro|user-1@test.com','txt',NOW(),NOW()),($3,'n-malformed','macro|user-1@test.com','txt',NOW(),NOW()),($4,'n-wrong','macro|user-1@test.com','txt',NOW(),NOW()),($5,'n-inaccessible','macro|user-2@test.com','txt',NOW(),NOW()),($6,'n-nontask','macro|user-1@test.com','txt',NOW(),NOW()),($7,'n-deleted','macro|user-1@test.com','txt',NOW(),NOW())"#)
+        .bind(personal).bind(null).bind(malformed).bind(wrong).bind(inaccessible).bind(non_task).bind(deleted).execute(&db).await?;
+    sqlx::query(r#"INSERT INTO "DocumentInstance" ("id","documentId","sha","createdAt","updatedAt") VALUES (91001,$1,'n1',NOW(),NOW()),(91002,$2,'n2',NOW(),NOW()),(91003,$3,'n3',NOW(),NOW()),(91004,$4,'n4',NOW(),NOW()),(91005,$5,'n5',NOW(),NOW()),(91006,$6,'n6',NOW(),NOW()),(91007,$7,'n7',NOW(),NOW())"#).bind(personal).bind(null).bind(malformed).bind(wrong).bind(inaccessible).bind(non_task).bind(deleted).execute(&db).await?;
+    sqlx::query(r#"INSERT INTO "Document" ("id", "name", "owner", "fileType", "createdAt", "updatedAt") VALUES ($1,'n-missing','macro|user-1@test.com','txt',NOW(),NOW())"#)
+        .bind(missing).execute(&db).await?;
+    sqlx::query(r#"INSERT INTO "DocumentInstance" ("id","documentId","sha","createdAt","updatedAt") VALUES (91008,$1,'n8',NOW(),NOW())"#)
+        .bind(missing).execute(&db).await?;
+    sqlx::query("INSERT INTO document_sub_type (document_id,sub_type) VALUES ($1,'task'),($2,'task'),($3,'task'),($4,'task'),($5,'task'),($6,'task')").bind(personal).bind(null).bind(malformed).bind(wrong).bind(inaccessible).bind(deleted).execute(&db).await?;
+    sqlx::query("INSERT INTO document_sub_type (document_id,sub_type) VALUES ($1,'task'),($2,'task'),($3,'task')")
+        .bind(project_low).bind(project_high).bind(missing).execute(&db).await?;
+    sqlx::query("INSERT INTO entity_access (entity_id,entity_type,source_id,source_type,access_level) VALUES ($1,'document','macro|user-1@test.com','user','view'),($2,'document','macro|user-1@test.com','user','view'),($3,'document','macro|user-1@test.com','user','view'),($4,'document','macro|user-1@test.com','user','view'),($5,'document','macro|user-1@test.com','user','view'),($6,'document','macro|user-1@test.com','user','view')").bind(personal).bind(null).bind(malformed).bind(wrong).bind(non_task).bind(deleted).execute(&db).await?;
+    sqlx::query("INSERT INTO entity_access (entity_id,entity_type,source_id,source_type,access_level) VALUES ($1,'document','macro|user-1@test.com','user','view')")
+        .bind(missing).execute(&db).await?;
+    sqlx::query("UPDATE \"Document\" SET \"deletedAt\"=NOW() WHERE id=$1")
+        .bind(deleted.to_string())
+        .execute(&db)
+        .await?;
+    sqlx::query(r#"INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES
+        (gen_random_uuid(),$1,'TASK',$10,'{"type":"Number","value":2}'::jsonb),(gen_random_uuid(),$2,'TASK',$10,'{"type":"Number","value":8}'::jsonb),(gen_random_uuid(),$3,'TASK',$10,'{"type":"Number","value":4}'::jsonb),(gen_random_uuid(),$4,'TASK',$10,NULL),(gen_random_uuid(),$5,'TASK',$10,'{"type":"Number","value":"bad"}'::jsonb),(gen_random_uuid(),$6,'TASK',$10,'{"type":"Boolean","value":true}'::jsonb),(gen_random_uuid(),$7,'TASK',$10,'{"type":"Number","value":4}'::jsonb),(gen_random_uuid(),$8,'TASK',$10,'{"type":"Number","value":4}'::jsonb),(gen_random_uuid(),$9,'TASK',$10,'{"type":"Number","value":4}'::jsonb)"#)
+        .bind(project_low.to_string()).bind(project_high.to_string()).bind(personal.to_string()).bind(null.to_string()).bind(malformed.to_string()).bind(wrong.to_string()).bind(inaccessible.to_string()).bind(deleted.to_string()).bind(non_task.to_string()).bind(definition_id).execute(&db).await?;
+    sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES (gen_random_uuid(),$1,'TASK',$3,'{\"type\":\"Number\",\"value\":4}'::jsonb),(gen_random_uuid(),$2,'TASK',$3,'{\"type\":\"Number\",\"value\":4}'::jsonb)")
+        .bind(project_low.to_string()).bind(personal.to_string()).bind(second_definition_id).execute(&db).await?;
+    let filter = |expr| EntityFilterAst {
+        document_filter: Some(Arc::new(Expr::Literal(DocumentLiteral::SubType(
+            document_sub_type::DocumentSubType::Task,
+        )))),
+        properties_filter: Some(Arc::new(expr)),
+        ..Default::default()
+    };
+    let lit = |range| {
+        Expr::Literal(PropertiesLiteral {
+            property_definition_id: definition_id,
+            entity_type: Some(PropertyEntityType::Task),
+            value: PropertyMatchValue::NumberRange(range),
+        })
+    };
+    let second_lit = Expr::Literal(PropertiesLiteral {
+        property_definition_id: second_definition_id,
+        entity_type: Some(PropertyEntityType::Task),
+        value: PropertyMatchValue::NumberRange(PropertyNumberRange::default()),
+    });
+    let ids = |expr| async {
+        Ok::<HashSet<Uuid>, anyhow::Error>(
+            dyn_fetch(
+                &db,
+                "macro|user-1@test.com",
+                100,
+                SimpleSortMethod::UpdatedAt,
+                filter(expr),
+                false,
+            )
+            .await?
+            .into_iter()
+            .filter_map(|x| {
+                if let SoupItem::Document(d) = x {
+                    Some(d.id)
+                } else {
+                    None
+                }
+            })
+            .collect(),
+        )
+    };
+    assert_eq!(
+        ids(lit(PropertyNumberRange {
+            gt: Some(1.),
+            gte: Some(2.),
+            lt: Some(9.),
+            lte: Some(8.)
+        }))
+        .await?,
+        HashSet::from([project_low, project_high, personal])
+    );
+    assert!(
+        !ids(lit(PropertyNumberRange {
+            gt: Some(2.),
+            ..Default::default()
+        }))
+        .await?
+        .contains(&project_low)
+    );
+    assert!(
+        ids(lit(PropertyNumberRange {
+            gte: Some(2.),
+            ..Default::default()
+        }))
+        .await?
+        .contains(&project_low)
+    );
+    assert!(
+        !ids(lit(PropertyNumberRange {
+            lt: Some(8.),
+            ..Default::default()
+        }))
+        .await?
+        .contains(&project_high)
+    );
+    assert!(
+        ids(lit(PropertyNumberRange {
+            lte: Some(8.),
+            ..Default::default()
+        }))
+        .await?
+        .contains(&project_high)
+    );
+    assert_eq!(
+        ids(lit(PropertyNumberRange::default())).await?,
+        HashSet::from([project_low, project_high, personal])
+    );
+    let excluded = ids(Expr::Not(Box::new(lit(PropertyNumberRange::default())))).await?;
+    assert!(excluded.is_superset(&HashSet::from([null, missing, malformed, wrong])));
+    assert!(!excluded.contains(&project_low));
+    assert!(!excluded.contains(&project_high));
+    assert!(!excluded.contains(&personal));
+    assert!(!excluded.contains(&inaccessible));
+    assert!(!excluded.contains(&deleted));
+    assert!(!excluded.contains(&non_task));
+    assert_eq!(
+        ids(Expr::and(
+            lit(PropertyNumberRange {
+                gte: Some(2.),
+                ..Default::default()
+            }),
+            lit(PropertyNumberRange {
+                lte: Some(4.),
+                ..Default::default()
+            })
+        ))
+        .await?,
+        HashSet::from([project_low, personal])
+    );
+    assert_eq!(
+        ids(Expr::and(lit(PropertyNumberRange::default()), second_lit)).await?,
+        HashSet::from([project_low, personal])
+    );
+    assert_eq!(
+        ids(Expr::or(
+            lit(PropertyNumberRange {
+                lte: Some(2.),
+                ..Default::default()
+            }),
+            lit(PropertyNumberRange {
+                gte: Some(8.),
+                ..Default::default()
+            })
+        ))
+        .await?,
+        HashSet::from([project_low, project_high])
+    );
+    assert_eq!(
+        dyn_fetch(
+            &db,
+            "macro|user-1@test.com",
+            1,
+            SimpleSortMethod::UpdatedAt,
+            filter(lit(PropertyNumberRange::default())),
+            false
+        )
+        .await?
+        .len(),
+        1
+    );
     Ok(())
 }
 
@@ -4813,6 +5044,7 @@ async fn test_property_filter_by_select_option(db: Pool<Postgres>) -> anyhow::Re
             entity_ids: vec![],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -4869,6 +5101,7 @@ async fn test_property_filter_by_status_completed(db: Pool<Postgres>) -> anyhow:
             entity_ids: vec![],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -4926,6 +5159,7 @@ async fn test_property_filter_multiple_and(db: Pool<Postgres>) -> anyhow::Result
                 entity_ids: vec![],
                 boolean_value: None,
                 date_range: None,
+                number_range: None,
             },
             PropertyFilter {
                 property_definition_id: "00000001-0000-0000-0000-000000000002".to_string(), // Status
@@ -4934,6 +5168,7 @@ async fn test_property_filter_multiple_and(db: Pool<Postgres>) -> anyhow::Result
                 entity_ids: vec![],
                 boolean_value: None,
                 date_range: None,
+                number_range: None,
             },
         ],
         ..Default::default()
@@ -4990,6 +5225,7 @@ async fn test_property_filter_no_match(db: Pool<Postgres>) -> anyhow::Result<()>
             entity_ids: vec![],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -5039,6 +5275,7 @@ async fn test_property_filter_multiple_options_or(db: Pool<Postgres>) -> anyhow:
             entity_ids: vec![],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -5099,6 +5336,7 @@ async fn test_property_filter_without_entity_type(db: Pool<Postgres>) -> anyhow:
             entity_ids: vec![],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };
@@ -5155,6 +5393,7 @@ async fn test_property_filter_scoped_entity_type(db: Pool<Postgres>) -> anyhow::
             entity_ids: vec![],
             boolean_value: None,
             date_range: None,
+            number_range: None,
         }],
         ..Default::default()
     };

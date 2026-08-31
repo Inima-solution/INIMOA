@@ -140,6 +140,25 @@ pub struct PropertyDateRange {
     pub lte: Option<DateTime<Utc>>,
 }
 
+/// A compact range for matching Number property values. Bounds are validated
+/// at the public API boundary to be finite IEEE-754 values.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq)]
+#[cfg_attr(feature = "schema", derive(utoipa::ToSchema, schemars::JsonSchema))]
+pub struct PropertyNumberRange {
+    /// Match values strictly greater than this finite number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gt: Option<f64>,
+    /// Match values greater than or equal to this finite number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gte: Option<f64>,
+    /// Match values strictly less than this finite number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lt: Option<f64>,
+    /// Match values less than or equal to this finite number.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lte: Option<f64>,
+}
+
 /// Describes how to match against a property value in the entity_properties table.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum PropertyMatchValue {
@@ -155,6 +174,9 @@ pub enum PropertyMatchValue {
     /// Match a valid Date property value within the supplied UTC bounds.
     #[serde(rename = "dr")]
     DateRange(PropertyDateRange),
+    /// Match a valid Number property value within the supplied bounds.
+    #[serde(rename = "nr")]
+    NumberRange(PropertyNumberRange),
 }
 
 /// A single property-based filter condition for the AST.
@@ -183,7 +205,7 @@ impl ExpandFrame<PropertiesLiteral> for Vec<PropertyFilter> {
         let nodes: Vec<Option<Expr<PropertiesLiteral>>> = filters
             .into_iter()
             .map(|pf| {
-                pf.validate_date_range()
+                pf.validate_property_range()
                     .map_err(|err| ExpandErr::ApiAst(err.to_owned()))?;
                 let prop_def_id = Uuid::parse_str(&pf.property_definition_id)?;
                 let entity_type = pf
@@ -241,12 +263,25 @@ impl ExpandFrame<PropertiesLiteral> for Vec<PropertyFilter> {
                         literal
                     }
                 });
+                let number_range_node = pf.number_range.map(|number_range| {
+                    let literal = Expr::Literal(PropertiesLiteral {
+                        property_definition_id: prop_def_id,
+                        entity_type,
+                        value: PropertyMatchValue::NumberRange(number_range.range),
+                    });
+                    if number_range.exclude {
+                        Expr::Not(Box::new(literal))
+                    } else {
+                        literal
+                    }
+                });
 
                 Ok([
                     option_nodes,
                     entity_ref_nodes,
                     boolean_node,
                     date_range_node,
+                    number_range_node,
                 ]
                 .into_iter()
                 .fold_with(Expr::or))

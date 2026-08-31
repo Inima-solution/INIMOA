@@ -48,9 +48,9 @@ pub enum SearchError {
     /// No channel IDs provided
     #[error("at least one channel_id must be provided")]
     NoChannelIds,
-    /// Invalid Task Date-property filter.
-    #[error("invalid property date range filter")]
-    InvalidPropertyDateRange,
+    /// Invalid Task property range filter.
+    #[error("invalid property range filter")]
+    InvalidPropertyRange,
     #[error("searching with an invalid cursor")]
     /// Searching with an invalid cursor
     InvalidCursor,
@@ -81,7 +81,7 @@ impl IntoResponse for SearchError {
             | SearchError::InvalidCrmCompanyId(_)
             | SearchError::NoQueryOrTermsProvided
             | SearchError::NoChannelIds
-            | SearchError::InvalidPropertyDateRange => StatusCode::BAD_REQUEST,
+            | SearchError::InvalidPropertyRange => StatusCode::BAD_REQUEST,
             SearchError::NameSearch(NameSearchError::IncompatibleCursor) => StatusCode::BAD_REQUEST,
             SearchError::Search(_) | SearchError::NameSearch(_) | SearchError::InternalError(_) => {
                 StatusCode::INTERNAL_SERVER_ERROR

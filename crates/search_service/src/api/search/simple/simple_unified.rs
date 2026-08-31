@@ -23,7 +23,7 @@ use models_search::{
 use models_search_cursor::{SearchCursor, SearchCursorOption, SearchMethodCursor};
 use opensearch_client::search::call_records::CallRecordSearchMode;
 use opensearch_client::search::documents::{
-    DocumentSearchMode, PropertyDateRangeArg, PropertyFilterArg,
+    DocumentSearchMode, PropertyDateRangeArg, PropertyFilterArg, PropertyNumberRangeArg,
 };
 use opensearch_client::search::model::SearchHit;
 use opensearch_client::search::unified::UnifiedSearchArgs;
@@ -162,18 +162,17 @@ fn enforce_term_limits(terms: Vec<String>) -> Result<Vec<String>, SearchError> {
 
 /// Convert request property filters into OpenSearch property-filter args.
 ///
-/// Keyword filters match the indexed `values` field. Task Date filters carry
-/// their UTC bounds separately for the indexed `date_value` field. Empty
-/// keyword filters are skipped; an empty Date range remains a valid
-/// "has a Date value" filter.
+/// Keyword filters match `values`; Task Date and Number ranges carry typed
+/// bounds for `date_value` and `number_value`. Empty ranges remain valid
+/// "has a value" filters.
 fn to_property_filter_args(
     filters: &[item_filters::PropertyFilter],
 ) -> Result<Vec<PropertyFilterArg>, SearchError> {
     filters
         .iter()
         .filter_map(|f| {
-            if f.validate_date_range().is_err() {
-                return Some(Err(SearchError::InvalidPropertyDateRange));
+            if f.validate_property_range().is_err() {
+                return Some(Err(SearchError::InvalidPropertyRange));
             }
             let date_range = f
                 .date_range
@@ -185,6 +184,16 @@ fn to_property_filter_args(
                     lte: date_range.range.lte.clone(),
                     exclude: date_range.exclude,
                 });
+            let number_range = f
+                .number_range
+                .as_ref()
+                .map(|number_range| PropertyNumberRangeArg {
+                    gt: number_range.range.gt,
+                    gte: number_range.range.gte,
+                    lt: number_range.range.lt,
+                    lte: number_range.range.lte,
+                    exclude: number_range.exclude,
+                });
             let mut values: Vec<String> = f
                 .option_ids
                 .iter()
@@ -194,26 +203,27 @@ fn to_property_filter_args(
             if let Some(boolean_value) = f.boolean_value {
                 values.push(boolean_value.to_string());
             }
-            if values.is_empty() && date_range.is_none() {
+            if values.is_empty() && date_range.is_none() && number_range.is_none() {
                 return None;
             }
             Some(Ok(PropertyFilterArg {
                 definition_id: f.property_definition_id.clone(),
                 values,
                 date_range,
+                number_range,
             }))
         })
         .collect()
 }
 
-/// Restrict a Date-filtered document search to the canonical Task subtype
+/// Restrict a Task Date/Number-range document search to the canonical Task subtype
 /// without broadening an explicit non-Task subtype request.
-fn date_range_document_routing(
-    has_date_range_filter: bool,
+fn task_range_document_routing(
+    has_task_range_filter: bool,
     should_include_documents: bool,
     sub_types: &[String],
 ) -> (bool, Option<Vec<String>>) {
-    if !has_date_range_filter || !should_include_documents {
+    if !has_task_range_filter || !should_include_documents {
         return (should_include_documents, None);
     }
     if sub_types.is_empty() || sub_types.iter().any(|sub_type| sub_type == "task") {
@@ -222,9 +232,9 @@ fn date_range_document_routing(
     (false, None)
 }
 
-/// Date property filters apply only to indexed Task documents.
-fn include_non_document_source(should_include: bool, has_date_range_filter: bool) -> bool {
-    should_include && !has_date_range_filter
+/// Task Date/Number property ranges apply only to indexed Task documents.
+fn include_non_document_source(should_include: bool, has_task_range_filter: bool) -> bool {
+    should_include && !has_task_range_filter
 }
 
 /// Creates a unified search request and performs the search
@@ -309,13 +319,13 @@ pub(in crate::api::search) async fn perform_unified_search(
     let call_filters = search_filters.call_filters;
     let calendar_event_filters = search_filters.calendar_event_filters;
 
-    let has_date_range_filter = !property_filter_args
+    let has_task_range_filter = !property_filter_args
         .iter()
-        .all(|filter| filter.date_range.is_none());
+        .all(|filter| filter.date_range.is_none() && filter.number_range.is_none());
     let should_include_crm =
-        include_non_document_source(crm_access.is_some() && !tags_active, has_date_range_filter);
-    let (should_include_documents, forced_task_sub_types) = date_range_document_routing(
-        has_date_range_filter,
+        include_non_document_source(crm_access.is_some() && !tags_active, has_task_range_filter);
+    let (should_include_documents, forced_task_sub_types) = task_range_document_routing(
+        has_task_range_filter,
         search_filters.should_include_documents,
         &doc_filters.sub_types,
     );
@@ -325,24 +335,24 @@ pub(in crate::api::search) async fn perform_unified_search(
     // filter itself.
     let should_include_channels = include_non_document_source(
         search_filters.should_include_channels && !tags_active,
-        has_date_range_filter,
+        has_task_range_filter,
     );
     let should_include_chats =
-        include_non_document_source(search_filters.should_include_chats, has_date_range_filter);
+        include_non_document_source(search_filters.should_include_chats, has_task_range_filter);
     let should_include_projects = include_non_document_source(
         search_filters.should_include_projects,
-        has_date_range_filter,
+        has_task_range_filter,
     );
     let should_include_emails =
-        include_non_document_source(search_filters.should_include_emails, has_date_range_filter);
+        include_non_document_source(search_filters.should_include_emails, has_task_range_filter);
     let should_include_call_records = include_non_document_source(
         search_filters.should_include_call_records,
-        has_date_range_filter,
+        has_task_range_filter,
     );
     let should_include_calendar_events = calendar_events_searchable(
         include_non_document_source(
             search_filters.should_include_calendar_events,
-            has_date_range_filter,
+            has_task_range_filter,
         ),
         ctx.calendar_search_enabled,
     );

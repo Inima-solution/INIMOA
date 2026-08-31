@@ -241,11 +241,13 @@ fn test_build_bool_query_property_filters_emit_nested() -> anyhow::Result<()> {
                     "00000001-0000-0000-0002-000000000004".to_string(),
                 ],
                 date_range: None,
+                number_range: None,
             },
             PropertyFilterArg {
                 definition_id: "00000001-0000-0000-0000-000000000001".to_string(),
                 values: vec!["macro|alice@example.com".to_string()],
                 date_range: None,
+                number_range: None,
             },
         ]);
 
@@ -286,6 +288,7 @@ fn test_build_bool_query_property_filter_empty_values_skipped() -> anyhow::Resul
             definition_id: "00000001-0000-0000-0000-000000000002".to_string(),
             values: vec![],
             date_range: None,
+            number_range: None,
         }]);
 
     let json = builder.build_bool_query()?.build().to_json();
@@ -315,6 +318,7 @@ fn test_build_bool_query_date_property_filter_uses_exists_and_bounds() -> anyhow
                 lte: None,
                 exclude: false,
             }),
+            number_range: None,
         }])
         .build_bool_query()?
         .build()
@@ -355,6 +359,7 @@ fn test_build_bool_query_date_property_filter_preserves_all_four_bounds() -> any
                 lte: Some(bound("2026-01-04T00:00:00Z")),
                 exclude: false,
             }),
+            number_range: None,
         }])
         .build_bool_query()?
         .build()
@@ -391,6 +396,7 @@ fn test_build_bool_query_empty_date_property_filter_requires_date_value() -> any
                 lte: None,
                 exclude: false,
             }),
+            number_range: None,
         }])
         .build_bool_query()?
         .build()
@@ -427,6 +433,7 @@ fn test_build_bool_query_excluded_date_property_filter_is_top_level_must_not() -
                 lte: None,
                 exclude: true,
             }),
+            number_range: None,
         }])
         .build_bool_query()?
         .build()
@@ -444,6 +451,107 @@ fn test_build_bool_query_excluded_date_property_filter_is_top_level_must_not() -
             .as_array()
             .unwrap()
             .contains(&serde_json::json!({"term": {"owner_id": "alice"}}))
+    );
+    Ok(())
+}
+
+#[test]
+fn test_build_bool_query_number_property_filter_uses_number_value_and_must_not()
+-> anyhow::Result<()> {
+    let json = DocumentQueryBuilder::new(vec!["foo".to_string()])
+        .user_id("alice")
+        .property_filters(vec![PropertyFilterArg {
+            definition_id: "estimate".to_string(),
+            values: vec![],
+            date_range: None,
+            number_range: Some(PropertyNumberRangeArg {
+                gt: Some(1.0),
+                gte: Some(2.0),
+                lt: Some(9.0),
+                lte: Some(8.0),
+                exclude: true,
+            }),
+        }])
+        .build_bool_query()?
+        .build()
+        .to_json();
+    let nested = &json["bool"]["must_not"][0]["nested"]["query"]["bool"]["filter"];
+    assert_eq!(
+        nested,
+        &serde_json::json!([
+            {"term": {"properties.definition_id": "estimate"}},
+            {"exists": {"field": "properties.number_value"}},
+            {"range": {"properties.number_value": {"gt": 1.0, "gte": 2.0, "lt": 9.0, "lte": 8.0}}}
+        ])
+    );
+    Ok(())
+}
+
+#[test]
+fn test_build_bool_query_number_property_filter_positive_and_empty_shapes() -> anyhow::Result<()> {
+    let query = |range| {
+        DocumentQueryBuilder::new(vec!["foo".to_string()])
+            .user_id("alice")
+            .property_filters(vec![PropertyFilterArg {
+                definition_id: "estimate".to_string(),
+                values: vec![],
+                date_range: None,
+                number_range: Some(range),
+            }])
+            .build_bool_query()
+            .unwrap()
+            .build()
+            .to_json()
+    };
+    let positive = query(PropertyNumberRangeArg {
+        gt: Some(1.0),
+        gte: Some(2.0),
+        lt: Some(9.0),
+        lte: Some(8.0),
+        exclude: false,
+    });
+    assert!(positive["bool"].get("must_not").is_none());
+    assert_eq!(
+        positive["bool"]["filter"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v.get("nested").is_some())
+            .unwrap()["nested"]["query"]["bool"]["filter"],
+        serde_json::json!([
+            {"term": {"properties.definition_id": "estimate"}}, {"exists": {"field": "properties.number_value"}}, {"range": {"properties.number_value": {"gt": 1.0, "gte": 2.0, "lt": 9.0, "lte": 8.0}}}
+        ])
+    );
+    let empty = query(PropertyNumberRangeArg {
+        gt: None,
+        gte: None,
+        lt: None,
+        lte: None,
+        exclude: false,
+    });
+    assert_eq!(
+        empty["bool"]["filter"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v.get("nested").is_some())
+            .unwrap()["nested"]["query"]["bool"]["filter"],
+        serde_json::json!([
+            {"term": {"properties.definition_id": "estimate"}}, {"exists": {"field": "properties.number_value"}}
+        ])
+    );
+    let excluded_empty = query(PropertyNumberRangeArg {
+        gt: None,
+        gte: None,
+        lt: None,
+        lte: None,
+        exclude: true,
+    });
+    assert_eq!(
+        excluded_empty["bool"]["must_not"][0]["nested"]["query"]["bool"]["filter"],
+        serde_json::json!([
+            {"term": {"properties.definition_id": "estimate"}}, {"exists": {"field": "properties.number_value"}}
+        ])
     );
     Ok(())
 }
