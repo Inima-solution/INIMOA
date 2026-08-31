@@ -3,6 +3,8 @@ import {
   formatProjectTimelineTick,
   getInclusiveLocalCalendarDays,
   getLocalCalendarDayOrdinal,
+  getProjectTimelineClippedSpanPercent,
+  getProjectTimelineDayCenterPercent,
   getProjectTimelineRange,
   getProjectTimelineRuler,
   getProjectTimelineToday,
@@ -88,5 +90,77 @@ describe('project task timeline range', () => {
     expect(getProjectTimelineTodayPercent(range, new Date(2026, 2, 9))).toBe(
       62.5
     );
+  });
+
+  it('projects centered days and inclusive clipped spans without leaving range bounds', () => {
+    const range = getProjectTimelineRange('2026-03-07', '2026-03-10');
+    expect(range.kind).toBe('valid');
+    if (range.kind !== 'valid') return;
+
+    expect(
+      getProjectTimelineDayCenterPercent(range, new Date(2026, 2, 7))
+    ).toBe(12.5);
+    expect(
+      getProjectTimelineDayCenterPercent(range, new Date(2026, 2, 10))
+    ).toBe(87.5);
+    expect(
+      getProjectTimelineDayCenterPercent(range, new Date(2026, 2, 6))
+    ).toBeUndefined();
+    expect(
+      getProjectTimelineClippedSpanPercent(
+        range,
+        new Date(2026, 2, 6),
+        new Date(2026, 2, 8)
+      )
+    ).toEqual({ leftPercent: 0, widthPercent: 50 });
+    expect(
+      getProjectTimelineClippedSpanPercent(
+        range,
+        new Date(2026, 2, 8),
+        new Date(2026, 2, 12)
+      )
+    ).toEqual({ leftPercent: 25, widthPercent: 75 });
+    expect(
+      getProjectTimelineClippedSpanPercent(
+        range,
+        new Date(2026, 2, 1),
+        new Date(2026, 2, 20)
+      )
+    ).toEqual({ leftPercent: 0, widthPercent: 100 });
+    const geometry = getProjectTimelineClippedSpanPercent(
+      range,
+      new Date(2026, 2, 8),
+      new Date(2026, 2, 12)
+    );
+    expect(geometry).toBeDefined();
+    expect(Number.isFinite(geometry?.leftPercent)).toBe(true);
+    expect(Number.isFinite(geometry?.widthPercent)).toBe(true);
+    expect(geometry?.leftPercent).toBeGreaterThanOrEqual(0);
+    expect(geometry?.leftPercent).toBeLessThanOrEqual(100);
+    expect(geometry?.widthPercent).toBeGreaterThan(0);
+    expect(geometry?.widthPercent).toBeLessThanOrEqual(100);
+  });
+
+  it('rejects invalid and wholly outside task geometry inputs', () => {
+    const range = getProjectTimelineRange('2026-01-01', '2026-01-03');
+    expect(range.kind).toBe('valid');
+    if (range.kind !== 'valid') return;
+    expect(
+      getProjectTimelineClippedSpanPercent(
+        range,
+        new Date(2026, 0, 4),
+        new Date(2026, 0, 5)
+      )
+    ).toBeUndefined();
+    expect(
+      getProjectTimelineClippedSpanPercent(
+        range,
+        new Date(2026, 0, 3),
+        new Date(2026, 0, 2)
+      )
+    ).toBeUndefined();
+    expect(
+      getProjectTimelineDayCenterPercent(range, new Date('invalid'))
+    ).toBeUndefined();
   });
 });

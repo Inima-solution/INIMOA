@@ -316,6 +316,88 @@ describe('ProjectTaskDeadlineTimeline', () => {
     ).toBe('Unscheduled with start');
   });
 
+  it('adds only truthful, hidden task geometry to valid project ranges', () => {
+    const clippedSpan = task(
+      'Clipped span',
+      due('2026-04-12T08:00:00'),
+      false,
+      due('2026-04-09T08:00:00')
+    );
+    const deadline = task('Deadline point', due('2026-04-11T08:00:00'));
+    const outside = task('Outside', due('2026-04-14T08:00:00'));
+    const invalid = task(
+      'Invalid geometry',
+      due('2026-04-11T08:00:00'),
+      false,
+      due('2026-04-12T08:00:00')
+    );
+    const milestone = task('Milestone', due('2026-04-13T08:00:00'), true);
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={[clippedSpan, deadline, outside, invalid, milestone]}
+        projectStartDate="2026-04-10"
+        projectTargetDate="2026-04-13"
+        onOpenTask={() => {}}
+      />
+    ));
+
+    const span = view.container.querySelector(
+      '[data-project-task-timeline-span]'
+    );
+    const points = view.container.querySelectorAll(
+      '[data-project-task-timeline-deadline]'
+    );
+    expect(span?.parentElement?.getAttribute('aria-hidden')).toBe('true');
+    expect(span?.parentElement?.classList.contains('inset-x-3')).toBe(true);
+    expect(span?.getAttribute('style')).toContain('left: 0%');
+    expect(span?.getAttribute('style')).toContain('width: 75%');
+    expect(span?.classList.contains('bg-ink-muted')).toBe(true);
+    expect(span?.classList.contains('bg-accent')).toBe(false);
+    expect(points).toHaveLength(2);
+    expect(points[0].parentElement?.getAttribute('aria-hidden')).toBe('true');
+    expect(points[0].classList.contains('bg-ink-muted')).toBe(true);
+    expect(points[0].classList.contains('bg-accent')).toBe(false);
+    expect(points[0].getAttribute('style')).toContain('left: 37.5%');
+    expect(points[1].getAttribute('style')).toContain('left: 87.5%');
+    expect(
+      view.getByRole('button', {
+        name: 'Clipped span Start Apr 9, 2026; due Apr 12, 2026',
+      })
+    ).toBeTruthy();
+    expect(view.getAllByText('Milestone')).toHaveLength(1);
+    expect(
+      view
+        .getByRole('button', { name: 'Outside' })
+        .querySelector(
+          '[data-project-task-timeline-span], [data-project-task-timeline-deadline]'
+        )
+    ).toBeNull();
+    expect(
+      view
+        .getByRole('button', { name: /Invalid geometry/ })
+        .querySelector(
+          '[data-project-task-timeline-span], [data-project-task-timeline-deadline]'
+        )
+    ).toBeNull();
+  });
+
+  it('does not project geometry when the project range is unavailable', () => {
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={[task('Scheduled', due('2026-04-10T08:00:00'))]}
+        projectStartDate="invalid"
+        projectTargetDate="2026-04-11"
+        onOpenTask={() => {}}
+      />
+    ));
+
+    expect(
+      view.container.querySelector(
+        '[data-project-task-timeline-span], [data-project-task-timeline-deadline]'
+      )
+    ).toBeNull();
+  });
+
   it('uses instance-unique heading IDs while preserving each list association', () => {
     const first = task('First project', due('2026-04-10T08:00:00'));
     const second = task('Second project', due('2026-04-11T08:00:00'));
@@ -691,7 +773,12 @@ describe('ProjectTaskDeadlineTimeline', () => {
       task(`Task ${index}`, due('2026-04-10T08:00:00'))
     );
     const view = render(() => (
-      <ProjectTaskDeadlineTimeline tasks={tasks} onOpenTask={() => {}} />
+      <ProjectTaskDeadlineTimeline
+        tasks={tasks}
+        projectStartDate="2026-04-10"
+        projectTargetDate="2026-04-10"
+        onOpenTask={() => {}}
+      />
     ));
 
     const buttons = view.getAllByRole('button');
@@ -700,6 +787,9 @@ describe('ProjectTaskDeadlineTimeline', () => {
     expect(buttons.at(-1)?.textContent).toContain('Task 499');
     expect(view.queryByRole('button', { name: 'Task 500' })).toBeNull();
     expect(mocks.relationCalls).toHaveLength(500);
+    expect(
+      view.container.querySelectorAll('[data-project-task-timeline-deadline]')
+    ).toHaveLength(500);
     expect(
       view.getByRole('status', { name: /Showing the first 500 tasks/ })
     ).toBeTruthy();

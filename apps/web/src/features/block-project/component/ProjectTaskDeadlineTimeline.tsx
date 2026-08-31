@@ -23,6 +23,8 @@ import {
   formatProjectTimelineDate,
   formatProjectTimelineTick,
   getInclusiveLocalCalendarDays,
+  getProjectTimelineClippedSpanPercent,
+  getProjectTimelineDayCenterPercent,
   getProjectTimelineRange,
   getProjectTimelineRuler,
   getProjectTimelineToday,
@@ -34,6 +36,10 @@ type DeadlineGroup = {
   label: string;
   tasks: TaskEntityWithProperties[];
 };
+
+type TaskTimelineGeometry =
+  | { kind: 'span'; leftPercent: number; widthPercent: number }
+  | { kind: 'deadline'; leftPercent: number };
 
 const TASK_WINDOW_LIMIT = 500;
 
@@ -291,6 +297,56 @@ export function ProjectTaskDeadlineTimeline(props: {
                             }
                             return scheduleText();
                           };
+                          const taskGeometry = ():
+                            | TaskTimelineGeometry
+                            | undefined => {
+                            const timelineRange = range();
+                            if (timelineRange.kind !== 'valid')
+                              return undefined;
+                            if (schedule.kind === 'span') {
+                              const span = getProjectTimelineClippedSpanPercent(
+                                timelineRange,
+                                schedule.startDate,
+                                schedule.dueDate
+                              );
+                              return span
+                                ? { kind: 'span' as const, ...span }
+                                : undefined;
+                            }
+                            if (schedule.kind === 'deadline') {
+                              const leftPercent =
+                                getProjectTimelineDayCenterPercent(
+                                  timelineRange,
+                                  schedule.dueDate
+                                );
+                              return leftPercent !== undefined
+                                ? {
+                                    kind: 'deadline' as const,
+                                    leftPercent,
+                                  }
+                                : undefined;
+                            }
+                            return undefined;
+                          };
+                          const taskSpanGeometry = ():
+                            | Extract<TaskTimelineGeometry, { kind: 'span' }>
+                            | undefined => {
+                            const geometry = taskGeometry();
+                            return geometry?.kind === 'span'
+                              ? geometry
+                              : undefined;
+                          };
+                          const taskDeadlineGeometry = ():
+                            | Extract<
+                                TaskTimelineGeometry,
+                                { kind: 'deadline' }
+                              >
+                            | undefined => {
+                            const geometry = taskGeometry();
+                            return geometry?.kind === 'deadline'
+                              ? geometry
+                              : undefined;
+                          };
                           const taskMetadataText = () => {
                             const statusLabel = getPropertyOptionLabel(
                               getTaskStatusOptionId(task) ?? ''
@@ -310,7 +366,7 @@ export function ProjectTaskDeadlineTimeline(props: {
                             <li>
                               <button
                                 type="button"
-                                class="flex min-h-10 w-full min-w-0 items-center gap-2 px-3 py-1 text-left text-sm text-ink hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 touch:min-h-11"
+                                class="relative flex min-h-10 w-full min-w-0 items-center gap-2 px-3 py-1 text-left text-sm text-ink hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 touch:min-h-11"
                                 onClick={(event) =>
                                   props.onOpenTask(task, event)
                                 }
@@ -350,6 +406,41 @@ export function ProjectTaskDeadlineTimeline(props: {
                                     mode="row"
                                   />
                                 </span>
+                                <Show when={taskSpanGeometry()}>
+                                  {(geometry) => (
+                                    <span
+                                      aria-hidden="true"
+                                      class="pointer-events-none absolute inset-x-3 bottom-0 h-px"
+                                    >
+                                      <span
+                                        aria-hidden="true"
+                                        data-project-task-timeline-span
+                                        class="absolute bottom-0 h-px bg-ink-muted"
+                                        style={{
+                                          left: `${geometry().leftPercent}%`,
+                                          width: `${geometry().widthPercent}%`,
+                                        }}
+                                      />
+                                    </span>
+                                  )}
+                                </Show>
+                                <Show when={taskDeadlineGeometry()}>
+                                  {(geometry) => (
+                                    <span
+                                      aria-hidden="true"
+                                      class="pointer-events-none absolute inset-x-3 bottom-0 h-px"
+                                    >
+                                      <span
+                                        aria-hidden="true"
+                                        data-project-task-timeline-deadline
+                                        class="absolute bottom-0 size-1 -translate-x-1/2 rounded-full bg-ink-muted"
+                                        style={{
+                                          left: `${geometry().leftPercent}%`,
+                                        }}
+                                      />
+                                    </span>
+                                  )}
+                                </Show>
                               </button>
                             </li>
                           );

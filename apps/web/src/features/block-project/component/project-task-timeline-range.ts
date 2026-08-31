@@ -145,6 +145,64 @@ export function getProjectTimelineTodayPercent(
   );
 }
 
+function isValidDate(date: Date) {
+  return Number.isFinite(date.getTime());
+}
+
+/**
+ * Returns a local calendar day's center within a project range, or nothing
+ * when the date cannot truthfully be placed on that range.
+ */
+export function getProjectTimelineDayCenterPercent(
+  range: Extract<ProjectTimelineRange, { kind: 'valid' }>,
+  date: Date
+) {
+  if (
+    !isValidDate(range.start) ||
+    !isValidDate(range.end) ||
+    !isValidDate(date)
+  )
+    return undefined;
+  const day = getLocalCalendarDayOrdinal(date);
+  const start = getLocalCalendarDayOrdinal(range.start);
+  const end = getLocalCalendarDayOrdinal(range.end);
+  if (day < start || day > end) return undefined;
+  return (
+    ((day - start + 0.5) /
+      getInclusiveLocalCalendarDays(range.start, range.end)) *
+    100
+  );
+}
+
+/**
+ * Clips an inclusive local-day span to a project range for row geometry.
+ */
+export function getProjectTimelineClippedSpanPercent(
+  range: Extract<ProjectTimelineRange, { kind: 'valid' }>,
+  startDate: Date,
+  endDate: Date
+) {
+  if (
+    !isValidDate(range.start) ||
+    !isValidDate(range.end) ||
+    !isValidDate(startDate) ||
+    !isValidDate(endDate)
+  )
+    return undefined;
+  const start = getLocalCalendarDayOrdinal(startDate);
+  const end = getLocalCalendarDayOrdinal(endDate);
+  const rangeStart = getLocalCalendarDayOrdinal(range.start);
+  const rangeEnd = getLocalCalendarDayOrdinal(range.end);
+  if (start > end || end < rangeStart || start > rangeEnd) return undefined;
+  const clippedStart = Math.max(start, rangeStart);
+  const clippedEnd = Math.min(end, rangeEnd);
+  const days = getInclusiveLocalCalendarDays(range.start, range.end);
+  return {
+    leftPercent: ((clippedStart - rangeStart) / days) * 100,
+    widthPercent: ((clippedEnd - clippedStart + 1) / days) * 100,
+  };
+}
+
 export function formatProjectTimelineDate(date: Date) {
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(
     date
