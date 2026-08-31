@@ -25,7 +25,7 @@ import {
 
 const TASK_IDS_PER_REQUEST = 200;
 
-type RelationState =
+export type TaskDependencyRelationState =
   | { kind: 'loading' }
   | { kind: 'ready'; relation: TaskDependencyRelationsResult }
   | { kind: 'unavailable' }
@@ -33,7 +33,7 @@ type RelationState =
   | { kind: 'error' };
 
 type ContextValue = {
-  relationsForTask: (taskId: string) => RelationState | undefined;
+  relationsForTask: (taskId: string) => TaskDependencyRelationState | undefined;
 };
 
 const TaskDependencyRelationsContext = createContext<ContextValue>();
@@ -76,7 +76,9 @@ export function TaskDependencyRelationsProvider(
     })),
   }));
 
-  const relationsForTask = (taskId: string): RelationState | undefined => {
+  const relationsForTask = (
+    taskId: string
+  ): TaskDependencyRelationState | undefined => {
     const ids = taskIds();
     const index = ids.indexOf(taskId);
     if (index === -1) return undefined;
@@ -99,6 +101,14 @@ export function TaskDependencyRelationsProvider(
       {props.children}
     </TaskDependencyRelationsContext.Provider>
   );
+}
+
+/**
+ * Reads the provider-owned relation state without creating another query.
+ * Callers must treat a missing provider or task as unavailable.
+ */
+export function useTaskDependencyRelations() {
+  return useContext(TaskDependencyRelationsContext)?.relationsForTask;
 }
 
 type DirectionState = 'loading' | 'ready' | 'unavailable' | 'offline' | 'error';
@@ -187,7 +197,9 @@ function RelationDirection(props: {
   );
 }
 
-function relationStatusLabel(state: Exclude<RelationState, { kind: 'ready' }>) {
+function relationStatusLabel(
+  state: Exclude<TaskDependencyRelationState, { kind: 'ready' }>
+) {
   return {
     loading: 'Loading task relations',
     unavailable: 'Task relations unavailable',
@@ -196,7 +208,7 @@ function relationStatusLabel(state: Exclude<RelationState, { kind: 'ready' }>) {
   }[state.kind];
 }
 
-function rowStatusLabel(state: RelationState) {
+function rowStatusLabel(state: TaskDependencyRelationState) {
   if (state.kind === 'ready') {
     return state.relation.readiness === 'blocked' ? 'Blocked' : 'Ready';
   }
@@ -224,8 +236,8 @@ export function TaskDependencyRelations(props: {
   task?: TaskEntityWithProperties;
   mode?: 'detail' | 'row';
 }) {
-  const context = useContext(TaskDependencyRelationsContext);
-  const state = () => context?.relationsForTask(props.taskId);
+  const relationsForTask = useTaskDependencyRelations();
+  const state = () => relationsForTask?.(props.taskId);
   const isRow = () => props.mode === 'row';
   const milestoneState = () => {
     const currentState = state();
@@ -258,7 +270,10 @@ export function TaskDependencyRelations(props: {
                   class="text-sm text-ink-muted"
                 >
                   {relationStatusLabel(
-                    current() as Exclude<RelationState, { kind: 'ready' }>
+                    current() as Exclude<
+                      TaskDependencyRelationState,
+                      { kind: 'ready' }
+                    >
                   )}
                 </span>
               }

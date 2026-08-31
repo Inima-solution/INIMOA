@@ -50,7 +50,26 @@ vi.mock('@core/component/ItemPreview', () => ({
 import {
   TaskDependencyRelations,
   TaskDependencyRelationsProvider,
+  useTaskDependencyRelations,
 } from './task-dependency-relations';
+
+function RelationStateProbe(props: { taskId: string }) {
+  const relationsForTask = useTaskDependencyRelations();
+  return <span>{relationsForTask?.(props.taskId)?.kind ?? 'missing'}</span>;
+}
+
+function RelationContractProbe(props: {
+  taskId: string;
+  onState: (
+    state: ReturnType<
+      NonNullable<ReturnType<typeof useTaskDependencyRelations>>
+    >
+  ) => void;
+}) {
+  const relationsForTask = useTaskDependencyRelations();
+  props.onState(relationsForTask?.(props.taskId));
+  return <span>Relation state checked</span>;
+}
 
 function query(overrides: Record<string, unknown> = {}) {
   return {
@@ -125,6 +144,60 @@ afterEach(() => {
 });
 
 describe('TaskDependencyRelationsProvider', () => {
+  it('exposes only provider-owned relation state and leaves missing tasks undefined', () => {
+    mocks.queries = [query({ data: [relation()] })];
+    const withoutProvider = render(() => <RelationStateProbe taskId={taskA} />);
+    expect(withoutProvider.getByText('missing')).toBeTruthy();
+    withoutProvider.unmount();
+
+    const withProvider = render(() => (
+      <TaskDependencyRelationsProvider taskIds={() => [taskA]}>
+        <RelationStateProbe taskId={taskA} />
+        <RelationStateProbe taskId={taskB} />
+      </TaskDependencyRelationsProvider>
+    ));
+    expect(withProvider.getByText('ready')).toBeTruthy();
+    expect(withProvider.getByText('missing')).toBeTruthy();
+  });
+
+  it('preserves ready predecessor order and exposes unavailable query state without DOM identifiers', () => {
+    const seen: unknown[] = [];
+    mocks.queries = [
+      query({
+        data: [relation({ dependsOnTaskIds: [taskC, taskB] })],
+      }),
+    ];
+    const readyView = render(() => (
+      <TaskDependencyRelationsProvider taskIds={() => [taskA]}>
+        <RelationContractProbe
+          taskId={taskA}
+          onState={(state) => seen.push(state)}
+        />
+      </TaskDependencyRelationsProvider>
+    ));
+    expect(seen.at(-1)).toMatchObject({
+      kind: 'ready',
+      relation: { dependsOnTaskIds: [taskC, taskB] },
+    });
+    expect(readyView.container.textContent).not.toContain(taskB);
+    expect(readyView.container.textContent).not.toContain(taskC);
+    readyView.unmount();
+
+    mocks.queries = [
+      query({ isError: true, error: { errors: [{ code: 'FORBIDDEN' }] } }),
+    ];
+    const unavailableView = render(() => (
+      <TaskDependencyRelationsProvider taskIds={() => [taskA]}>
+        <RelationContractProbe
+          taskId={taskA}
+          onState={(state) => seen.push(state)}
+        />
+      </TaskDependencyRelationsProvider>
+    ));
+    expect(seen.at(-1)).toEqual({ kind: 'unavailable' });
+    expect(unavailableView.container.textContent).not.toContain(taskA);
+  });
+
   it('first-seen deduplicates and executes the actual 200-ID query function', async () => {
     const ids = [
       taskA,

@@ -8,10 +8,14 @@ import {
   getTaskScheduleProjection,
   getTaskStatusOptionId,
 } from '@entity/utils/task-properties';
-import { TaskDependencyRelations } from '@property/task-dependency-relations';
+import {
+  TaskDependencyRelations,
+  useTaskDependencyRelations,
+} from '@property/task-dependency-relations';
 import { createResizeObserver } from '@solid-primitives/resize-observer';
 import { Button, EmptyStatePanel } from '@ui';
 import {
+  createEffect,
   createMemo,
   createSignal,
   createUniqueId,
@@ -19,6 +23,10 @@ import {
   onCleanup,
   Show,
 } from 'solid-js';
+import {
+  getProjectTimelineDependencyEdges,
+  getProjectTimelineDependencyPaths,
+} from './project-task-timeline-dependencies';
 import {
   formatProjectTimelineDate,
   formatProjectTimelineTick,
@@ -41,7 +49,7 @@ type TaskTimelineGeometry =
   | { kind: 'span'; leftPercent: number; widthPercent: number }
   | { kind: 'deadline'; leftPercent: number };
 
-const TASK_WINDOW_LIMIT = 500;
+const PROJECT_TASK_TIMELINE_TASK_WINDOW_LIMIT = 500;
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
@@ -95,8 +103,14 @@ export function ProjectTaskDeadlineTimeline(props: {
   const idPrefix = createUniqueId();
   const [ruler, setRuler] = createSignal<HTMLDivElement>();
   const [rulerWidth, setRulerWidth] = createSignal<number>();
+  const [timeline, setTimeline] = createSignal<HTMLDivElement>();
   const [today, setToday] = createSignal(new Date());
+  const [markerVersion, setMarkerVersion] = createSignal(0);
+  const [dependencyPaths, setDependencyPaths] = createSignal<string[]>([]);
+  const relationsForTask = useTaskDependencyRelations();
+  const dependencyMarkers = new Map<string, HTMLElement>();
   let refreshTimer: number | undefined;
+  let dependencyFrame: number | undefined;
   createResizeObserver(ruler, ({ width }) => setRulerWidth(width));
   const range = createMemo(() =>
     props.rangeUnavailable
@@ -119,12 +133,59 @@ export function ProjectTaskDeadlineTimeline(props: {
   scheduleTodayRefresh();
   onCleanup(() => {
     if (refreshTimer !== undefined) clearTimeout(refreshTimer);
+    if (dependencyFrame !== undefined)
+      window.cancelAnimationFrame(dependencyFrame);
+    dependencyMarkers.clear();
   });
-  const visibleTasks = () => props.tasks.slice(0, TASK_WINDOW_LIMIT);
+  const visibleTasks = () =>
+    props.tasks.slice(0, PROJECT_TASK_TIMELINE_TASK_WINDOW_LIMIT);
   const taskWindowLimited = () =>
-    props.tasks.length > TASK_WINDOW_LIMIT ||
-    (props.tasks.length === TASK_WINDOW_LIMIT && props.hasNextPage);
+    props.tasks.length > PROJECT_TASK_TIMELINE_TASK_WINDOW_LIMIT ||
+    (props.tasks.length === PROJECT_TASK_TIMELINE_TASK_WINDOW_LIMIT &&
+      props.hasNextPage);
   const groups = () => groupTasks(visibleTasks());
+  const scheduleDependencyPaths = () => {
+    if (dependencyFrame !== undefined) return;
+    dependencyFrame = window.requestAnimationFrame(() => {
+      dependencyFrame = undefined;
+      const container = timeline();
+      const visibleTaskIds = new Set(
+        [...dependencyMarkers]
+          .filter(
+            ([, marker]) => marker.isConnected && container?.contains(marker)
+          )
+          .map(([taskId]) => taskId)
+      );
+      const edges = getProjectTimelineDependencyEdges(
+        groups().flatMap((group) => group.tasks.map((task) => task.id)),
+        relationsForTask,
+        visibleTaskIds,
+        PROJECT_TASK_TIMELINE_TASK_WINDOW_LIMIT
+      );
+      setDependencyPaths(
+        getProjectTimelineDependencyPaths(edges, dependencyMarkers, container)
+      );
+    });
+  };
+  createResizeObserver(timeline, scheduleDependencyPaths);
+  createEffect(() => {
+    markerVersion();
+    const container = timeline();
+    const visibleTaskIds = new Set(
+      [...dependencyMarkers]
+        .filter(
+          ([, marker]) => marker.isConnected && container?.contains(marker)
+        )
+        .map(([taskId]) => taskId)
+    );
+    getProjectTimelineDependencyEdges(
+      groups().flatMap((group) => group.tasks.map((task) => task.id)),
+      relationsForTask,
+      visibleTaskIds,
+      PROJECT_TASK_TIMELINE_TASK_WINDOW_LIMIT
+    );
+    scheduleDependencyPaths();
+  });
   const loadMoreLabel = () => {
     if (props.fetchingNextPage) return 'Loading more…';
     if (props.error) return 'Retry loading more';
@@ -262,7 +323,10 @@ export function ProjectTaskDeadlineTimeline(props: {
             Showing the first 500 tasks. Refine filters to view a smaller set.
           </p>
         </Show>
-        <div class="min-w-0 flex-1 divide-y divide-edge-muted">
+        <div
+          ref={setTimeline}
+          class="relative min-w-0 flex-1 divide-y divide-edge-muted"
+        >
           <For each={groups()}>
             {(group) => {
               const headingId = `${idPrefix}-project-task-deadline-group-${group.id}`;
@@ -281,6 +345,23 @@ export function ProjectTaskDeadlineTimeline(props: {
                     <For each={group.tasks}>
                       {(task) =>
                         (() => {
+                          let dependencyMarker: HTMLElement | undefined;
+                          const setDependencyMarker = (marker: HTMLElement) => {
+                            dependencyMarker = marker;
+                            dependencyMarkers.set(task.id, marker);
+                            setMarkerVersion((version) => version + 1);
+                          };
+                          onCleanup(() => {
+                            if (
+                              dependencyMarker &&
+                              dependencyMarkers.get(task.id) ===
+                                dependencyMarker
+                            ) {
+                              dependencyMarkers.delete(task.id);
+                              setMarkerVersion((version) => version + 1);
+                              scheduleDependencyPaths();
+                            }
+                          });
                           const schedule = getTaskScheduleProjection(task);
                           const scheduleText = () => {
                             if (schedule.kind === 'span') {
@@ -414,6 +495,7 @@ export function ProjectTaskDeadlineTimeline(props: {
                                     >
                                       <span
                                         aria-hidden="true"
+                                        ref={setDependencyMarker}
                                         data-project-task-timeline-span
                                         class="absolute bottom-0 h-px bg-ink-muted"
                                         style={{
@@ -432,6 +514,7 @@ export function ProjectTaskDeadlineTimeline(props: {
                                     >
                                       <span
                                         aria-hidden="true"
+                                        ref={setDependencyMarker}
                                         data-project-task-timeline-deadline
                                         class="absolute bottom-0 size-1 -translate-x-1/2 rounded-full bg-ink-muted"
                                         style={{
@@ -452,6 +535,17 @@ export function ProjectTaskDeadlineTimeline(props: {
               );
             }}
           </For>
+          <svg
+            aria-hidden="true"
+            ref={(element) => element.setAttribute('focusable', 'false')}
+            class="pointer-events-none absolute inset-0 size-full text-ink-muted"
+            fill="none"
+            stroke="currentColor"
+          >
+            <For each={dependencyPaths()}>
+              {(path) => <path d={path} stroke-width="1" />}
+            </For>
+          </svg>
         </div>
         <Show when={props.error || (!taskWindowLimited() && props.hasNextPage)}>
           <div class="flex shrink-0 justify-center p-2">

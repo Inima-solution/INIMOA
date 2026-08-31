@@ -5,6 +5,7 @@ import { PROPERTY_OPTION_IDS, SYSTEM_PROPERTY_IDS } from '@property/constants';
 import type { SoupProperty } from '@service-storage/generated/schemas';
 import { cleanup, fireEvent, render, waitFor } from '@solidjs/testing-library';
 import userEvent from '@testing-library/user-event';
+import { createSignal } from 'solid-js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectTaskDeadlineTimeline } from './ProjectTaskDeadlineTimeline';
 
@@ -15,6 +16,18 @@ const mocks = vi.hoisted(() => ({
     mode?: string;
   }>,
   resizeCallbacks: [] as Array<(entry: { width: number }) => void>,
+  relationsForTask: undefined as
+    | ((taskId: string) =>
+        | {
+            kind: string;
+            relation?: {
+              dependsOnTaskIds: string[];
+              hasUnavailableDependencies: boolean;
+            };
+          }
+        | undefined)
+    | undefined,
+  relationLookupCalls: [] as string[],
 }));
 
 vi.mock('@core/component/LoadingBlock', () => ({
@@ -33,6 +46,10 @@ vi.mock('@entity', () => ({
   },
 }));
 vi.mock('@property/task-dependency-relations', () => ({
+  useTaskDependencyRelations: () => (taskId: string) => {
+    mocks.relationLookupCalls.push(taskId);
+    return mocks.relationsForTask?.(taskId);
+  },
   TaskDependencyRelations: (props: {
     taskId: string;
     task?: TaskEntityWithProperties;
@@ -53,6 +70,8 @@ afterEach(() => {
   cleanup();
   mocks.relationCalls = [];
   mocks.resizeCallbacks = [];
+  mocks.relationsForTask = undefined;
+  mocks.relationLookupCalls = [];
   vi.useRealTimers();
 });
 
@@ -115,7 +134,220 @@ function withProperty(
   return entity;
 }
 
+function dependencyState(
+  dependsOnTaskIds: string[],
+  hasUnavailableDependencies = false
+) {
+  return {
+    kind: 'ready',
+    relation: { dependsOnTaskIds, hasUnavailableDependencies },
+  };
+}
+
+function stubRect(
+  element: Element,
+  left: number,
+  top: number,
+  right: number,
+  bottom: number
+) {
+  vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({
+    left,
+    top,
+    right,
+    bottom,
+  } as DOMRect);
+}
+
 describe('ProjectTaskDeadlineTimeline', () => {
+  it('renders one private, neutral dependency overlay from canonical predecessors and updates it on readiness and resize', async () => {
+    const predecessor = task('Visible predecessor', due('2026-04-10T08:00:00'));
+    const dependent = task('Visible dependent', due('2026-04-11T08:00:00'));
+    const [relationState, setRelationState] = createSignal(
+      dependencyState([predecessor.id])
+    );
+    mocks.relationsForTask = (taskId) =>
+      taskId === dependent.id ? relationState() : dependencyState([]);
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={[predecessor, dependent]}
+        projectStartDate="2026-04-10"
+        projectTargetDate="2026-04-11"
+        onOpenTask={() => {}}
+      />
+    ));
+    const container = view.container.querySelector(
+      '.project-task-deadline-timeline > div.relative'
+    );
+    const markers = view.container.querySelectorAll(
+      '[data-project-task-timeline-deadline]'
+    );
+    expect(container).toBeTruthy();
+    expect(markers).toHaveLength(2);
+    stubRect(container!, 0, 0, 400, 200);
+    stubRect(markers[0]!, 40, 40, 44, 44);
+    stubRect(markers[1]!, 240, 100, 244, 104);
+    mocks.resizeCallbacks.at(-1)?.({ width: 400 });
+
+    await waitFor(() =>
+      expect(view.container.querySelectorAll('svg path')).toHaveLength(1)
+    );
+    const svg = view.container.querySelector('svg');
+    const widePath = svg?.querySelector('path')?.getAttribute('d');
+    expect(svg?.getAttribute('aria-hidden')).toBe('true');
+    expect(svg?.getAttribute('focusable')).toBe('false');
+    expect(svg?.classList.contains('pointer-events-none')).toBe(true);
+    expect(svg?.classList.contains('text-ink-muted')).toBe(true);
+    expect(svg?.textContent).toBe('');
+    expect(svg?.outerHTML).not.toContain(predecessor.id);
+    expect(svg?.outerHTML).not.toContain(dependent.id);
+    expect(svg?.outerHTML).not.toContain(predecessor.name);
+    expect(svg?.outerHTML).not.toContain(dependent.name);
+    expect(mocks.relationCalls).toHaveLength(2);
+
+    stubRect(markers[1]!, 120, 100, 124, 104);
+    mocks.resizeCallbacks.at(-1)?.({ width: 160 });
+    await waitFor(() =>
+      expect(svg?.querySelector('path')?.getAttribute('d')).not.toBe(widePath)
+    );
+
+    setRelationState(dependencyState([predecessor.id], true));
+    await waitFor(() =>
+      expect(view.container.querySelectorAll('svg path')).toHaveLength(0)
+    );
+    expect(
+      view.getByRole('button', { name: 'Visible predecessor' })
+    ).toBeTruthy();
+    expect(
+      view.getByRole('button', { name: 'Visible dependent' })
+    ).toBeTruthy();
+  });
+
+  it('removes a departed dependency marker before recomputing the remaining task window', async () => {
+    const predecessor = task('Retained task', due('2026-04-10T08:00:00'));
+    const dependent = task('Removed task', due('2026-04-11T08:00:00'));
+    const [tasks, setTasks] = createSignal([predecessor, dependent]);
+    mocks.relationsForTask = (taskId) =>
+      taskId === dependent.id
+        ? dependencyState([predecessor.id])
+        : dependencyState([]);
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={tasks()}
+        projectStartDate="2026-04-10"
+        projectTargetDate="2026-04-11"
+        onOpenTask={() => {}}
+      />
+    ));
+    const container = view.container.querySelector(
+      '.project-task-deadline-timeline > div.relative'
+    );
+    const markers = view.container.querySelectorAll(
+      '[data-project-task-timeline-deadline]'
+    );
+    stubRect(container!, 0, 0, 400, 200);
+    stubRect(markers[0]!, 40, 40, 44, 44);
+    stubRect(markers[1]!, 240, 100, 244, 104);
+    mocks.resizeCallbacks.at(-1)?.({ width: 400 });
+    await waitFor(() =>
+      expect(view.container.querySelectorAll('svg path')).toHaveLength(1)
+    );
+
+    mocks.relationLookupCalls = [];
+    setTasks([predecessor]);
+    await waitFor(() =>
+      expect(view.container.querySelectorAll('svg path')).toHaveLength(0)
+    );
+    expect(view.queryByRole('button', { name: 'Removed task' })).toBeNull();
+    expect(mocks.relationLookupCalls).not.toContain(dependent.id);
+    expect(mocks.relationLookupCalls).toContain(predecessor.id);
+  });
+
+  it('cancels the exact pending dependency animation frame on unmount', () => {
+    const pendingFrames = new Map<number, FrameRequestCallback>();
+    const requestFrame = vi
+      .spyOn(window, 'requestAnimationFrame')
+      .mockImplementation((callback) => {
+        pendingFrames.set(701, callback);
+        return 701;
+      });
+    const cancelFrame = vi
+      .spyOn(window, 'cancelAnimationFrame')
+      .mockImplementation((handle) => pendingFrames.delete(handle));
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={[task('Frame task', due('2026-04-10T08:00:00'))]}
+        projectStartDate="2026-04-10"
+        projectTargetDate="2026-04-10"
+        onOpenTask={() => {}}
+      />
+    ));
+
+    expect(requestFrame).toHaveBeenCalledTimes(1);
+    view.unmount();
+    expect(cancelFrame).toHaveBeenCalledWith(701);
+    expect(pendingFrames.has(701)).toBe(false);
+    let postUnmountCallbacks = 0;
+    for (const callback of pendingFrames.values()) {
+      postUnmountCallbacks += 1;
+      callback(0);
+    }
+    expect(postUnmountCallbacks).toBe(0);
+    requestFrame.mockRestore();
+    cancelFrame.mockRestore();
+  });
+
+  it('never reads dependency state beyond the first 500 rendered tasks', async () => {
+    const tasks = Array.from({ length: 501 }, (_, index) =>
+      task(`Task ${index}`, due('2026-04-10T08:00:00'))
+    );
+    mocks.relationsForTask = () => dependencyState([]);
+    render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={tasks}
+        projectStartDate="2026-04-10"
+        projectTargetDate="2026-04-10"
+        onOpenTask={() => {}}
+      />
+    ));
+    await waitFor(() =>
+      expect(mocks.relationLookupCalls.length).toBeGreaterThan(0)
+    );
+    expect(mocks.relationLookupCalls).not.toContain(tasks[500]!.id);
+  });
+
+  it('suppresses a dense complete dependency overlay without changing visible task rows', async () => {
+    const tasks = Array.from({ length: 500 }, (_, index) =>
+      task(`Dense task ${index}`, due('2026-04-10T08:00:00'))
+    );
+    const predecessorIds = tasks.slice(0, 498).map((item) => item.id);
+    mocks.relationsForTask = (taskId) =>
+      taskId === tasks[498]?.id || taskId === tasks[499]?.id
+        ? dependencyState(predecessorIds)
+        : dependencyState([]);
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={tasks}
+        projectStartDate="2026-04-10"
+        projectTargetDate="2026-04-10"
+        onOpenTask={() => {}}
+      />
+    ));
+    const container = view.container.querySelector(
+      '.project-task-deadline-timeline > div.relative'
+    );
+    stubRect(container!, 0, 0, 400, 200);
+    mocks.resizeCallbacks.at(-1)?.({ width: 400 });
+
+    await waitFor(() =>
+      expect(mocks.relationLookupCalls.length).toBeGreaterThan(500)
+    );
+    expect(view.container.querySelectorAll('svg path')).toHaveLength(0);
+    expect(view.getByRole('button', { name: 'Dense task 0' })).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Dense task 499' })).toBeTruthy();
+    expect(view.getAllByTestId('task-dependency-relation')).toHaveLength(500);
+  });
+
   it('renders canonical task status and priority metadata in stable order, omitting unavailable values', () => {
     const both = withProperty(
       withProperty(
