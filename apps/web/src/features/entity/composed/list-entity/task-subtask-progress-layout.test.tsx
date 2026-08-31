@@ -27,6 +27,9 @@ vi.mock('@app/features/next-soup/soup-view/soup-view-context', () => ({
   useMaybeSoupView: () => undefined,
 }));
 vi.mock('@property/tags', () => ({ EntityRowTags: () => null }));
+vi.mock('@property/task-dependency-relations', () => ({
+  TaskDependencyRelations: () => null,
+}));
 vi.mock('@service-properties/generated/schemas/entityType', () => ({
   EntityType: {
     CALL_RECORD: 'call',
