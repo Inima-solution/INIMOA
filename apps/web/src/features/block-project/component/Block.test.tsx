@@ -567,6 +567,46 @@ describe('project task dependency relation batching', () => {
     expect(document.querySelector('[data-testid="soup-view-list"]')).toBeNull();
   });
 
+  it('preserves the shared Task filter control and source across ordinary List, Board, and List', () => {
+    mocks.searchText = 'follow up';
+    mocks.source = [
+      { id: 'matching-task-b', subType: { type: 'task' }, type: 'document' },
+      { id: 'non-task-result', subType: null, type: 'document' },
+      { id: 'matching-task-a', subType: { type: 'task' }, type: 'document' },
+    ];
+
+    render(() => <Block />);
+
+    const filterControl = document.querySelector(
+      '[data-testid="project-milestone-filter"]'
+    );
+    expect(filterControl).toBeTruthy();
+    expect(mocks.soupViewProviderCount).toBe(1);
+
+    mocks.topBarProps?.onChange('board');
+
+    expect(mocks.boardProps).toMatchObject({
+      searching: true,
+      tasks: [{ id: 'matching-task-b' }, { id: 'matching-task-a' }],
+    });
+    expect(
+      document.querySelector('[data-testid="project-milestone-filter"]')
+    ).toBe(filterControl);
+    expect(mocks.soupViewProviderCount).toBe(1);
+    expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
+
+    mocks.topBarProps?.onChange('list');
+
+    expect(
+      document.querySelector('[data-testid="soup-view-list"]')
+    ).toBeTruthy();
+    expect(
+      document.querySelector('[data-testid="project-milestone-filter"]')
+    ).toBe(filterControl);
+    expect(mocks.soupViewProviderCount).toBe(1);
+    expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
+  });
+
   it('keeps the board loading while its initial task source is empty', () => {
     mocks.viewMode = 'board';
     mocks.sourceLoading = true;
