@@ -213,5 +213,7 @@ fn collect_task_property_rows(entity_id: &str) -> Vec<PropertyRow> {
         ),
         // Milestone
         PropertyRow::null_value(entity_id, entity_type, SystemPropertyKey::Milestone.uuid()),
+        // Start Date
+        PropertyRow::null_value(entity_id, entity_type, SystemPropertyKey::StartDate.uuid()),
     ]
 }

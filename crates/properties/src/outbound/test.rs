@@ -638,6 +638,94 @@ async fn task_system_properties_round_trip_through_specialized_writers(
     Ok(())
 }
 
+#[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
+async fn task_start_date_round_trip_through_generic_property_writer(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let task = Uuid::from_u128(0xD402_0000_0000_0000_0000_0000_0000_0001);
+    let task_id = task.to_string();
+    seed_live_hierarchy_task(&pool, task, "start-date-round-trip").await?;
+    let receipt = EditReceipt::dangerously_assert_internal_user(
+        &task_id,
+        canonical_entity_type(EntityType::Task),
+    );
+    let service = PropertiesServiceImpl::new(
+        PropertiesPgRepo::new(pool.clone()),
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+    let start_date = chrono::DateTime::parse_from_rfc3339("2026-09-02T03:04:05Z")?.to_utc();
+    let rewritten_start_date =
+        chrono::DateTime::parse_from_rfc3339("2026-09-03T04:05:06Z")?.to_utc();
+
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::START_DATE_UUID,
+            Some(SetPropertyValue::Date { value: start_date }),
+        )
+        .await?;
+    let initial = super::entity_properties_get_query::get_entity_properties_values(
+        &pool,
+        &task_id,
+        EntityType::Task,
+    )
+    .await?;
+    assert_eq!(
+        initial
+            .iter()
+            .find(|property| property.definition.id == SystemPropertyKey::START_DATE_UUID)
+            .map(|property| (property.definition.data_type, property.value.clone())),
+        Some((DataType::Date, Some(PropertyValue::Date(start_date))))
+    );
+
+    service
+        .set_entity_property(&receipt, SystemPropertyKey::START_DATE_UUID, None)
+        .await?;
+    let cleared = super::entity_properties_get_query::get_entity_properties_values(
+        &pool,
+        &task_id,
+        EntityType::Task,
+    )
+    .await?;
+    assert_eq!(
+        cleared
+            .iter()
+            .find(|property| property.definition.id == SystemPropertyKey::START_DATE_UUID)
+            .expect("cleared Start Date remains attached")
+            .value,
+        None
+    );
+
+    service
+        .set_entity_property(
+            &receipt,
+            SystemPropertyKey::START_DATE_UUID,
+            Some(SetPropertyValue::Date {
+                value: rewritten_start_date,
+            }),
+        )
+        .await?;
+    let rewritten = super::entity_properties_get_query::get_entity_properties_values(
+        &pool,
+        &task_id,
+        EntityType::Task,
+    )
+    .await?;
+    assert_eq!(
+        rewritten
+            .iter()
+            .find(|property| property.definition.id == SystemPropertyKey::START_DATE_UUID)
+            .map(|property| (property.definition.data_type, property.value.clone())),
+        Some((
+            DataType::Date,
+            Some(PropertyValue::Date(rewritten_start_date))
+        ))
+    );
+
+    Ok(())
+}
+
 #[sqlx::test(
     migrator = "MACRO_DB_MIGRATIONS",
     fixtures(path = "../../fixtures", scripts("task_linking_seed"))

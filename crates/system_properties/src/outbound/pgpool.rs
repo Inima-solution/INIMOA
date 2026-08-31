@@ -153,6 +153,7 @@ impl SystemPropertiesRepository for PgSystemPropertiesRepository {
             SystemPropertyKey::StoryPoints.uuid(),
             SystemPropertyKey::RelevantDocuments.uuid(),
             SystemPropertyKey::Milestone.uuid(),
+            SystemPropertyKey::StartDate.uuid(),
         ];
 
         // Step 1: Fetch all properties from source task
