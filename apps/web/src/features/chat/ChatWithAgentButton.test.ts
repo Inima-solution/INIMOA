@@ -4,6 +4,7 @@ const mocks = vi.hoisted(() => ({
   createChat: vi.fn(),
   openWithSplit: vi.fn(),
   storeChatStateImmediate: vi.fn(),
+  toastFailure: vi.fn(),
 }));
 
 vi.mock('@app/signal/splitLayout', () => ({
@@ -19,7 +20,7 @@ vi.mock('@core/component/AI/util/storage', () => ({
   storeChatStateImmediate: mocks.storeChatStateImmediate,
 }));
 vi.mock('@core/component/Toast/Toast', () => ({
-  toast: { failure: vi.fn() },
+  toast: { failure: mocks.toastFailure },
 }));
 vi.mock('@core/constant/allBlocks', () => ({
   fileTypeToBlockName: (fileType: string | null | undefined) =>
@@ -60,5 +61,41 @@ describe('openChatWithAgent', () => {
       { type: 'chat', id: 'chat-id' },
       { activate: true, preferNewSplit: true }
     );
+  });
+
+  it('creates an unscoped chat for a project and stores its canonical mention', async () => {
+    await openChatWithAgent({
+      type: 'project',
+      id: 'project-id',
+      name: 'Roadmap',
+    });
+
+    expect(mocks.createChat).toHaveBeenCalledTimes(1);
+    expect(mocks.createChat).toHaveBeenCalledWith();
+    expect(mocks.storeChatStateImmediate).toHaveBeenCalledWith('chat-id', {
+      input:
+        '<m-document-mention>{"documentId":"project-id","documentName":"Roadmap","blockName":"project","blockParams":{}}</m-document-mention>',
+      attachments: [{ entity_id: 'project-id', entity_type: 'project' }],
+    });
+    expect(mocks.openWithSplit).toHaveBeenCalledTimes(1);
+    expect(mocks.openWithSplit).toHaveBeenCalledWith(
+      { type: 'chat', id: 'chat-id' },
+      { activate: true, preferNewSplit: true }
+    );
+  });
+
+  it('keeps project chat creation failure generic without seeding or opening', async () => {
+    mocks.createChat.mockResolvedValue({ error: 'backend detail' });
+
+    await openChatWithAgent({
+      type: 'project',
+      id: 'project-id',
+      name: 'Roadmap',
+    });
+
+    expect(mocks.toastFailure).toHaveBeenCalledTimes(1);
+    expect(mocks.toastFailure).toHaveBeenCalledWith('Unable to start chat');
+    expect(mocks.storeChatStateImmediate).not.toHaveBeenCalled();
+    expect(mocks.openWithSplit).not.toHaveBeenCalled();
   });
 });
