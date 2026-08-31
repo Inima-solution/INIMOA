@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import type { TaskEntityWithProperties } from '@entity';
-import { SYSTEM_PROPERTY_IDS } from '@property/constants';
+import { PROPERTY_OPTION_IDS, SYSTEM_PROPERTY_IDS } from '@property/constants';
 import type { SoupProperty } from '@service-storage/generated/schemas';
 import { cleanup, fireEvent, render } from '@solidjs/testing-library';
 import userEvent from '@testing-library/user-event';
@@ -87,7 +87,91 @@ function due(value: string) {
   return { type: 'Date', value };
 }
 
+function selectOption(value: string) {
+  return { type: 'SelectOption', value: [value] };
+}
+
+function withProperty(
+  entity: TaskEntityWithProperties,
+  definitionId: string,
+  value: unknown
+) {
+  entity.properties = [
+    ...(entity.properties ?? []),
+    {
+      definition: { id: definitionId },
+      value,
+    } as unknown as SoupProperty,
+  ];
+  return entity;
+}
+
 describe('ProjectTaskDeadlineTimeline', () => {
+  it('renders canonical task status and priority metadata in stable order, omitting unavailable values', () => {
+    const both = withProperty(
+      withProperty(
+        task('Both', due('2026-04-10T08:00:00')),
+        SYSTEM_PROPERTY_IDS.STATUS,
+        selectOption(PROPERTY_OPTION_IDS.STATUS.IN_PROGRESS)
+      ),
+      SYSTEM_PROPERTY_IDS.PRIORITY,
+      selectOption(PROPERTY_OPTION_IDS.PRIORITY.HIGH)
+    );
+    const statusOnly = withProperty(
+      task('Status only', due('2026-04-10T09:00:00')),
+      SYSTEM_PROPERTY_IDS.STATUS,
+      selectOption(PROPERTY_OPTION_IDS.STATUS.COMPLETED)
+    );
+    const priorityOnly = withProperty(
+      task('Priority only', due('2026-04-10T10:00:00')),
+      SYSTEM_PROPERTY_IDS.PRIORITY,
+      selectOption(PROPERTY_OPTION_IDS.PRIORITY.LOW)
+    );
+    const unavailable = withProperty(
+      withProperty(
+        task('No canonical metadata', due('2026-04-10T11:00:00')),
+        SYSTEM_PROPERTY_IDS.STATUS,
+        { type: 'Text', value: PROPERTY_OPTION_IDS.STATUS.CANCELED }
+      ),
+      SYSTEM_PROPERTY_IDS.PRIORITY,
+      selectOption('unknown-priority-id')
+    );
+    const malformed = withProperty(
+      task('Malformed', due('2026-04-10T12:00:00')),
+      SYSTEM_PROPERTY_IDS.STATUS,
+      { type: 'SelectOption', value: [123] }
+    );
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={[both, statusOnly, priorityOnly, unavailable, malformed]}
+        onOpenTask={() => {}}
+      />
+    ));
+
+    const bothMetadata = view.getByText('Status: In Progress · Priority: High');
+    expect(bothMetadata.getAttribute('aria-label')).toBe(
+      'Status: In Progress · Priority: High'
+    );
+    expect(bothMetadata.getAttribute('title')).toBe(
+      'Status: In Progress · Priority: High'
+    );
+    expect(view.getByText('Status: Completed')).toBeTruthy();
+    expect(view.getByText('Priority: Low')).toBeTruthy();
+    expect(
+      view.getByRole('button', { name: 'No canonical metadata' })
+    ).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Malformed' })).toBeTruthy();
+    expect(view.queryByText('Status: Canceled')).toBeNull();
+    expect(view.queryByText('Priority: unknown-priority-id')).toBeNull();
+    expect(view.queryByText(PROPERTY_OPTION_IDS.STATUS.CANCELED)).toBeNull();
+    expect(view.queryByText('123')).toBeNull();
+    expect(
+      view.getByRole('button', {
+        name: 'Both Status: In Progress · Priority: High',
+      })
+    ).toBeTruthy();
+  });
+
   it('groups valid deadlines chronologically by local date and preserves source order within a day', () => {
     const first = task('First same day', due('2026-04-10T08:00:00'));
     const earlier = task('Earlier', due('2026-04-09T18:00:00'));

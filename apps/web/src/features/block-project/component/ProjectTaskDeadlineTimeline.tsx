@@ -2,8 +2,11 @@ import { LoadingBlock } from '@core/component/LoadingBlock';
 import { Entity, type TaskEntityWithProperties } from '@entity';
 import {
   getLocalDateKey,
+  getPropertyOptionLabel,
   getTaskDueDate,
+  getTaskPriorityOptionId,
   getTaskScheduleProjection,
+  getTaskStatusOptionId,
 } from '@entity/utils/task-properties';
 import { TaskDependencyRelations } from '@property/task-dependency-relations';
 import { Button, EmptyStatePanel } from '@ui';
@@ -139,6 +142,20 @@ export function ProjectTaskDeadlineTimeline(props: {
                             }
                             return scheduleText();
                           };
+                          const taskMetadataText = () => {
+                            const statusLabel = getPropertyOptionLabel(
+                              getTaskStatusOptionId(task) ?? ''
+                            );
+                            const priorityLabel = getPropertyOptionLabel(
+                              getTaskPriorityOptionId(task) ?? ''
+                            );
+                            return [
+                              statusLabel && `Status: ${statusLabel}`,
+                              priorityLabel && `Priority: ${priorityLabel}`,
+                            ]
+                              .filter(Boolean)
+                              .join(' · ');
+                          };
 
                           return (
                             <li>
@@ -161,6 +178,17 @@ export function ProjectTaskDeadlineTimeline(props: {
                                       <span
                                         aria-label={scheduleAccessibleLabel()}
                                         title={scheduleAccessibleLabel()}
+                                        class="max-w-40 min-w-0 truncate text-xs text-ink-muted"
+                                      >
+                                        {text()}
+                                      </span>
+                                    )}
+                                  </Show>
+                                  <Show when={taskMetadataText()}>
+                                    {(text) => (
+                                      <span
+                                        aria-label={text()}
+                                        title={text()}
                                         class="max-w-40 min-w-0 truncate text-xs text-ink-muted"
                                       >
                                         {text()}
