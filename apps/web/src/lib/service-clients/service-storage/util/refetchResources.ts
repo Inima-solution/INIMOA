@@ -3,6 +3,7 @@ import { invalidateUserQuota } from '@queries/auth';
 import { refetchHistory } from '@queries/history/history';
 import { invalidatePreview } from '@queries/preview';
 import { invalidateDeletedItems } from '@queries/storage/deleted';
+import { invalidateProjectOverviews } from '@queries/storage/project-overview';
 import { invalidateProjects } from '@queries/storage/projects';
 
 export function refetchResources() {
@@ -16,7 +17,7 @@ export function refetchResources() {
 }
 
 async function refetchProjectResources(_force = false) {
-  await invalidateProjects();
+  await Promise.all([invalidateProjects(), invalidateProjectOverviews()]);
 
   refetchDocumentShareButtonResource();
 }

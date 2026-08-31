@@ -8,6 +8,7 @@ import { postNewHistoryItem } from '@queries/history/history';
 import { setPreviewOnCreate } from '@queries/preview/preview';
 import { refetchSoupEntity } from '@queries/soup/cache';
 import { seedDocumentLoadBundle } from '@queries/storage/documentLoad/documentLoadBundle';
+import { invalidateProjectOverviews } from '@queries/storage/project-overview';
 import { cognitionApiServiceClient } from '@service-cognition/client';
 import type { CreateChatRequest } from '@service-cognition/generated/schemas';
 import { staticFileClient } from '@service-static-files/client';
@@ -67,6 +68,9 @@ export async function createMarkdownFile(
     fileType: 'md',
   });
   refetchSoupEntity(documentId, 'document', { ownTouch: true });
+  if (args?.projectId) {
+    void invalidateProjectOverviews(args.projectId);
+  }
 
   analytics.track('create_entity', {
     entityType: 'md',
@@ -163,6 +167,9 @@ async function createTaskResponse(args?: CreateTaskArgs) {
     subType: { type: 'task', is_completed: false },
   });
   refetchSoupEntity(documentId, 'document', { ownTouch: true });
+  if (args?.projectId) {
+    void invalidateProjectOverviews(args.projectId);
+  }
 
   analytics.track('create_entity', {
     entityType: 'task',
@@ -222,6 +229,9 @@ export async function createSnippet(
     subType: { type: 'snippet' },
   });
   refetchSoupEntity(documentId, 'document', { ownTouch: true });
+  if (args?.projectId) {
+    void invalidateProjectOverviews(args.projectId);
+  }
 
   analytics.track('create_entity', {
     entityType: 'snippet',
@@ -270,6 +280,9 @@ export async function createSkill(
     subType: { type: 'skill' },
   });
   refetchSoupEntity(documentId, 'document', { ownTouch: true });
+  if (args?.projectId) {
+    void invalidateProjectOverviews(args.projectId);
+  }
 
   analytics.track('create_entity', {
     entityType: 'skill',
@@ -414,6 +427,9 @@ export async function createCanvasFileFromJsonString(args: {
     fileType: 'canvas',
   });
   refetchSoupEntity(canvas.metadata.documentId, 'document', { ownTouch: true });
+  if (projectId) {
+    void invalidateProjectOverviews(projectId);
+  }
 
   analytics.track('create_entity', {
     entityType: 'canvas',
@@ -451,6 +467,9 @@ export async function createChat(
     name: args?.name ?? DEFAULT_CHAT_NAME,
   });
   refetchSoupEntity(chat.id, 'chat', { ownTouch: true });
+  if (args?.projectId) {
+    void invalidateProjectOverviews(args.projectId);
+  }
 
   analytics.track('create_entity', {
     entityType: 'chat',

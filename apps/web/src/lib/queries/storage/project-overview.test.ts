@@ -23,6 +23,7 @@ import { storageServiceClient } from '@service-storage/client';
 import { entityKeys } from './keys';
 import {
   fetchProjectOverview,
+  invalidateProjectOverviews,
   useProjectOverviewQuery,
 } from './project-overview';
 
@@ -127,5 +128,59 @@ describe('project overview queries', () => {
         await fetchProjectOverview('project-a');
       })()
     ).rejects.toBeInstanceOf(ThrownResultError);
+  });
+
+  it('invalidates only the requested project overview cache', async () => {
+    const overviewAKey = entityKeys.projectOverview('project-a').queryKey;
+    const overviewBKey = entityKeys.projectOverview('project-b').queryKey;
+    const operationsAKey = entityKeys.projectOperations('project-a').queryKey;
+    const documentMetadataKey =
+      entityKeys.documentMetadata('document-a').queryKey;
+
+    queryClient.setQueryData(overviewAKey, overview);
+    queryClient.setQueryData(overviewBKey, {
+      ...overview,
+      project: { ...overview.project, id: 'project-b' },
+    });
+    queryClient.setQueryData(operationsAKey, overview.operations);
+    queryClient.setQueryData(documentMetadataKey, { id: 'document-a' });
+
+    await invalidateProjectOverviews('project-a');
+
+    expect(queryClient.getQueryState(overviewAKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(overviewBKey)?.isInvalidated).toBe(false);
+    expect(queryClient.getQueryState(operationsAKey)?.isInvalidated).toBe(
+      false
+    );
+    expect(queryClient.getQueryState(documentMetadataKey)?.isInvalidated).toBe(
+      false
+    );
+  });
+
+  it('invalidates every project overview without invalidating other entity caches', async () => {
+    const overviewAKey = entityKeys.projectOverview('project-a').queryKey;
+    const overviewBKey = entityKeys.projectOverview('project-b').queryKey;
+    const operationsAKey = entityKeys.projectOperations('project-a').queryKey;
+    const documentMetadataKey =
+      entityKeys.documentMetadata('document-a').queryKey;
+
+    queryClient.setQueryData(overviewAKey, overview);
+    queryClient.setQueryData(overviewBKey, {
+      ...overview,
+      project: { ...overview.project, id: 'project-b' },
+    });
+    queryClient.setQueryData(operationsAKey, overview.operations);
+    queryClient.setQueryData(documentMetadataKey, { id: 'document-a' });
+
+    await invalidateProjectOverviews();
+
+    expect(queryClient.getQueryState(overviewAKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(overviewBKey)?.isInvalidated).toBe(true);
+    expect(queryClient.getQueryState(operationsAKey)?.isInvalidated).toBe(
+      false
+    );
+    expect(queryClient.getQueryState(documentMetadataKey)?.isInvalidated).toBe(
+      false
+    );
   });
 });

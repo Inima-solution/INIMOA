@@ -15,6 +15,7 @@ import { useMutation, useQuery } from '@tanstack/solid-query';
 import { v4 as uuidv4 } from 'uuid';
 import { queryClient } from '../client';
 import { storageKeys } from './keys';
+import { invalidateProjectOverviews } from './project-overview';
 
 const PROJECTS_STALE_TIME = 5 * 60 * 1000;
 const PROJECTS_GC_TIME = 10 * 60 * 1000;
@@ -118,7 +119,11 @@ export async function createProject(params: {
       itemId: projectId,
       itemType: 'project',
     });
-    await Promise.all([invalidateProjects(), refetchHistory()]);
+    await Promise.all([
+      invalidateProjects(),
+      refetchHistory(),
+      ...(params.parentId ? [invalidateProjectOverviews(params.parentId)] : []),
+    ]);
     return projectId;
   }
 
@@ -218,6 +223,9 @@ function _useCreateProjectMutation(
               itemId: projectId,
               itemType: 'project',
             });
+            if (params.parentId) {
+              void invalidateProjectOverviews(params.parentId);
+            }
           }
         },
         onError: (_err, _params, context) => {
