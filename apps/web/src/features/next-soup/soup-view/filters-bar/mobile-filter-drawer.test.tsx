@@ -124,6 +124,20 @@ vi.mock('@queries/contacts/contacts', () => ({ useContacts: () => () => [] }));
 vi.mock('@queries/properties/definitions', () => ({
   useListPropertiesQuery: () => ({ data: state.propertyDefinitions }),
 }));
+vi.mock('@property/editors/selectors/PropertyEntitySelector', () => ({
+  PropertyEntitySelector: (props: {
+    config: { placeholder: string };
+    setSelectedOptions: (ids: Set<string>) => void;
+  }) => (
+    <button
+      type="button"
+      aria-label={props.config.placeholder}
+      onClick={() => props.setSelectedOptions(new Set(['user-1']))}
+    >
+      {props.config.placeholder}
+    </button>
+  ),
+}));
 vi.mock('@ui', () => ({
   Button: 'button',
   cn: (...values: string[]) => values.join(' '),
@@ -238,6 +252,17 @@ describe('MobileFilterDrawer due date', () => {
       },
       {
         definition: {
+          id: 'reviewer',
+          display_name: 'Reviewer',
+          data_type: 'ENTITY',
+          is_system: false,
+          is_multi_select: false,
+          specific_entity_type: 'USER',
+        },
+        property_options: [],
+      },
+      {
+        definition: {
           id: 'status',
           display_name: 'Status',
           data_type: 'SELECT_STRING',
@@ -297,6 +322,9 @@ describe('MobileFilterDrawer due date', () => {
     ).toBeTruthy();
     expect(screen.queryByText('Unsupported')).toBeNull();
     expect(screen.queryByText('Empty')).toBeNull();
+    const reviewer = screen.getByRole('button', {
+      name: 'Search reviewer...',
+    });
 
     fireEvent.click(screen.getByRole('radio', { name: 'True' }));
     expect(state.queryFilters.set).toHaveBeenLastCalledWith({
@@ -328,6 +356,18 @@ describe('MobileFilterDrawer due date', () => {
           { propertyId: 'review-date', type: 'date', value: 'overdue' },
           { propertyId: 'status', type: 'select', value: 'open' },
           { propertyId: 'status', type: 'select', value: 'closed' },
+        ],
+      },
+    });
+    fireEvent.click(reviewer);
+    expect(state.queryFilters.set).toHaveBeenLastCalledWith({
+      include: {
+        properties: [
+          { propertyId: 'ready', type: 'boolean', value: false },
+          { propertyId: 'review-date', type: 'date', value: 'overdue' },
+          { propertyId: 'status', type: 'select', value: 'open' },
+          { propertyId: 'status', type: 'select', value: 'closed' },
+          { propertyId: 'reviewer', type: 'entity', value: 'user-1' },
         ],
       },
     });

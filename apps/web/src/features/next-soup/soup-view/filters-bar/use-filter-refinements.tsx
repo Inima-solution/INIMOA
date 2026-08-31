@@ -12,6 +12,7 @@ import {
 } from '@app/features/next-soup/filters/configs/document-type-query';
 import {
   defineQueryFilters,
+  type PropertyFilter,
   type Query,
   queryStateFrom,
 } from '@app/features/next-soup/filters/filter-store';
@@ -26,10 +27,17 @@ import { useDealStages } from '@companies/crm/deal-stages';
 import { CrmStageIcon } from '@companies/crm/StageIcon';
 import { useSplitPanelOrThrow } from '@components/app/split-layout/layoutUtils';
 import { UserIcon } from '@core/component/UserIcon';
+import { useQuickAccess } from '@core/context/quickAccess';
+import type { QuickAccessItem } from '@core/context/quickAccess/types';
 import { useUserContext, useUserId } from '@core/context/user';
 import { deepEqual } from '@core/util/compareUtils';
 import CircleDashedIcon from '@phosphor/circle-dashed.svg';
 import { SYSTEM_PROPERTY_IDS } from '@property/constants';
+import {
+  getEntityName,
+  getEntityType,
+  quickAccessItemToEntity,
+} from '@property/editors/selectors/entityUtils';
 import { useContacts } from '@queries/contacts/contacts';
 import { useListPropertiesQuery } from '@queries/properties/definitions';
 import { batch, createMemo, createSignal, type JSX } from 'solid-js';
@@ -42,7 +50,6 @@ import type { SearchableOption } from './searchable-multi-select';
 import { useTagFilter } from './tag-filter';
 import {
   isUnavailableTaskCustomProperty,
-  removeUnavailableTaskCustomProperties,
   replaceTaskCustomPropertyValues,
   selectedTaskCustomPropertyValues,
   taskCustomProperties,
@@ -53,6 +60,69 @@ import {
   buildContactLabel,
   VIEW_FILTER_CATEGORIES,
 } from './unified-filter-dropdown';
+
+type TaskEntityFilterPartition = {
+  values: FilterValue[];
+  unavailable: boolean;
+};
+
+/**
+ * Resolves only against the existing bounded quick-access cache. Any cache
+ * miss or target mismatch stays deliberately unnamed and unavailable.
+ */
+export function partitionTaskEntityPropertyFilters(
+  selectedIds: readonly string[],
+  property: ReturnType<typeof taskCustomProperties>[number],
+  getById: (id: string) => QuickAccessItem | undefined
+): TaskEntityFilterPartition {
+  const values: FilterValue[] = [];
+  let unavailable = false;
+  if (property.type !== 'entity') return { values, unavailable: true };
+
+  for (const id of selectedIds) {
+    const item = getById(id);
+    const entity = item ? quickAccessItemToEntity(item) : undefined;
+    const label = entity ? getEntityName(entity) : '';
+    if (
+      !entity ||
+      getEntityType(entity) !== property.specificEntityType ||
+      label.length === 0
+    ) {
+      unavailable = true;
+      continue;
+    }
+    values.push({ id, label });
+  }
+  return { values, unavailable };
+}
+
+export function isUnavailableTaskEntityPropertyFilter(
+  filter: PropertyFilter,
+  properties: readonly ReturnType<typeof taskCustomProperties>[number][],
+  getById: (id: string) => QuickAccessItem | undefined
+): boolean {
+  const property = properties.find(
+    (candidate) => candidate.id === filter.propertyId
+  );
+  return (
+    property?.type === 'entity' &&
+    filter.type === 'entity' &&
+    partitionTaskEntityPropertyFilters([filter.value], property, getById)
+      .unavailable
+  );
+}
+
+export function removeUnavailableTaskEntityPropertyFilters(
+  filters: readonly PropertyFilter[],
+  properties: readonly ReturnType<typeof taskCustomProperties>[number][],
+  getById: (id: string) => QuickAccessItem | undefined
+): PropertyFilter[] {
+  return filters.filter(
+    (filter) =>
+      !isUnavailableTaskCustomProperty(filter, properties) &&
+      !isUnavailableTaskEntityPropertyFilter(filter, properties, getById)
+  );
+}
 
 // Filter IDs that are set by tabs and should not be shown as removable chips
 const TAB_ONLY_FILTERS = new Set([
@@ -103,6 +173,26 @@ export function useFilterRefinements() {
   const currentUserId = useUserId();
   const tagFilter = useTagFilter();
   const dealStages = useDealStages();
+  const quickAccess = useQuickAccess();
+  // One reactive, bounded shared source for every supported ENTITY target.
+  // Do not use getById here: its cache lookup alone does not subscribe this
+  // refinement to arrivals after the filter state was restored.
+  const taskEntityItems = quickAccess.useList(
+    'person',
+    'channel',
+    'dm',
+    'document',
+    'note',
+    'project',
+    'chat',
+    'task'
+  ).items;
+  const taskEntityById = createMemo(() => {
+    const byId = new Map<string, QuickAccessItem>();
+    for (const item of taskEntityItems()) byId.set(item.id, item);
+    return byId;
+  });
+  const getTaskEntityById = (id: string) => taskEntityById().get(id);
 
   const getPresetContext = (): PresetContext => ({
     userId: user.userId(),
@@ -924,23 +1014,39 @@ export function useFilterRefinements() {
         const selected = () =>
           selectedTaskCustomPropertyValues(currentProperties(), property);
         if (selected().length === 0) continue;
+        const entityPartition = () =>
+          partitionTaskEntityPropertyFilters(
+            selected(),
+            property,
+            getTaskEntityById
+          );
+        if (property.type === 'entity' && entityPartition().values.length === 0)
+          continue;
         seenKeys.add(key);
         filters.push(
           getOrCreateConsolidatedChip(key, () => ({
             key,
             categoryLabel: property.label,
-            values: () =>
-              selected().flatMap((id) => {
+            values: () => {
+              if (property.type === 'entity') return entityPartition().values;
+              return selected().flatMap((id) => {
                 const option = property.options.find(
                   (candidate) => candidate.id === id
                 );
                 return option ? [{ id, label: option.label }] : [];
-              }),
-            availableOptions: property.options.map((option) => ({
-              id: option.id,
-              label: option.label,
-            })),
-            multiple: property.type === 'select',
+              });
+            },
+            availableOptions:
+              property.type === 'entity'
+                ? entityPartition().values
+                : property.options.map((option) => ({
+                    id: option.id,
+                    label: option.label,
+                  })),
+            multiple:
+              property.type === 'entity'
+                ? property.isMultiSelect
+                : property.type === 'select',
             isValueActive: (id) => selected().includes(id),
             onToggleValue: (id) => {
               const current = selected();
@@ -969,8 +1075,17 @@ export function useFilterRefinements() {
       }
 
       const unavailable = () =>
-        currentProperties().filter((filter) =>
-          isUnavailableTaskCustomProperty(filter, taskCustomPropertiesList())
+        currentProperties().filter(
+          (filter) =>
+            isUnavailableTaskCustomProperty(
+              filter,
+              taskCustomPropertiesList()
+            ) ||
+            isUnavailableTaskEntityPropertyFilter(
+              filter,
+              taskCustomPropertiesList(),
+              getTaskEntityById
+            )
         );
       if (unavailable().length === 0) return;
       const key = 'custom-property:unavailable';
@@ -985,9 +1100,10 @@ export function useFilterRefinements() {
           onRemoveAll: () => {
             queryFilters.set({
               include: {
-                properties: removeUnavailableTaskCustomProperties(
+                properties: removeUnavailableTaskEntityPropertyFilters(
                   currentProperties(),
-                  taskCustomPropertiesList()
+                  taskCustomPropertiesList(),
+                  getTaskEntityById
                 ),
               },
             });

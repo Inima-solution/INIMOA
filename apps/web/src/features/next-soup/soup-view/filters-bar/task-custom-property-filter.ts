@@ -7,7 +7,10 @@ import type { PropertyDefinitionResponse } from '@service-properties/generated/s
 export type TaskCustomProperty = {
   id: string;
   label: string;
-  type: 'select' | 'boolean' | 'date';
+  type: 'select' | 'boolean' | 'date' | 'entity';
+  /** ENTITY definitions retain their authoritative target and cardinality. */
+  specificEntityType?: EntityType;
+  isMultiSelect?: boolean;
   options: {
     id: string;
     label: string;
@@ -16,6 +19,17 @@ export type TaskCustomProperty = {
 };
 
 const SYSTEM_IDS = new Set<string>(Object.values(SYSTEM_PROPERTY_IDS));
+
+// These are precisely the concrete targets with a bounded source in
+// PropertyEntitySelector. Keep generic and source-less targets out of Soup.
+const SELECTABLE_ENTITY_TYPES = new Set<EntityType>([
+  'USER',
+  'CHANNEL',
+  'DOCUMENT',
+  'PROJECT',
+  'CHAT',
+  'TASK',
+]);
 
 const DATE_OPTIONS: TaskCustomProperty['options'] = [
   { id: 'overdue', label: 'Overdue', value: 'overdue' },
@@ -48,7 +62,8 @@ export function taskCustomProperties(
       (definition.data_type !== 'SELECT_STRING' &&
         definition.data_type !== 'SELECT_NUMBER' &&
         definition.data_type !== 'BOOLEAN' &&
-        definition.data_type !== 'DATE')
+        definition.data_type !== 'DATE' &&
+        definition.data_type !== 'ENTITY')
     ) {
       continue;
     }
@@ -72,6 +87,24 @@ export function taskCustomProperties(
         label: definition.display_name,
         type: 'date',
         options: DATE_OPTIONS,
+      });
+      continue;
+    }
+
+    if (definition.data_type === 'ENTITY') {
+      const specificEntityType = definition.specific_entity_type;
+      if (
+        !specificEntityType ||
+        !SELECTABLE_ENTITY_TYPES.has(specificEntityType)
+      )
+        continue;
+      result.push({
+        id: definition.id,
+        label: definition.display_name,
+        type: 'entity',
+        specificEntityType,
+        isMultiSelect: definition.is_multi_select,
+        options: [],
       });
       continue;
     }
@@ -109,6 +142,18 @@ export function selectedTaskCustomPropertyValues(
   properties: readonly PropertyFilter[] | undefined,
   property: TaskCustomProperty
 ): string[] {
+  if (property.type === 'entity') {
+    const selected = (properties ?? []).flatMap((filter) =>
+      filter.propertyId === property.id &&
+      filter.type === 'entity' &&
+      typeof filter.value === 'string' &&
+      filter.value.length > 0
+        ? [filter.value]
+        : []
+    );
+    const deduped = [...new Set(selected)];
+    return property.isMultiSelect ? deduped : deduped.slice(0, 1);
+  }
   const valid = new Set(property.options.map((option) => option.value));
   const selected = (properties ?? []).flatMap((filter) => {
     if (filter.propertyId !== property.id || filter.type !== property.type)
@@ -124,6 +169,24 @@ export function replaceTaskCustomPropertyValues(
   property: TaskCustomProperty,
   valueIds: readonly string[]
 ): PropertyFilter[] {
+  if (property.type === 'entity') {
+    const next = (properties ?? []).filter(
+      (filter) =>
+        !(
+          filter.propertyId === property.id &&
+          filter.type === 'entity' &&
+          typeof filter.value === 'string' &&
+          filter.value.length > 0
+        )
+    );
+    const ids = property.isMultiSelect ? valueIds : valueIds.slice(0, 1);
+    for (const id of new Set(ids)) {
+      if (id.length > 0) {
+        next.push({ propertyId: property.id, type: 'entity', value: id });
+      }
+    }
+    return next;
+  }
   const values = new Map(
     property.options.map((option) => [option.id, option.value])
   );
@@ -135,7 +198,7 @@ export function replaceTaskCustomPropertyValues(
   const next = (properties ?? []).filter((filter) => !isRecognized(filter));
   const nextValueIds =
     property.type === 'select' ? valueIds : valueIds.slice(0, 1);
-  for (const valueId of nextValueIds) {
+  for (const valueId of new Set(nextValueIds)) {
     const value = values.get(valueId);
     if (value !== undefined) {
       next.push({
@@ -154,7 +217,10 @@ export function toggleTaskCustomPropertyValue(
   property: TaskCustomProperty,
   valueId: string
 ): string[] {
-  if (property.type !== 'select') {
+  if (property.type !== 'select' && property.type !== 'entity') {
+    return selectedValueIds.includes(valueId) ? [] : [valueId];
+  }
+  if (property.type === 'entity' && !property.isMultiSelect) {
     return selectedValueIds.includes(valueId) ? [] : [valueId];
   }
   return selectedValueIds.includes(valueId)
@@ -172,6 +238,13 @@ export function isUnavailableTaskCustomProperty(
     (property) => property.id === filter.propertyId
   );
   if (!known) return true;
+  if (known.type === 'entity') {
+    return (
+      filter.type !== 'entity' ||
+      typeof filter.value !== 'string' ||
+      filter.value.length === 0
+    );
+  }
   return !known.options.some(
     (option) => option.value === filter.value && known.type === filter.type
   );

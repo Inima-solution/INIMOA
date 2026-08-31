@@ -19,7 +19,9 @@ const definition = (
     property_definition_id?: string;
     value: unknown;
   }[] = [],
-  is_system = false
+  is_system = false,
+  specific_entity_type: string | null = null,
+  is_multi_select = true
 ) =>
   ({
     definition: {
@@ -28,7 +30,8 @@ const definition = (
       data_type,
       is_system,
       is_metadata: false,
-      is_multi_select: true,
+      is_multi_select,
+      specific_entity_type,
       owner: 'TEAM',
       created_at: '',
       updated_at: '',
@@ -144,6 +147,68 @@ describe('task custom property filter state', () => {
         ],
       },
     ]);
+  });
+
+  it('keeps only quickAccess-backed typed entity definitions', () => {
+    expect(
+      taskCustomProperties([
+        definition('person', 'ENTITY', [], false, 'USER', true),
+        definition('project', 'ENTITY', [], false, 'PROJECT', false),
+        definition('generic', 'ENTITY'),
+        definition('thread', 'ENTITY', [], false, 'THREAD'),
+        definition('company', 'ENTITY', [], false, 'COMPANY'),
+        definition('call', 'ENTITY', [], false, 'CALL_RECORD'),
+        definition('calendar', 'ENTITY', [], false, 'CALENDAR_EVENT'),
+      ])
+    ).toEqual([
+      {
+        id: 'person',
+        label: 'person',
+        type: 'entity',
+        specificEntityType: 'USER',
+        isMultiSelect: true,
+        options: [],
+      },
+      {
+        id: 'project',
+        label: 'project',
+        type: 'entity',
+        specificEntityType: 'PROJECT',
+        isMultiSelect: false,
+        options: [],
+      },
+    ]);
+  });
+
+  it('dedupes typed entity selections and keeps their definition cardinality', () => {
+    const [people, project] = taskCustomProperties([
+      definition('person', 'ENTITY', [], false, 'USER', true),
+      definition('project', 'ENTITY', [], false, 'PROJECT', false),
+    ]);
+    const existing = [
+      { propertyId: 'person', type: 'entity', value: 'user-2' },
+      { propertyId: 'person', type: 'entity', value: 'user-1' },
+      { propertyId: 'person', type: 'entity', value: 'user-2' },
+      { propertyId: 'other', type: 'select', value: 'keep' },
+    ] as PropertyFilter[];
+    expect(selectedTaskCustomPropertyValues(existing, people!)).toEqual([
+      'user-2',
+      'user-1',
+    ]);
+    expect(
+      replaceTaskCustomPropertyValues(existing, people!, [
+        'user-1',
+        'user-1',
+        'user-3',
+      ])
+    ).toEqual([
+      { propertyId: 'other', type: 'select', value: 'keep' },
+      { propertyId: 'person', type: 'entity', value: 'user-1' },
+      { propertyId: 'person', type: 'entity', value: 'user-3' },
+    ]);
+    expect(
+      replaceTaskCustomPropertyValues([], project!, ['project-2', 'project-1'])
+    ).toEqual([{ propertyId: 'project', type: 'entity', value: 'project-2' }]);
   });
 
   it('preserves selected order and only replaces the targeted property', () => {

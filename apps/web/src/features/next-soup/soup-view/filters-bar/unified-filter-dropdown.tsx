@@ -37,6 +37,7 @@ import CircleDashedIcon from '@phosphor/circle-dashed.svg';
 import FilterIcon from '@phosphor/funnel-simple.svg';
 import { PropertyValueIcon } from '@property/component/propertyValue/PropertyValueIcon';
 import { PROPERTY_OPTION_IDS, SYSTEM_PROPERTY_IDS } from '@property/constants';
+import { PropertyEntitySelector } from '@property/editors/selectors/PropertyEntitySelector';
 import { useGithubLinkStatusQuery } from '@queries/auth';
 import { useContacts } from '@queries/contacts/contacts';
 import { useListPropertiesQuery } from '@queries/properties/definitions';
@@ -93,6 +94,7 @@ export const TypeIndicator = (props: { active: boolean }) => (
 
 const TaskCustomPropertySubmenu = (props: { property: TaskCustomProperty }) => {
   const { queryFilters } = useSoupView();
+  const [isOpen, setIsOpen] = createSignal(false);
   const selected = () =>
     selectedTaskCustomPropertyValues(
       queryFilters.state.include.properties,
@@ -121,6 +123,38 @@ const TaskCustomPropertySubmenu = (props: { property: TaskCustomProperty }) => {
       },
     });
   };
+  if (props.property.type === 'entity') {
+    return (
+      <Dropdown.Sub open={isOpen()} onOpenChange={setIsOpen}>
+        <Dropdown.SubTrigger>
+          <span class="text-ink truncate">{props.property.label}</span>
+          <CaretRightIcon class="size-3 text-ink-muted" />
+        </Dropdown.SubTrigger>
+        <Dropdown.SubContent class="w-65 max-w-[90vw]">
+          <PropertyEntitySelector
+            config={{
+              isMultiSelect: props.property.isMultiSelect ?? false,
+              placeholder: `Search ${props.property.label.toLowerCase()}...`,
+              specificEntityType: props.property.specificEntityType,
+            }}
+            selectedOptions={() => new Set(selected())}
+            setSelectedOptions={(ids) => {
+              queryFilters.set({
+                include: {
+                  properties: replaceTaskCustomPropertyValues(
+                    queryFilters.state.include.properties,
+                    props.property,
+                    [...ids]
+                  ),
+                },
+              });
+            }}
+            onClose={() => setIsOpen(false)}
+          />
+        </Dropdown.SubContent>
+      </Dropdown.Sub>
+    );
+  }
   return (
     <Dropdown.Sub>
       <Dropdown.SubTrigger>
