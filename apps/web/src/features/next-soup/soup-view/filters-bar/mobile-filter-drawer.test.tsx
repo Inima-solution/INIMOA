@@ -1,14 +1,19 @@
 import { fireEvent, render, screen } from '@solidjs/testing-library';
 import type { JSX } from 'solid-js';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const state = vi.hoisted(() => {
   const activeIds = new Set<string>();
   const queryFilters = {
-    state: { include: {} },
+    state: { include: {} as { properties?: unknown[] } },
     add: vi.fn(),
     remove: vi.fn(),
-    set: vi.fn(),
+    set: vi.fn((next: { include: { properties?: unknown[] } }) => {
+      queryFilters.state.include = {
+        ...queryFilters.state.include,
+        ...next.include,
+      };
+    }),
   };
   const predicates = {
     activeIds,
@@ -39,7 +44,12 @@ const state = vi.hoisted(() => {
     },
     toggle: vi.fn(),
   };
-  return { activeIds, predicates, queryFilters };
+  return {
+    activeIds,
+    predicates,
+    queryFilters,
+    propertyDefinitions: [] as unknown[],
+  };
 });
 
 vi.mock('@app/constants/list-views', () => ({
@@ -111,6 +121,9 @@ vi.mock('@kobalte/core/accordion', () => {
   };
 });
 vi.mock('@queries/contacts/contacts', () => ({ useContacts: () => () => [] }));
+vi.mock('@queries/properties/definitions', () => ({
+  useListPropertiesQuery: () => ({ data: state.propertyDefinitions }),
+}));
 vi.mock('@ui', () => ({
   Button: 'button',
   cn: (...values: string[]) => values.join(' '),
@@ -157,6 +170,15 @@ vi.mock('@core/component/VerticalScrollIndicators', () => ({
 
 import { MobileFilterDrawer } from './mobile-filter-drawer';
 
+beforeEach(() => {
+  state.activeIds.clear();
+  state.queryFilters.state.include = {};
+  state.queryFilters.add.mockClear();
+  state.queryFilters.remove.mockClear();
+  state.queryFilters.set.mockClear();
+  state.propertyDefinitions = [];
+});
+
 describe('MobileFilterDrawer due date', () => {
   it('renders Due date as radio choices and swaps the active semantic query', () => {
     state.activeIds.add('task-high-priority');
@@ -200,6 +222,91 @@ describe('MobileFilterDrawer due date', () => {
       })
     );
 
+    view.unmount();
+  });
+
+  it('renders supported task custom properties with boolean radio and select checkbox semantics', () => {
+    state.propertyDefinitions = [
+      {
+        definition: {
+          id: 'ready',
+          display_name: 'Ready',
+          data_type: 'BOOLEAN',
+          is_system: false,
+        },
+        property_options: [],
+      },
+      {
+        definition: {
+          id: 'status',
+          display_name: 'Status',
+          data_type: 'SELECT_STRING',
+          is_system: false,
+        },
+        property_options: [
+          {
+            id: 'open',
+            property_definition_id: 'status',
+            value: { type: 'string', value: 'Open' },
+          },
+          {
+            id: 'closed',
+            property_definition_id: 'status',
+            value: { type: 'string', value: 'Closed' },
+          },
+        ],
+      },
+      {
+        definition: {
+          id: 'unsupported',
+          display_name: 'Unsupported',
+          data_type: 'STRING',
+          is_system: false,
+        },
+        property_options: [],
+      },
+      {
+        definition: {
+          id: 'empty',
+          display_name: 'Empty',
+          data_type: 'SELECT_STRING',
+          is_system: false,
+        },
+        property_options: [],
+      },
+    ];
+    const view = render(() => <MobileFilterDrawer />);
+
+    expect(screen.getByRole('radiogroup', { name: 'Ready' })).toBeTruthy();
+    expect(screen.getByRole('radio', { name: 'True' })).toBeTruthy();
+    expect(screen.getByRole('radio', { name: 'False' })).toBeTruthy();
+    expect(screen.getByRole('checkbox', { name: 'Open' })).toBeTruthy();
+    expect(screen.queryByText('Unsupported')).toBeNull();
+    expect(screen.queryByText('Empty')).toBeNull();
+
+    fireEvent.click(screen.getByRole('radio', { name: 'True' }));
+    expect(state.queryFilters.set).toHaveBeenLastCalledWith({
+      include: {
+        properties: [{ propertyId: 'ready', type: 'boolean', value: true }],
+      },
+    });
+    fireEvent.click(screen.getByRole('radio', { name: 'False' }));
+    expect(state.queryFilters.set).toHaveBeenLastCalledWith({
+      include: {
+        properties: [{ propertyId: 'ready', type: 'boolean', value: false }],
+      },
+    });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Open' }));
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Closed' }));
+    expect(state.queryFilters.set).toHaveBeenLastCalledWith({
+      include: {
+        properties: [
+          { propertyId: 'ready', type: 'boolean', value: false },
+          { propertyId: 'status', type: 'select', value: 'open' },
+          { propertyId: 'status', type: 'select', value: 'closed' },
+        ],
+      },
+    });
     view.unmount();
   });
 });

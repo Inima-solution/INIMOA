@@ -31,6 +31,7 @@ import { deepEqual } from '@core/util/compareUtils';
 import CircleDashedIcon from '@phosphor/circle-dashed.svg';
 import { SYSTEM_PROPERTY_IDS } from '@property/constants';
 import { useContacts } from '@queries/contacts/contacts';
+import { useListPropertiesQuery } from '@queries/properties/definitions';
 import { batch, createMemo, createSignal, type JSX } from 'solid-js';
 import type {
   ConsolidatedFilter,
@@ -39,6 +40,15 @@ import type {
 import { getSingleSelectFilterPlan } from './filter-categories';
 import type { SearchableOption } from './searchable-multi-select';
 import { useTagFilter } from './tag-filter';
+import {
+  isUnavailableTaskCustomProperty,
+  removeUnavailableTaskCustomProperties,
+  replaceTaskCustomPropertyValues,
+  selectedTaskCustomPropertyValues,
+  taskCustomProperties,
+  taskCustomPropertiesQueryArgs,
+  toggleTaskCustomPropertyValue,
+} from './task-custom-property-filter';
 import {
   buildContactLabel,
   VIEW_FILTER_CATEGORIES,
@@ -109,6 +119,13 @@ export function useFilterRefinements() {
 
     return content.id;
   });
+  const taskCustomPropertyQuery = useListPropertiesQuery(
+    taskCustomPropertiesQueryArgs,
+    () => currentView() === 'tasks'
+  );
+  const taskCustomPropertiesList = createMemo(() =>
+    taskCustomProperties(taskCustomPropertyQuery.data)
+  );
 
   const currentPreset = createMemo(() => {
     const view = currentView();
@@ -899,6 +916,86 @@ export function useFilterRefinements() {
       );
     };
 
+    const pushTaskCustomPropertyChips = () => {
+      if (view !== 'tasks') return;
+      const currentProperties = () => filterData().include.properties ?? [];
+      for (const property of taskCustomPropertiesList()) {
+        const key = `custom-property:${property.id}`;
+        const selected = () =>
+          selectedTaskCustomPropertyValues(currentProperties(), property);
+        if (selected().length === 0) continue;
+        seenKeys.add(key);
+        filters.push(
+          getOrCreateConsolidatedChip(key, () => ({
+            key,
+            categoryLabel: property.label,
+            values: () =>
+              selected().flatMap((id) => {
+                const option = property.options.find(
+                  (candidate) => candidate.id === id
+                );
+                return option ? [{ id, label: option.label }] : [];
+              }),
+            availableOptions: property.options.map((option) => ({
+              id: option.id,
+              label: option.label,
+            })),
+            multiple: property.type === 'select',
+            isValueActive: (id) => selected().includes(id),
+            onToggleValue: (id) => {
+              const current = selected();
+              queryFilters.set({
+                include: {
+                  properties: replaceTaskCustomPropertyValues(
+                    currentProperties(),
+                    property,
+                    toggleTaskCustomPropertyValue(current, property, id)
+                  ),
+                },
+              });
+            },
+            onRemoveAll: () =>
+              queryFilters.set({
+                include: {
+                  properties: replaceTaskCustomPropertyValues(
+                    currentProperties(),
+                    property,
+                    []
+                  ),
+                },
+              }),
+          }))
+        );
+      }
+
+      const unavailable = () =>
+        currentProperties().filter((filter) =>
+          isUnavailableTaskCustomProperty(filter, taskCustomPropertiesList())
+        );
+      if (unavailable().length === 0) return;
+      const key = 'custom-property:unavailable';
+      seenKeys.add(key);
+      filters.push(
+        getOrCreateConsolidatedChip(key, () => ({
+          key,
+          categoryLabel: 'Unavailable custom property',
+          values: () => [
+            { id: 'unavailable', label: 'Unavailable custom property' },
+          ],
+          onRemoveAll: () => {
+            queryFilters.set({
+              include: {
+                properties: removeUnavailableTaskCustomProperties(
+                  currentProperties(),
+                  taskCustomPropertiesList()
+                ),
+              },
+            });
+          },
+        }))
+      );
+    };
+
     // Owner filter (consolidated) for the Customers view.
     const pushOwnerConsolidatedChip = () => {
       if (view !== 'companies') return;
@@ -1003,6 +1100,7 @@ export function useFilterRefinements() {
     pushStageConsolidatedChip();
     pushOwnerConsolidatedChip();
     pushTagsConsolidatedChip();
+    pushTaskCustomPropertyChips();
 
     // Evict stale chips
     for (const key of consolidatedChipCache.keys()) {

@@ -42,11 +42,19 @@ import PlusIcon from '@phosphor/plus.svg';
 import XIcon from '@phosphor/x.svg';
 import SlidersHorizontalIcon from '@phosphor-icons/core/regular/sliders-horizontal.svg?component-solid';
 import { useContacts } from '@queries/contacts/contacts';
+import { useListPropertiesQuery } from '@queries/properties/definitions';
 import { Button, cn } from '@ui';
 import { batch, createMemo, createSignal, For, Show } from 'solid-js';
 import { ConsolidatedFilterChip } from './consolidated-filter-chip';
 import { getSingleSelectFilterPlan } from './filter-categories';
 import { useInboxPicker } from './inbox-picker';
+import {
+  replaceTaskCustomPropertyValues,
+  selectedTaskCustomPropertyValues,
+  taskCustomProperties,
+  taskCustomPropertiesQueryArgs,
+  toggleTaskCustomPropertyValue,
+} from './task-custom-property-filter';
 import {
   buildContactLabel,
   type FilterOption,
@@ -111,6 +119,13 @@ export const MobileFilterDrawer = (props: {
   });
 
   const isTasksView = () => currentView() === 'tasks';
+  const taskCustomPropertyQuery = useListPropertiesQuery(
+    taskCustomPropertiesQueryArgs,
+    isTasksView
+  );
+  const taskCustomPropertiesList = createMemo(() =>
+    taskCustomProperties(taskCustomPropertyQuery.data)
+  );
   const isDocumentsView = () => currentView() === 'documents';
   const isCreatedByFilterView = () => {
     const view = currentView();
@@ -741,6 +756,107 @@ export const MobileFilterDrawer = (props: {
                         </Show>
                       </Accordion.Content>
                     </MobileDrawer.Section>
+                  </Show>
+                  <Show when={taskCustomPropertiesList().length > 0}>
+                    <For each={taskCustomPropertiesList()}>
+                      {(property) => (
+                        <MobileDrawer.Section
+                          as={Accordion.Item}
+                          value={`custom-property-${property.id}`}
+                        >
+                          <Accordion.Header>
+                            <Accordion.Trigger class="w-full flex items-center justify-between p-3 text-sm text-ink hover:bg-hover transition-colors outline-none group bg-surface mb-px">
+                              <span class="font-medium truncate">
+                                {property.label}
+                              </span>
+                              <ChevronDownIcon class="size-3.5 text-ink-muted transition-transform duration-200 group-data-expanded:rotate-180" />
+                            </Accordion.Trigger>
+                          </Accordion.Header>
+                          <Accordion.Content>
+                            <div
+                              role={
+                                property.type === 'boolean'
+                                  ? 'radiogroup'
+                                  : undefined
+                              }
+                              aria-label={
+                                property.type === 'boolean'
+                                  ? property.label
+                                  : undefined
+                              }
+                            >
+                              <For each={property.options}>
+                                {(option) => {
+                                  const active = () =>
+                                    selectedTaskCustomPropertyValues(
+                                      queryFilters.state.include.properties,
+                                      property
+                                    ).includes(option.id);
+                                  return (
+                                    <button
+                                      type="button"
+                                      role={
+                                        property.type === 'boolean'
+                                          ? 'radio'
+                                          : 'checkbox'
+                                      }
+                                      aria-checked={active()}
+                                      class="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-hover transition-colors text-left bg-surface not-last:mb-px"
+                                      onClick={() => {
+                                        const selected =
+                                          selectedTaskCustomPropertyValues(
+                                            queryFilters.state.include
+                                              .properties,
+                                            property
+                                          );
+                                        queryFilters.set({
+                                          include: {
+                                            properties:
+                                              replaceTaskCustomPropertyValues(
+                                                queryFilters.state.include
+                                                  .properties,
+                                                property,
+                                                toggleTaskCustomPropertyValue(
+                                                  selected,
+                                                  property,
+                                                  option.id
+                                                )
+                                              ),
+                                          },
+                                        });
+                                      }}
+                                    >
+                                      <span
+                                        class={cn(
+                                          'size-4 flex items-center justify-center shrink-0 rounded border',
+                                          active()
+                                            ? 'bg-accent border-accent'
+                                            : 'border-edge'
+                                        )}
+                                      >
+                                        <Show when={active()}>
+                                          <CheckIcon class="size-2.5 text-surface" />
+                                        </Show>
+                                      </span>
+                                      <span
+                                        class={cn(
+                                          'flex-1 truncate',
+                                          active()
+                                            ? 'text-ink'
+                                            : 'text-ink-muted'
+                                        )}
+                                      >
+                                        {option.label}
+                                      </span>
+                                    </button>
+                                  );
+                                }}
+                              </For>
+                            </div>
+                          </Accordion.Content>
+                        </MobileDrawer.Section>
+                      )}
+                    </For>
                   </Show>
 
                   {/* Created by section for Tasks and Files */}

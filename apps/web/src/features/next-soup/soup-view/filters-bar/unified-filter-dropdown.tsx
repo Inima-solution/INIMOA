@@ -39,6 +39,7 @@ import { PropertyValueIcon } from '@property/component/propertyValue/PropertyVal
 import { PROPERTY_OPTION_IDS, SYSTEM_PROPERTY_IDS } from '@property/constants';
 import { useGithubLinkStatusQuery } from '@queries/auth';
 import { useContacts } from '@queries/contacts/contacts';
+import { useListPropertiesQuery } from '@queries/properties/definitions';
 import { useCurrentTeamQuery } from '@queries/team/teams';
 import { cn, Dropdown, Tooltip } from '@ui';
 import {
@@ -64,6 +65,14 @@ import {
   type SearchableOption,
 } from './searchable-multi-select';
 import { useTagFilter } from './tag-filter';
+import {
+  replaceTaskCustomPropertyValues,
+  selectedTaskCustomPropertyValues,
+  type TaskCustomProperty,
+  taskCustomProperties,
+  taskCustomPropertiesQueryArgs,
+  toggleTaskCustomPropertyValue,
+} from './task-custom-property-filter';
 
 export type { FilterCategory, FilterOption } from './filter-categories';
 
@@ -81,6 +90,88 @@ export const TypeIndicator = (props: { active: boolean }) => (
     </Show>
   </span>
 );
+
+const TaskCustomPropertySubmenu = (props: { property: TaskCustomProperty }) => {
+  const { queryFilters } = useSoupView();
+  const selected = () =>
+    selectedTaskCustomPropertyValues(
+      queryFilters.state.include.properties,
+      props.property
+    );
+  const toggle = (id: string) => {
+    const current = selected();
+    queryFilters.set({
+      include: {
+        properties: replaceTaskCustomPropertyValues(
+          queryFilters.state.include.properties,
+          props.property,
+          toggleTaskCustomPropertyValue(current, props.property, id)
+        ),
+      },
+    });
+  };
+  const selectBoolean = (id: string) => {
+    queryFilters.set({
+      include: {
+        properties: replaceTaskCustomPropertyValues(
+          queryFilters.state.include.properties,
+          props.property,
+          [id]
+        ),
+      },
+    });
+  };
+  return (
+    <Dropdown.Sub>
+      <Dropdown.SubTrigger>
+        <span class="text-ink truncate">{props.property.label}</span>
+        <CaretRightIcon class="size-3 text-ink-muted" />
+      </Dropdown.SubTrigger>
+      <Dropdown.SubContent>
+        <Show
+          when={props.property.type === 'boolean'}
+          fallback={
+            <Dropdown.Group>
+              <For each={props.property.options}>
+                {(option) => {
+                  const active = () => selected().includes(option.id);
+                  return (
+                    <Dropdown.Item onSelect={() => toggle(option.id)}>
+                      <TypeIndicator active={active()} />
+                      <span
+                        class={cn(
+                          'flex-1 truncate',
+                          active() ? 'text-ink' : 'text-ink-muted'
+                        )}
+                      >
+                        {option.label}
+                      </span>
+                    </Dropdown.Item>
+                  );
+                }}
+              </For>
+            </Dropdown.Group>
+          }
+        >
+          <Dropdown.Group>
+            <Dropdown.RadioGroup value={selected()[0]} onChange={selectBoolean}>
+              <For each={props.property.options}>
+                {(option) => (
+                  <Dropdown.RadioItem value={option.id}>
+                    <span class="flex-1 truncate">{option.label}</span>
+                    <Dropdown.ItemIndicator>
+                      <CheckIcon class="size-3.5 text-accent" />
+                    </Dropdown.ItemIndicator>
+                  </Dropdown.RadioItem>
+                )}
+              </For>
+            </Dropdown.RadioGroup>
+          </Dropdown.Group>
+        </Show>
+      </Dropdown.SubContent>
+    </Dropdown.Sub>
+  );
+};
 
 // Sub-trigger rows differ from default Dropdown.Item only by
 // distributing label + caret to the row ends.
@@ -600,6 +691,13 @@ export const UnifiedFilterDropdown = (
   });
 
   const isInboxView = () => currentView() === 'inbox';
+  const taskCustomPropertyQuery = useListPropertiesQuery(
+    taskCustomPropertiesQueryArgs,
+    () => currentView() === 'tasks'
+  );
+  const taskCustomPropertyDefinitions = createMemo(() =>
+    taskCustomProperties(taskCustomPropertyQuery.data)
+  );
   const githubLinkStatus = useGithubLinkStatusQuery({
     enabled: () => currentView() === 'inbox',
   });
@@ -1102,6 +1200,25 @@ export const UnifiedFilterDropdown = (
                       onChange={handleAssigneeChange}
                       placeholder="Search assignees..."
                     />
+                    <Show when={taskCustomPropertyDefinitions().length > 0}>
+                      <Dropdown.Sub>
+                        <Dropdown.SubTrigger>
+                          <span class="text-ink">Custom properties</span>
+                          <CaretRightIcon class="size-3 text-ink-muted" />
+                        </Dropdown.SubTrigger>
+                        <Dropdown.SubContent>
+                          <Dropdown.Group>
+                            <For each={taskCustomPropertyDefinitions()}>
+                              {(property) => (
+                                <TaskCustomPropertySubmenu
+                                  property={property}
+                                />
+                              )}
+                            </For>
+                          </Dropdown.Group>
+                        </Dropdown.SubContent>
+                      </Dropdown.Sub>
+                    </Show>
                   </Show>
 
                   <Show when={showCreatedByFilter()}>
