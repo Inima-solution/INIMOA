@@ -32,8 +32,8 @@ use uuid::Uuid;
 
 use super::models::{
     CreateProjectArgs, EditProjectArgs, MarkedUploadedTree, MutatedProject, ProjectError,
-    ProjectOperations, ProjectOverview, ProjectOverviewSnapshot, PurgedProjectTree,
-    PurgedProjectTreeWithRoot, RevertDeleteResult, SoftDeleteResult,
+    ProjectOperations, ProjectOverview, ProjectOverviewSnapshot, ProjectTaskProgress,
+    PurgedProjectTree, PurgedProjectTreeWithRoot, RevertDeleteResult, SoftDeleteResult,
     UpdateProjectOperationsCommand, UpdateProjectOperationsOutcome, UpdateProjectOperationsRequest,
     UploadFolderRepoArgs,
 };
@@ -78,6 +78,13 @@ pub trait ProjectRepo: Send + Sync + 'static {
         project_id: &str,
         team_id: Uuid,
     ) -> impl Future<Output = Result<Option<ProjectOverviewSnapshot>, Self::Err>> + Send;
+
+    /// Get bounded direct-task progress only when the active owner team matches `team_id`.
+    fn get_project_task_progress_scoped(
+        &self,
+        project_id: &str,
+        team_id: Uuid,
+    ) -> impl Future<Output = Result<Option<ProjectTaskProgress>, Self::Err>> + Send;
 
     /// Atomically replace one project's operational state and write its audit fact.
     fn update_project_operations(
@@ -487,4 +494,17 @@ pub trait ProjectService: Send + Sync + 'static {
         &self,
         project_id: &str,
     ) -> impl Future<Output = Result<BasicProject, ProjectError>> + Send;
+}
+
+/// Narrow inbound read port for bounded project task progress.
+///
+/// Kept separate from [`ProjectService`] so existing inbound implementations do
+/// not gain a new required method before an API boundary is explicitly added.
+pub trait ProjectTaskProgressService: Send + Sync + 'static {
+    /// Reads aggregate direct-task progress after project and company access verification.
+    fn get_project_task_progress(
+        &self,
+        receipt: EntityAccessReceipt<ViewAccessLevel>,
+        company_receipt: EntityAccessReceipt<ReadProjectWorkScoped>,
+    ) -> impl Future<Output = Result<ProjectTaskProgress, ProjectError>> + Send;
 }

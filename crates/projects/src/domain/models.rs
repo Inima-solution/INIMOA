@@ -193,6 +193,53 @@ pub struct ProjectOverviewSnapshot {
     pub immediate_children: ProjectOverviewImmediateChildren,
 }
 
+/// Bounded progress totals for the live direct tasks of one project.
+///
+/// This deliberately contains only aggregate facts: it cannot disclose task
+/// identifiers, names, or individual status values.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectTaskProgress {
+    /// Direct live tasks whose exact singleton status is Completed.
+    pub completed_tasks: i64,
+    /// Direct live tasks included in progress; canceled tasks are excluded.
+    pub included_tasks: i64,
+    /// At least one included task had an unusable status representation.
+    pub has_unavailable_statuses: bool,
+}
+
+impl ProjectTaskProgress {
+    /// Builds a bounded progress result while preserving its aggregate invariant.
+    pub fn new(
+        completed_tasks: i64,
+        included_tasks: i64,
+        has_unavailable_statuses: bool,
+    ) -> Result<Self, ProjectTaskProgressValidationError> {
+        if completed_tasks < 0 || included_tasks < 0 || completed_tasks > included_tasks {
+            return Err(ProjectTaskProgressValidationError::InvalidTotals);
+        }
+        if included_tasks == 0 && has_unavailable_statuses {
+            return Err(ProjectTaskProgressValidationError::UnavailableWithoutIncludedTask);
+        }
+        Ok(Self {
+            completed_tasks,
+            included_tasks,
+            has_unavailable_statuses,
+        })
+    }
+}
+
+/// Invalid aggregate task-progress totals.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum ProjectTaskProgressValidationError {
+    /// Completed tasks cannot be negative or exceed included tasks.
+    #[error("completed task totals must be between zero and included task totals")]
+    InvalidTotals,
+    /// A zero included-task result cannot have an unavailable task status.
+    #[error("unavailable statuses require at least one included task")]
+    UnavailableWithoutIncludedTask,
+}
+
 /// The authoritative root metadata captured with a committed project-tree purge.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PurgedProjectTreeWithRoot {

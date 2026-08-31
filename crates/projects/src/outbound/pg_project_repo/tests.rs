@@ -23,6 +23,111 @@ const ROOT_ID: &str = "10000000-0000-0000-0000-000000000001";
 const CHILD_ID: &str = "10000000-0000-0000-0000-000000000002";
 const DELETED_ID: &str = "10000000-0000-0000-0000-000000000009";
 
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn task_progress_is_scoped_and_aggregates_only_live_direct_canonical_tasks(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let repo = PgProjectRepo::new(pool.clone());
+    let team_id = uuid::Uuid::from_u128(309);
+    sqlx::query(r#"INSERT INTO "team" (id, name, owner_id) VALUES ($1, 'task-progress', 'macro|owner@test.com')"#)
+        .bind(team_id).execute(&pool).await?;
+    sqlx::query("INSERT INTO team_user (user_id, team_id, team_role) VALUES ($1, $2, 'owner')")
+        .bind("macro|owner@test.com")
+        .bind(team_id)
+        .execute(&pool)
+        .await?;
+    let ids = [
+        "301", "302", "303", "304", "305", "306", "307", "308", "309", "310", "311",
+    ];
+    for (index, suffix) in ids.into_iter().enumerate() {
+        let id = format!("20000000-0000-0000-0000-000000000{suffix}");
+        let (project_id, deleted) = if index == 7 {
+            (CHILD_ID, None)
+        } else if index == 8 {
+            (ROOT_ID, Some("2026-09-01"))
+        } else {
+            (ROOT_ID, None)
+        };
+        sqlx::query(r#"INSERT INTO "Document" (id, name, owner, "projectId", "deletedAt") VALUES ($1, $2, 'macro|owner@test.com', $3, $4::timestamp)"#)
+            .bind(&id).bind(format!("task-{index}")).bind(project_id).bind(deleted).execute(&pool).await?;
+        sqlx::query("INSERT INTO document_sub_type (document_id, sub_type) VALUES ($1, 'task'::document_sub_type_value)")
+            .bind(&id).execute(&pool).await?;
+        if index < 5 || index == 6 || index > 8 {
+            let values = match index {
+                0 => {
+                    serde_json::json!({"type":"SelectOption","value":[system_properties::StatusOption::COMPLETED_UUID]})
+                }
+                1 => {
+                    serde_json::json!({"type":"SelectOption","value":[system_properties::StatusOption::CANCELED_UUID]})
+                }
+                2 => serde_json::Value::Null,
+                3 => serde_json::json!({"type":"SelectOption","value":[]}),
+                4 => {
+                    serde_json::json!({"type":"SelectOption","value":[uuid::Uuid::from_u128(999)]})
+                }
+                9 => {
+                    serde_json::json!({"type":"Boolean","value":true})
+                }
+                10 => {
+                    serde_json::json!({"type":"SelectOption","value":[system_properties::StatusOption::COMPLETED_UUID, system_properties::StatusOption::IN_PROGRESS_UUID]})
+                }
+                _ => {
+                    serde_json::json!({"type":"SelectOption","value":[system_properties::StatusOption::IN_PROGRESS_UUID]})
+                }
+            };
+            sqlx::query("INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)")
+                .bind(uuid::Uuid::new_v4()).bind(&id).bind(system_properties::SystemPropertyKey::STATUS_UUID).bind(values).execute(&pool).await?;
+        }
+    }
+    sqlx::query(r#"INSERT INTO "Document" (id, name, owner, "projectId") VALUES ('20000000-0000-0000-0000-000000000312', 'non-task', 'macro|owner@test.com', $1)"#)
+        .bind(ROOT_ID).execute(&pool).await?;
+    let zero_task_project = "10000000-0000-0000-0000-000000000310";
+    let departed_owner_project = "10000000-0000-0000-0000-000000000311";
+    let deleted_project = "10000000-0000-0000-0000-000000000312";
+    for (id, owner, deleted_at) in [
+        (zero_task_project, "macro|owner@test.com", None),
+        (departed_owner_project, "macro|viewer@test.com", None),
+        (deleted_project, "macro|owner@test.com", Some("2026-09-01")),
+    ] {
+        sqlx::query(r#"INSERT INTO "Project" (id, name, "userId", "deletedAt") VALUES ($1, $2, $3, $4::timestamp)"#)
+            .bind(id).bind(format!("task-progress-{id}")).bind(owner).bind(deleted_at).execute(&pool).await?;
+    }
+    let progress = repo
+        .get_project_task_progress_scoped(ROOT_ID, team_id)
+        .await?
+        .unwrap();
+    assert_eq!(
+        (
+            progress.completed_tasks,
+            progress.included_tasks,
+            progress.has_unavailable_statuses
+        ),
+        (1, 8, true)
+    );
+    assert_eq!(
+        repo.get_project_task_progress_scoped(ROOT_ID, uuid::Uuid::from_u128(310))
+            .await?,
+        None
+    );
+    assert_eq!(
+        repo.get_project_task_progress_scoped(zero_task_project, team_id)
+            .await?,
+        Some(crate::domain::models::ProjectTaskProgress::new(
+            0, 0, false
+        )?)
+    );
+    for id in ["missing", deleted_project, departed_owner_project] {
+        assert_eq!(
+            repo.get_project_task_progress_scoped(id, team_id).await?,
+            None
+        );
+    }
+    Ok(())
+}
+
 #[derive(Debug, Eq, PartialEq)]
 struct StoredSharePermission {
     link_share: Option<String>,

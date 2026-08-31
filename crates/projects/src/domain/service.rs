@@ -33,13 +33,13 @@ use super::events::{
 };
 use super::models::{
     CreateProjectArgs, EditProjectArgs, ProjectError, ProjectOperations, ProjectOverview,
-    PurgedProjectTree, PurgedProjectTreeWithRoot, RevertDeleteResult, SoftDeleteResult,
-    UpdateProjectOperationsCommand, UpdateProjectOperationsOutcome, UpdateProjectOperationsRequest,
-    UploadFolderRepoArgs,
+    ProjectTaskProgress, PurgedProjectTree, PurgedProjectTreeWithRoot, RevertDeleteResult,
+    SoftDeleteResult, UpdateProjectOperationsCommand, UpdateProjectOperationsOutcome,
+    UpdateProjectOperationsRequest, UploadFolderRepoArgs,
 };
 use super::ports::{
-    BulkUploadRequestPort, ProjectRepo, ProjectSearchIndexer, ProjectService, ProjectUploadUrlPort,
-    ShaCounterPort,
+    BulkUploadRequestPort, ProjectRepo, ProjectSearchIndexer, ProjectService,
+    ProjectTaskProgressService, ProjectUploadUrlPort, ShaCounterPort,
 };
 use super::upload::{build_destination_map, build_root_folder};
 
@@ -940,6 +940,38 @@ where
             .await
             .map_err(|error| internal_error(error, "unable to get basic project"))?
             .ok_or_else(|| ProjectError::NotFound(project_id.to_string()))
+    }
+}
+
+impl<R, U, D, Sha, Eam, Idx, B> ProjectTaskProgressService
+    for ProjectServiceImpl<R, U, D, Sha, Eam, Idx, B>
+where
+    R: ProjectRepo,
+    U: ProjectUploadUrlPort,
+    D: BulkUploadRequestPort,
+    Sha: ShaCounterPort,
+    Eam: EntityAccessManagementService,
+    Idx: ProjectSearchIndexer,
+    B: MacroEventBroker,
+{
+    async fn get_project_task_progress(
+        &self,
+        receipt: EntityAccessReceipt<ViewAccessLevel>,
+        company_receipt: EntityAccessReceipt<ReadProjectWorkScoped>,
+    ) -> Result<ProjectTaskProgress, ProjectError> {
+        let actor = receipt
+            .get_authenticated_user()
+            .map_err(|_| ProjectError::Unauthorized)?;
+        let team_id = verified_company_team(&company_receipt, actor)?;
+        if receipt.entity().entity_type != EntityType::Project {
+            return Err(ProjectError::Unauthorized);
+        }
+        let project_id = &receipt.entity().entity_id;
+        self.repo
+            .get_project_task_progress_scoped(project_id, team_id)
+            .await
+            .map_err(|error| internal_error(error, "unable to get project task progress"))?
+            .ok_or_else(|| ProjectError::NotFound(project_id.clone()))
     }
 }
 

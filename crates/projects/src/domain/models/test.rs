@@ -5,7 +5,8 @@ use serde_json::json;
 
 use super::{
     ProjectOperationalStatus, ProjectOperations, ProjectOperationsValidationError, ProjectOverview,
-    ProjectOverviewImmediateChildren, ProjectPriority, ReplaceProjectOperationsArgs,
+    ProjectOverviewImmediateChildren, ProjectPriority, ProjectTaskProgress,
+    ProjectTaskProgressValidationError, ReplaceProjectOperationsArgs,
     is_valid_operations_transition,
 };
 use model::project::Project;
@@ -14,6 +15,23 @@ use utoipa::PartialSchema;
 
 fn timestamp(value: &str) -> DateTime<Utc> {
     value.parse().unwrap()
+}
+
+#[test]
+fn task_progress_serializes_only_aggregate_totals_and_enforces_invariants() {
+    let zero = ProjectTaskProgress::new(0, 0, false).unwrap();
+    assert_eq!(
+        serde_json::to_value(&zero).unwrap(),
+        json!({"completedTasks": 0, "includedTasks": 0, "hasUnavailableStatuses": false})
+    );
+    assert!(matches!(
+        ProjectTaskProgress::new(2, 1, false),
+        Err(ProjectTaskProgressValidationError::InvalidTotals)
+    ));
+    assert!(matches!(
+        ProjectTaskProgress::new(0, 0, true),
+        Err(ProjectTaskProgressValidationError::UnavailableWithoutIncludedTask)
+    ));
 }
 
 fn operations(
