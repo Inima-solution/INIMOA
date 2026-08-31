@@ -97,6 +97,42 @@ export type MilestoneDependencyReadiness = {
 
 export type MilestoneState = 'milestone' | 'at-risk' | 'overdue' | 'complete';
 
+export type TaskScheduleProjection =
+  | { kind: 'unscheduled' }
+  | { kind: 'deadline'; dueDate: Date }
+  | { kind: 'span'; startDate: Date; dueDate: Date }
+  | { kind: 'invalid-range'; startDate: Date; dueDate: Date };
+
+/**
+ * Parses only the exact Date property value shape used by task date fields.
+ */
+const parseDatePropertyValue = (value: unknown): Date | undefined => {
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    !('type' in value) ||
+    !('value' in value) ||
+    value.type !== 'Date' ||
+    typeof value.value !== 'string'
+  ) {
+    return undefined;
+  }
+
+  const date = new Date(value.value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+};
+
+/**
+ * Gets the local calendar-day key used by deadline timeline grouping.
+ */
+export const getLocalDateKey = (date: Date): string => {
+  return [date.getFullYear(), date.getMonth() + 1, date.getDate()]
+    .map((part, index) =>
+      index === 0 ? String(part) : String(part).padStart(2, '0')
+    )
+    .join('-');
+};
+
 /**
  * Extracts assignee user ids from task properties.
  */
@@ -172,13 +208,44 @@ export const getTaskDueDate = (
     SYSTEM_PROPERTY_IDS.DUE_DATE
   );
 
-  const value = dueDateProperty?.value;
-  if (value?.type !== 'Date' || typeof value.value !== 'string') {
-    return undefined;
+  return parseDatePropertyValue(dueDateProperty?.value);
+};
+
+/**
+ * Gets a valid start date from the exact Date property shape.
+ */
+export const getTaskStartDate = (
+  entity: TaskEntityWithProperties
+): Date | undefined => {
+  const startDateProperty = getTaskPropertyByDefinitionId(
+    entity,
+    SYSTEM_PROPERTY_IDS.START_DATE
+  );
+
+  return parseDatePropertyValue(startDateProperty?.value);
+};
+
+/**
+ * Projects task dates into the small set of timeline schedule states.
+ */
+export const getTaskScheduleProjection = (
+  entity: TaskEntityWithProperties
+): TaskScheduleProjection => {
+  const dueDate = getTaskDueDate(entity);
+  if (!dueDate) {
+    return { kind: 'unscheduled' };
   }
 
-  const dueDate = new Date(value.value);
-  return Number.isNaN(dueDate.getTime()) ? undefined : dueDate;
+  const startDate = getTaskStartDate(entity);
+  if (!startDate || getLocalDateKey(startDate) === getLocalDateKey(dueDate)) {
+    return { kind: 'deadline', dueDate };
+  }
+
+  if (getLocalDateKey(startDate) < getLocalDateKey(dueDate)) {
+    return { kind: 'span', startDate, dueDate };
+  }
+
+  return { kind: 'invalid-range', startDate, dueDate };
 };
 
 /**

@@ -1,6 +1,11 @@
 import { LoadingBlock } from '@core/component/LoadingBlock';
 import { Entity, type TaskEntityWithProperties } from '@entity';
-import { getTaskDueDate, isTaskMilestone } from '@entity/utils/task-properties';
+import {
+  getLocalDateKey,
+  getTaskDueDate,
+  getTaskScheduleProjection,
+  isTaskMilestone,
+} from '@entity/utils/task-properties';
 import { Button, EmptyStatePanel } from '@ui';
 import { createUniqueId, For, Show } from 'solid-js';
 
@@ -14,14 +19,6 @@ const dateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: 'medium',
 });
 
-function localDateKey(date: Date) {
-  return [date.getFullYear(), date.getMonth() + 1, date.getDate()]
-    .map((part, index) =>
-      index === 0 ? String(part) : String(part).padStart(2, '0')
-    )
-    .join('-');
-}
-
 function groupTasks(tasks: TaskEntityWithProperties[]): DeadlineGroup[] {
   const scheduled = new Map<string, DeadlineGroup>();
   const unscheduled: TaskEntityWithProperties[] = [];
@@ -32,7 +29,7 @@ function groupTasks(tasks: TaskEntityWithProperties[]): DeadlineGroup[] {
       unscheduled.push(task);
       continue;
     }
-    const id = localDateKey(dueDate);
+    const id = getLocalDateKey(dueDate);
     const group = scheduled.get(id) ?? {
       id,
       label: dateFormatter.format(dueDate),
@@ -124,27 +121,60 @@ export function ProjectTaskDeadlineTimeline(props: {
                   </header>
                   <ul class="py-1" aria-labelledby={headingId}>
                     <For each={group.tasks}>
-                      {(task) => (
-                        <li>
-                          <button
-                            type="button"
-                            class="flex min-h-10 w-full min-w-0 items-center gap-2 px-3 py-1 text-left text-sm text-ink hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 touch:min-h-11"
-                            onClick={(event) => props.onOpenTask(task, event)}
-                          >
-                            <span class="size-4 shrink-0">
-                              <Entity.Icon entity={task} />
-                            </span>
-                            <span class="min-w-0 flex-1 truncate">
-                              <Entity.Title entity={task} />
-                            </span>
-                            <Show when={isTaskMilestone(task)}>
-                              <span class="shrink-0 text-xs text-ink-muted">
-                                Milestone
-                              </span>
-                            </Show>
-                          </button>
-                        </li>
-                      )}
+                      {(task) =>
+                        (() => {
+                          const schedule = getTaskScheduleProjection(task);
+                          const scheduleText = () => {
+                            if (schedule.kind === 'span') {
+                              return `${dateFormatter.format(schedule.startDate)} – ${dateFormatter.format(schedule.dueDate)}`;
+                            }
+                            if (schedule.kind === 'invalid-range') {
+                              return 'Start date is after due date';
+                            }
+                            return undefined;
+                          };
+                          const scheduleAccessibleLabel = () => {
+                            if (schedule.kind === 'span') {
+                              return `Start ${dateFormatter.format(schedule.startDate)}; due ${dateFormatter.format(schedule.dueDate)}`;
+                            }
+                            return scheduleText();
+                          };
+
+                          return (
+                            <li>
+                              <button
+                                type="button"
+                                class="flex min-h-10 w-full min-w-0 items-center gap-2 px-3 py-1 text-left text-sm text-ink hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 touch:min-h-11"
+                                onClick={(event) =>
+                                  props.onOpenTask(task, event)
+                                }
+                              >
+                                <span class="size-4 shrink-0">
+                                  <Entity.Icon entity={task} />
+                                </span>
+                                <span class="min-w-0 flex-1 truncate">
+                                  <Entity.Title entity={task} />
+                                </span>
+                                <Show when={scheduleText()}>
+                                  {(text) => (
+                                    <span
+                                      aria-label={scheduleAccessibleLabel()}
+                                      class="max-w-40 min-w-0 truncate text-xs text-ink-muted"
+                                    >
+                                      {text()}
+                                    </span>
+                                  )}
+                                </Show>
+                                <Show when={isTaskMilestone(task)}>
+                                  <span class="shrink-0 text-xs text-ink-muted">
+                                    Milestone
+                                  </span>
+                                </Show>
+                              </button>
+                            </li>
+                          );
+                        })()
+                      }
                     </For>
                   </ul>
                 </div>

@@ -1,11 +1,18 @@
-import { PROPERTY_OPTION_IDS, SYSTEM_PROPERTY_IDS } from '@property/constants';
+import {
+  getBuiltinPropertyIds,
+  PROPERTY_OPTION_IDS,
+  SYSTEM_PROPERTY_IDS,
+} from '@property/constants';
 import type { SoupProperty } from '@service-storage/generated/schemas';
 import { describe, expect, it } from 'vitest';
 import type { TaskEntityWithProperties } from '../types/entity';
 import {
+  getLocalDateKey,
   getTaskAssigneeIds,
   getTaskDueDate,
   getTaskMilestoneState,
+  getTaskScheduleProjection,
+  getTaskStartDate,
   getTaskStatusOptionId,
   isCurrentUserAssigned,
   isTaskClosed,
@@ -41,6 +48,139 @@ const createTask = (props?: {
 };
 
 describe('task property helpers', () => {
+  describe('task dates and schedule projection', () => {
+    it('keeps Start Date stable and includes it in task builtins', () => {
+      expect(SYSTEM_PROPERTY_IDS.START_DATE).toBe(
+        '00000001-0000-0000-0000-000000000014'
+      );
+      expect(getBuiltinPropertyIds('task')).toContain(
+        SYSTEM_PROPERTY_IDS.START_DATE
+      );
+      expect(getBuiltinPropertyIds('task').slice(-2)).toEqual([
+        SYSTEM_PROPERTY_IDS.MILESTONE,
+        SYSTEM_PROPERTY_IDS.START_DATE,
+      ]);
+    });
+
+    it('parses only valid Date values for start and due dates', () => {
+      const valid = '2026-08-30T12:00:00.000Z';
+      const entity = createTask({
+        properties: [
+          createSoupProperty(SYSTEM_PROPERTY_IDS.START_DATE, {
+            type: 'Date',
+            value: valid,
+          }),
+          createSoupProperty(SYSTEM_PROPERTY_IDS.DUE_DATE, {
+            type: 'Date',
+            value: valid,
+          }),
+        ],
+      });
+
+      expect(getTaskStartDate(entity)?.toISOString()).toBe(valid);
+      expect(getTaskDueDate(entity)?.toISOString()).toBe(valid);
+      expect(
+        getTaskStartDate(
+          createTask({
+            properties: [
+              createSoupProperty(SYSTEM_PROPERTY_IDS.START_DATE, {
+                type: 'Date',
+                value: 'not-a-date',
+              }),
+            ],
+          })
+        )
+      ).toBeUndefined();
+      expect(
+        getTaskStartDate(
+          createTask({
+            properties: [
+              createSoupProperty(SYSTEM_PROPERTY_IDS.START_DATE, {
+                type: 'Text',
+                value: valid,
+              }),
+            ],
+          })
+        )
+      ).toBeUndefined();
+    });
+
+    it('projects every start and due date schedule state', () => {
+      const date = (definitionId: string, value: string) =>
+        createSoupProperty(definitionId, { type: 'Date', value });
+      const start = '2026-08-30T12:00:00.000Z';
+      const due = '2026-08-31T12:00:00.000Z';
+
+      expect(
+        getTaskScheduleProjection(
+          createTask({
+            properties: [date(SYSTEM_PROPERTY_IDS.START_DATE, start)],
+          })
+        )
+      ).toEqual({ kind: 'unscheduled' });
+      expect(
+        getTaskScheduleProjection(
+          createTask({
+            properties: [date(SYSTEM_PROPERTY_IDS.DUE_DATE, due)],
+          })
+        )
+      ).toMatchObject({ kind: 'deadline' });
+      expect(getLocalDateKey(new Date('2026-08-30T23:00:00'))).toBe(
+        getLocalDateKey(new Date('2026-08-30T01:00:00'))
+      );
+      expect(
+        getTaskScheduleProjection(
+          createTask({
+            properties: [
+              date(SYSTEM_PROPERTY_IDS.START_DATE, '2026-08-30T23:00:00'),
+              date(SYSTEM_PROPERTY_IDS.DUE_DATE, '2026-08-30T01:00:00'),
+            ],
+          })
+        )
+      ).toMatchObject({ kind: 'deadline' });
+      expect(
+        getTaskScheduleProjection(
+          createTask({
+            properties: [
+              date(SYSTEM_PROPERTY_IDS.START_DATE, 'not-a-date'),
+              date(SYSTEM_PROPERTY_IDS.DUE_DATE, due),
+            ],
+          })
+        )
+      ).toMatchObject({ kind: 'deadline' });
+      expect(
+        getTaskScheduleProjection(
+          createTask({
+            properties: [
+              date(SYSTEM_PROPERTY_IDS.START_DATE, due),
+              date(SYSTEM_PROPERTY_IDS.DUE_DATE, due),
+            ],
+          })
+        )
+      ).toMatchObject({ kind: 'deadline' });
+      expect(
+        getTaskScheduleProjection(
+          createTask({
+            properties: [
+              date(SYSTEM_PROPERTY_IDS.START_DATE, start),
+              date(SYSTEM_PROPERTY_IDS.DUE_DATE, due),
+            ],
+          })
+        )
+      ).toMatchObject({ kind: 'span' });
+      expect(
+        getTaskScheduleProjection(
+          createTask({
+            properties: [
+              date(SYSTEM_PROPERTY_IDS.START_DATE, due),
+              date(SYSTEM_PROPERTY_IDS.DUE_DATE, start),
+            ],
+          })
+        )
+      ).toMatchObject({ kind: 'invalid-range' });
+    });
+  });
+
   describe('getTaskAssigneeIds', () => {
     it('returns only USER entity ids from assignees property', () => {
       const entity = createTask({

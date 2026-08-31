@@ -23,13 +23,20 @@ afterEach(cleanup);
 function task(
   name: string,
   dueDate?: unknown,
-  milestone = false
+  milestone = false,
+  startDate?: unknown
 ): TaskEntityWithProperties {
   const properties: SoupProperty[] = [];
   if (dueDate !== undefined) {
     properties.push({
       definition: { id: SYSTEM_PROPERTY_IDS.DUE_DATE },
       value: dueDate,
+    } as unknown as SoupProperty);
+  }
+  if (startDate !== undefined) {
+    properties.push({
+      definition: { id: SYSTEM_PROPERTY_IDS.START_DATE },
+      value: startDate,
     } as unknown as SoupProperty);
   }
   if (milestone) {
@@ -112,6 +119,67 @@ describe('ProjectTaskDeadlineTimeline', () => {
       ).map((button) => button.textContent)
     ).toEqual(['Missing', 'Malformed', 'Not Date']);
     expect(view.queryByText(/span/i)).toBeNull();
+  });
+
+  it('renders schedule spans and invalid ranges while keeping deadline points and unscheduled tasks neutral', () => {
+    const span = task(
+      'Span',
+      due('2026-04-12T08:00:00'),
+      false,
+      due('2026-04-10T08:00:00')
+    );
+    const point = task(
+      'Point',
+      due('2026-04-12T09:00:00'),
+      false,
+      due('2026-04-12T18:00:00')
+    );
+    const invalid = task(
+      'Invalid',
+      due('2026-04-12T10:00:00'),
+      false,
+      due('2026-04-13T10:00:00')
+    );
+    const unscheduled = task(
+      'Unscheduled with start',
+      undefined,
+      false,
+      due('2026-04-10T08:00:00')
+    );
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={[span, point, invalid, unscheduled]}
+        onOpenTask={() => {}}
+      />
+    ));
+
+    const startLabel = new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'medium',
+    }).format(new Date('2026-04-10T08:00:00'));
+    const dueLabel = new Intl.DateTimeFormat(undefined, {
+      dateStyle: 'medium',
+    }).format(new Date('2026-04-12T08:00:00'));
+    const formattedSpan = `${startLabel} – ${dueLabel}`;
+    const spanText = view.getByText(formattedSpan);
+    expect(spanText.classList.contains('text-ink-muted')).toBe(true);
+    expect(spanText.classList.contains('max-w-40')).toBe(true);
+    expect(spanText.classList.contains('min-w-0')).toBe(true);
+    expect(spanText.classList.contains('truncate')).toBe(true);
+    expect(spanText.getAttribute('aria-label')).toBe(
+      `Start ${startLabel}; due ${dueLabel}`
+    );
+    expect(
+      view.getByRole('button', {
+        name: `Span Start ${startLabel}; due ${dueLabel}`,
+      })
+    ).toBeTruthy();
+    expect(view.getByText('Start date is after due date')).toBeTruthy();
+    expect(view.getByRole('button', { name: 'Point' }).textContent).toBe(
+      'Point'
+    );
+    expect(
+      view.getByRole('button', { name: 'Unscheduled with start' }).textContent
+    ).toBe('Unscheduled with start');
   });
 
   it('uses instance-unique heading IDs while preserving each list association', () => {
