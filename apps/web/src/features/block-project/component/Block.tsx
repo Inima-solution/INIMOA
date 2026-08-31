@@ -45,6 +45,7 @@ import { TaskSubtaskProgressProvider } from '@property/task-subtask-progress';
 import type { Property } from '@property/types';
 import { useBulkSaveEntityPropertiesMutation } from '@queries/properties/entity';
 import { refetchSoupEntity } from '@queries/soup/cache';
+import { useProjectOverviewQuery } from '@queries/storage/project-overview';
 import { EntityType } from '@service-properties/generated/schemas/entityType';
 import { refetchResources } from '@service-storage/util/refetchResources';
 import { type Component, createMemo, createSignal, Show } from 'solid-js';
@@ -66,6 +67,10 @@ const Block: Component = () => {
   const [isDragging, setIsDragging] = createSignal(false);
   const projectId = useBlockId();
   const isSpecialProject = getIsSpecialProject(projectId);
+  // One shared observer keeps the Overview panel and Timeline on identical retained data.
+  const projectOverview = useProjectOverviewQuery(() =>
+    isSpecialProject ? undefined : projectId
+  );
   const [taskViewMode, setTaskViewMode] = useEntryState<ProjectTaskViewMode>(
     'project.taskViewMode',
     { default: 'list' }
@@ -149,7 +154,7 @@ const Block: Component = () => {
           </Show>
           <SidePanel.Layout defaultOpen={false}>
             <Show when={!isSpecialProject}>
-              <ProjectSidePanelSections />
+              <ProjectSidePanelSections query={projectOverview} />
             </Show>
             <div class="flex size-full min-w-0 flex-col overflow-hidden">
               <TopBar
@@ -161,6 +166,7 @@ const Block: Component = () => {
                 mode={viewMode()}
                 projectId={projectId}
                 soup={projectSoup}
+                projectOverview={projectOverview}
                 // Scope is already attached by the block container so we can use that
                 // Change this when we remove blocks
                 scopeId={blockHotkeyScopeSignal.get()}
@@ -178,6 +184,7 @@ const ProjectEntityList = (props: {
   scopeId: string;
   projectId: string;
   soup: SoupState;
+  projectOverview: ReturnType<typeof useProjectOverviewQuery>;
 }) => {
   return (
     <SoupContextProvider soup={props.soup}>
@@ -208,6 +215,7 @@ const ProjectEntityList = (props: {
           isSpecialProject={getIsSpecialProject(props.projectId)}
           mode={props.mode}
           scopeId={props.scopeId}
+          projectOverview={props.projectOverview}
         />
       </SoupViewContextProvider>
     </SoupContextProvider>
@@ -218,6 +226,7 @@ const ProjectSoupViewList = (props: {
   isSpecialProject: boolean;
   mode: ProjectTaskViewMode;
   scopeId: string;
+  projectOverview: ReturnType<typeof useProjectOverviewQuery>;
 }) => {
   const soupView = useSoupView();
   const { searchText, source, soup } = soupView;
@@ -384,6 +393,17 @@ const ProjectSoupViewList = (props: {
                 fetching={source.isFetching()}
                 fetchingNextPage={source.isFetchingNextPage()}
                 onLoadMore={loadMoreTasks}
+                projectStartDate={
+                  props.projectOverview.data?.operations.startDate
+                }
+                projectTargetDate={
+                  props.projectOverview.data?.operations.targetDate
+                }
+                rangeUnavailable={
+                  !props.projectOverview.data &&
+                  (props.projectOverview.isError ||
+                    props.projectOverview.isPending)
+                }
               />
             }
           >

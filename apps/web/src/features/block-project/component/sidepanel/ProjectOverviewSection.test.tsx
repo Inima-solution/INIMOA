@@ -135,7 +135,9 @@ function readyQuery(data: GetProjectOverview200DataOneOf = populatedOverview) {
 }
 
 function renderOverview() {
-  return render(() => <ProjectOverviewSection order={5} />);
+  return render(() => (
+    <ProjectOverviewSection order={5} query={mocks.query as never} />
+  ));
 }
 
 beforeEach(() => {
@@ -293,7 +295,7 @@ describe('ProjectOverviewSection', () => {
   });
 
   it('registers the default-open overview before Details', () => {
-    render(() => <ProjectSidePanelSections />);
+    render(() => <ProjectSidePanelSections query={mocks.query as never} />);
     const registrations = mocks.sections.mock.calls.map(([props]) => props);
     const overviewIndex = registrations.findIndex(
       (props) => props.id === 'project-overview'

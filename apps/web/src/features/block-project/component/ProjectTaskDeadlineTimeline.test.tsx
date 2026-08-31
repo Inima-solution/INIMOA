@@ -3,7 +3,7 @@
 import type { TaskEntityWithProperties } from '@entity';
 import { PROPERTY_OPTION_IDS, SYSTEM_PROPERTY_IDS } from '@property/constants';
 import type { SoupProperty } from '@service-storage/generated/schemas';
-import { cleanup, fireEvent, render } from '@solidjs/testing-library';
+import { cleanup, fireEvent, render, waitFor } from '@solidjs/testing-library';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ProjectTaskDeadlineTimeline } from './ProjectTaskDeadlineTimeline';
@@ -14,10 +14,17 @@ const mocks = vi.hoisted(() => ({
     task?: TaskEntityWithProperties;
     mode?: string;
   }>,
+  resizeCallbacks: [] as Array<(entry: { width: number }) => void>,
 }));
 
 vi.mock('@core/component/LoadingBlock', () => ({
   LoadingBlock: () => <div data-testid="loading-block">Loading tasks</div>,
+}));
+vi.mock('@solid-primitives/resize-observer', () => ({
+  createResizeObserver: (
+    _element: unknown,
+    callback: (entry: { width: number }) => void
+  ) => mocks.resizeCallbacks.push(callback),
 }));
 vi.mock('@entity', () => ({
   Entity: {
@@ -45,6 +52,8 @@ vi.mock('@property/task-dependency-relations', () => ({
 afterEach(() => {
   cleanup();
   mocks.relationCalls = [];
+  mocks.resizeCallbacks = [];
+  vi.useRealTimers();
 });
 
 function task(
@@ -467,5 +476,213 @@ describe('ProjectTaskDeadlineTimeline', () => {
     fireEvent.click(view.getByRole('button', { name: 'Retry' }));
     expect(onRetry).toHaveBeenCalledTimes(1);
     expect(onLoadMore).not.toHaveBeenCalled();
+  });
+
+  it('uses bounded responsive ruler scales with one accessible description', async () => {
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={[task('Visible', due('2026-04-10T08:00:00'))]}
+        projectStartDate="2026-01-01"
+        projectTargetDate="2026-04-02"
+        onOpenTask={() => {}}
+      />
+    ));
+    const ruler = () => view.getByRole('img', { name: /Project range/ });
+    expect(ruler().getAttribute('data-project-timeline-scale')).toBe(
+      'boundary'
+    );
+    expect(ruler().textContent).toMatch(/Jan|2026/);
+    const resize = (width: number) =>
+      mocks.resizeCallbacks.forEach((callback) => callback({ width }));
+    resize(10_000);
+    await waitFor(() =>
+      expect(ruler().getAttribute('data-project-timeline-scale')).toBe('week')
+    );
+    expect(ruler().textContent).toContain('Jan 1, 2026');
+    expect(ruler().textContent).toContain('Jan 7, 2026');
+    expect(mocks.resizeCallbacks.length).toBeGreaterThan(0);
+    resize(200);
+    await waitFor(() =>
+      expect(ruler().getAttribute('data-project-timeline-scale')).toBe(
+        'quarter'
+      )
+    );
+    expect(ruler().textContent).toContain('Q1 2026');
+    const quarterTicks = ruler().querySelectorAll('[aria-hidden="true"]');
+    expect(quarterTicks[0].getAttribute('style')).toContain('flex-grow: 90');
+    expect(quarterTicks[1].getAttribute('style')).toContain('flex-grow: 2');
+    expect(quarterTicks[0].getAttribute('style')).toContain('flex-basis: 0%');
+    expect(quarterTicks[1].getAttribute('style')).toContain('flex-basis: 0%');
+    resize(0);
+    await waitFor(() =>
+      expect(ruler().getAttribute('data-project-timeline-scale')).toBe(
+        'boundary'
+      )
+    );
+    expect(ruler().textContent).toContain('Jan 1, 2026');
+    expect(ruler().textContent).toContain('Apr 2, 2026');
+    expect(
+      ruler().querySelectorAll('[aria-hidden="true"]').length
+    ).toBeLessThanOrEqual(64);
+    expect(view.queryByRole('region', { name: /range/i })).toBeNull();
+  });
+
+  it('renders the day scale after a measured width change', async () => {
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={[task('Day', due('2026-01-02T08:00:00'))]}
+        projectStartDate="2026-01-01"
+        projectTargetDate="2026-01-03"
+        onOpenTask={() => {}}
+      />
+    ));
+    mocks.resizeCallbacks.forEach((callback) => callback({ width: 10_000 }));
+    await waitFor(() =>
+      expect(
+        view.getByRole('img').getAttribute('data-project-timeline-scale')
+      ).toBe('day')
+    );
+    expect(view.getByRole('img').textContent).toMatch(/Jan 1, 2026/);
+  });
+
+  it('renders the month scale after a measured width change', async () => {
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={[task('Month', due('2026-04-10T08:00:00'))]}
+        projectStartDate="2026-01-01"
+        projectTargetDate="2026-04-30"
+        onOpenTask={() => {}}
+      />
+    ));
+    mocks.resizeCallbacks.forEach((callback) => callback({ width: 360 }));
+    await waitFor(() =>
+      expect(
+        view.getByRole('img').getAttribute('data-project-timeline-scale')
+      ).toBe('month')
+    );
+    expect(view.getByRole('img').textContent).toMatch(/Jan 2026/);
+  });
+
+  it('uses fixed non-sensitive states for unavailable and incomplete ranges', () => {
+    const cases = [
+      {
+        projectStartDate: undefined,
+        projectTargetDate: undefined,
+        text: 'Project dates are not set.',
+      },
+      {
+        projectStartDate: 'invalid',
+        projectTargetDate: '2026-01-02',
+        text: 'Project date range is unavailable.',
+      },
+      {
+        projectStartDate: '2026-01-03',
+        projectTargetDate: '2026-01-02',
+        text: 'Project date range is unavailable.',
+      },
+      {
+        projectStartDate: '2026-01-02',
+        projectTargetDate: undefined,
+        text: 'Project date range is unavailable.',
+      },
+      {
+        projectStartDate: 'raw-secret',
+        projectTargetDate: '2026-01-02',
+        rangeUnavailable: true,
+        text: 'Project date range is unavailable.',
+      },
+    ];
+    for (const entry of cases) {
+      const view = render(() => (
+        <ProjectTaskDeadlineTimeline
+          tasks={[task('State')]}
+          onOpenTask={() => {}}
+          {...entry}
+        />
+      ));
+      expect(view.getByText(entry.text)).toBeTruthy();
+      expect(view.queryByText('raw-secret')).toBeNull();
+      view.unmount();
+    }
+  });
+
+  it('visibly states Today relations outside the range and keeps inside marker-only', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 0, 1, 12));
+    const before = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={[task('Before')]}
+        projectStartDate="2026-01-02"
+        projectTargetDate="2026-01-03"
+        onOpenTask={() => {}}
+      />
+    ));
+    expect(before.getByText('Today is before this range.')).toBeTruthy();
+    before.unmount();
+    vi.setSystemTime(new Date(2026, 0, 2, 12));
+    const inside = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={[task('Inside')]}
+        projectStartDate="2026-01-02"
+        projectTargetDate="2026-01-03"
+        onOpenTask={() => {}}
+      />
+    ));
+    expect(inside.queryByText(/Today is (before|after) this range/)).toBeNull();
+    expect(inside.getByRole('img').querySelector('.bg-accent')).toBeTruthy();
+    inside.unmount();
+    vi.setSystemTime(new Date(2026, 0, 4, 12));
+    const after = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={[task('After')]}
+        projectStartDate="2026-01-02"
+        projectTargetDate="2026-01-03"
+        onOpenTask={() => {}}
+      />
+    ));
+    expect(after.getByText('Today is after this range.')).toBeTruthy();
+  });
+
+  it('refreshes today at local midnight and clears its timeout when unmounted', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date(2026, 0, 1, 23, 59, 59));
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={[task('Midnight', due('2026-01-02T08:00:00'))]}
+        projectStartDate="2026-01-01"
+        projectTargetDate="2026-01-02"
+        onOpenTask={() => {}}
+      />
+    ));
+    const ruler = view.getByRole('img', { name: /Today is/ });
+    expect(ruler.getAttribute('aria-label')).toMatch(/Jan 1, 2026/);
+    vi.advanceTimersByTime(1_200);
+    expect(ruler.getAttribute('aria-label')).toMatch(/Jan 2, 2026/);
+    view.unmount();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('keeps 500 visible tasks and bounded ruler ticks without loading more', () => {
+    const tasks = Array.from({ length: 500 }, (_, index) =>
+      task(`Task ${index}`, due('2026-04-10T08:00:00'))
+    );
+    const loadMore = vi.fn();
+    const view = render(() => (
+      <ProjectTaskDeadlineTimeline
+        tasks={tasks}
+        hasNextPage={false}
+        onLoadMore={loadMore}
+        projectStartDate="2020-01-01"
+        projectTargetDate="2040-12-31"
+        onOpenTask={() => {}}
+      />
+    ));
+    expect(view.getAllByRole('button')).toHaveLength(500);
+    expect(mocks.relationCalls).toHaveLength(500);
+    expect(view.getAllByRole('button')[0].textContent).toContain('Task 0');
+    expect(loadMore).not.toHaveBeenCalled();
+    expect(
+      view.getByRole('img').querySelectorAll('[aria-hidden="true"]')
+    ).toHaveLength(2);
   });
 });

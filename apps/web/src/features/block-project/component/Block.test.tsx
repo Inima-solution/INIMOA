@@ -37,6 +37,9 @@ const mocks = vi.hoisted(() => ({
         onOpenTask: (task: { id: string }, event: MouseEvent) => void;
         onRetry?: () => void;
         searching?: boolean;
+        projectStartDate?: string;
+        projectTargetDate?: string;
+        rangeUnavailable?: boolean;
         tasks: Array<{ id: string }>;
       }
     | undefined,
@@ -53,6 +56,16 @@ const mocks = vi.hoisted(() => ({
   soupViewProviderCount: 0,
   openEntityInSplit: vi.fn(),
   projectId: 'project-id',
+  projectOverviewAccessors: [] as Array<Accessor<string | undefined>>,
+  projectOverviewQuery: {
+    data: undefined as
+      | { operations: { startDate?: string; targetDate?: string } }
+      | undefined,
+    fetchStatus: 'idle',
+    isError: false,
+    isPending: false,
+  },
+  sidePanelQuery: undefined as unknown,
   source: [] as Array<{
     id: string;
     subType?: { type: string } | null;
@@ -232,6 +245,12 @@ vi.mock('@property/task-dependency-relations', () => ({
   },
 }));
 vi.mock('@queries/soup/cache', () => ({ refetchSoupEntity: vi.fn() }));
+vi.mock('@queries/storage/project-overview', () => ({
+  useProjectOverviewQuery: (accessor: Accessor<string | undefined>) => {
+    mocks.projectOverviewAccessors.push(accessor);
+    return mocks.projectOverviewQuery;
+  },
+}));
 vi.mock('@service-storage/util/refetchResources', () => ({
   refetchResources: vi.fn(),
 }));
@@ -239,7 +258,10 @@ vi.mock('./ModalsProvider', () => ({
   ModalsProvider: (props: ParentProps) => props.children,
 }));
 vi.mock('./sidepanel/ProjectSidePanelSections', () => ({
-  ProjectSidePanelSections: () => null,
+  ProjectSidePanelSections: (props: { query: unknown }) => {
+    mocks.sidePanelQuery = props.query;
+    return null;
+  },
 }));
 vi.mock('./ProjectTaskStatusBoard', () => ({
   ProjectTaskStatusBoard: (props: NonNullable<typeof mocks.boardProps>) => {
@@ -289,6 +311,14 @@ beforeEach(() => {
   mocks.soupViewProviderCount = 0;
   mocks.openEntityInSplit.mockReset();
   mocks.projectId = 'project-id';
+  mocks.projectOverviewAccessors = [];
+  mocks.projectOverviewQuery = {
+    data: undefined,
+    fetchStatus: 'idle',
+    isError: false,
+    isPending: false,
+  };
+  mocks.sidePanelQuery = undefined;
   mocks.source = [];
   mocks.sourceError = null;
   mocks.sourceFetchNextPage.mockReset();
@@ -310,6 +340,102 @@ beforeEach(() => {
 });
 
 describe('project task dependency relation batching', () => {
+  it('shares one overview observer with the ordinary side panel and timeline', () => {
+    mocks.viewMode = 'timeline';
+    mocks.projectOverviewQuery.data = {
+      operations: { startDate: '2026-01-02', targetDate: '2026-02-03' },
+    };
+    render(() => <Block />);
+
+    expect(mocks.projectOverviewAccessors).toHaveLength(1);
+    expect(mocks.projectOverviewAccessors[0]()).toBe('project-id');
+    expect(mocks.sidePanelQuery).toBe(mocks.projectOverviewQuery);
+    expect(mocks.timelineProps).toMatchObject({
+      projectStartDate: '2026-01-02',
+      projectTargetDate: '2026-02-03',
+      rangeUnavailable: false,
+    });
+  });
+
+  it('keeps retained overview dates when an error or offline pause follows data', () => {
+    mocks.viewMode = 'timeline';
+    mocks.projectOverviewQuery = {
+      data: {
+        operations: { startDate: '2026-01-02', targetDate: '2026-02-03' },
+      },
+      fetchStatus: 'idle',
+      isError: true,
+      isPending: false,
+    };
+    render(() => <Block />);
+    expect(mocks.projectOverviewAccessors).toHaveLength(1);
+    expect(mocks.timelineProps).toMatchObject({
+      projectStartDate: '2026-01-02',
+      projectTargetDate: '2026-02-03',
+      rangeUnavailable: false,
+    });
+  });
+
+  it('keeps retained overview dates during a paused pending refresh', () => {
+    mocks.viewMode = 'timeline';
+    mocks.projectOverviewQuery = {
+      data: {
+        operations: { startDate: '2026-01-02', targetDate: '2026-02-03' },
+      },
+      fetchStatus: 'paused',
+      isError: false,
+      isPending: true,
+    };
+    render(() => <Block />);
+    expect(mocks.timelineProps).toMatchObject({
+      projectStartDate: '2026-01-02',
+      projectTargetDate: '2026-02-03',
+      rangeUnavailable: false,
+    });
+  });
+
+  it('marks only data-less failed or paused overview ranges unavailable', () => {
+    mocks.viewMode = 'timeline';
+    mocks.projectOverviewQuery = {
+      data: undefined,
+      fetchStatus: 'paused',
+      isError: true,
+      isPending: true,
+    };
+    render(() => <Block />);
+    expect(mocks.projectOverviewAccessors).toHaveLength(1);
+    expect(mocks.timelineProps).toMatchObject({
+      projectStartDate: undefined,
+      projectTargetDate: undefined,
+      rangeUnavailable: true,
+    });
+  });
+
+  it('marks a data-less initial pending overview range unavailable', () => {
+    mocks.viewMode = 'timeline';
+    mocks.projectOverviewQuery = {
+      data: undefined,
+      fetchStatus: 'fetching',
+      isError: false,
+      isPending: true,
+    };
+    render(() => <Block />);
+    expect(mocks.timelineProps).toMatchObject({
+      rangeUnavailable: true,
+      projectStartDate: undefined,
+      projectTargetDate: undefined,
+    });
+  });
+
+  it('keeps special projects disabled and outside the shared overview surface', () => {
+    mocks.projectId = 'special-project';
+    render(() => <Block />);
+    expect(mocks.projectOverviewAccessors).toHaveLength(1);
+    expect(mocks.projectOverviewAccessors[0]()).toBeUndefined();
+    expect(mocks.sidePanelQuery).toBeUndefined();
+    expect(mocks.timelineProps).toBeUndefined();
+  });
+
   it('routes the task Milestones filter through the ordinary project toolbar provider', () => {
     render(() => <Block />);
 

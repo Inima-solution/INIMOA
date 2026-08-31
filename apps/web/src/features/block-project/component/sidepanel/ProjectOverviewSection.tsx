@@ -1,9 +1,8 @@
 import { OwnerValue, SidePanel } from '@components/app/side-panel';
-import { useBlockId } from '@core/block';
 import { useCanEdit } from '@core/signal/permissions';
 import { formatDate } from '@core/util/date';
 import { thrownResultErrorHasCode } from '@core/util/result';
-import { useProjectOverviewQuery } from '@queries/storage/project-overview';
+import type { useProjectOverviewQuery } from '@queries/storage/project-overview';
 import { Button } from '@ui';
 import { createMemo, createSignal, Match, Show, Switch } from 'solid-js';
 import { ProjectOperationsEditor } from './ProjectOperationsEditor';
@@ -30,10 +29,12 @@ function formatDateOnly(value: string) {
   }).format(new Date(`${value}T00:00:00Z`));
 }
 
-export function ProjectOverviewSection(props: { order?: number }) {
-  const projectId = useBlockId();
+export function ProjectOverviewSection(props: {
+  order?: number;
+  query: ReturnType<typeof useProjectOverviewQuery>;
+}) {
   const canEdit = useCanEdit();
-  const query = useProjectOverviewQuery(() => projectId);
+  const query = props.query;
   const [editorOpen, setEditorOpen] = createSignal(false);
   const hasAccessError = createMemo(
     () =>

@@ -9,8 +9,25 @@ import {
   getTaskStatusOptionId,
 } from '@entity/utils/task-properties';
 import { TaskDependencyRelations } from '@property/task-dependency-relations';
+import { createResizeObserver } from '@solid-primitives/resize-observer';
 import { Button, EmptyStatePanel } from '@ui';
-import { createUniqueId, For, Show } from 'solid-js';
+import {
+  createMemo,
+  createSignal,
+  createUniqueId,
+  For,
+  onCleanup,
+  Show,
+} from 'solid-js';
+import {
+  formatProjectTimelineDate,
+  formatProjectTimelineTick,
+  getInclusiveLocalCalendarDays,
+  getProjectTimelineRange,
+  getProjectTimelineRuler,
+  getProjectTimelineToday,
+  getProjectTimelineTodayPercent,
+} from './project-task-timeline-range';
 
 type DeadlineGroup = {
   id: string;
@@ -63,14 +80,130 @@ export function ProjectTaskDeadlineTimeline(props: {
   fetching?: boolean;
   fetchingNextPage?: boolean;
   onLoadMore?: () => void;
+  projectStartDate?: string | null;
+  projectTargetDate?: string | null;
+  rangeUnavailable?: boolean;
 }) {
   const idPrefix = createUniqueId();
+  const [ruler, setRuler] = createSignal<HTMLDivElement>();
+  const [rulerWidth, setRulerWidth] = createSignal<number>();
+  const [today, setToday] = createSignal(new Date());
+  let refreshTimer: number | undefined;
+  createResizeObserver(ruler, ({ width }) => setRulerWidth(width));
+  const range = createMemo(() =>
+    props.rangeUnavailable
+      ? { kind: 'unavailable' as const }
+      : getProjectTimelineRange(props.projectStartDate, props.projectTargetDate)
+  );
+  const scheduleTodayRefresh = () => {
+    const now = new Date();
+    const nextMidnight = new Date(now);
+    nextMidnight.setDate(nextMidnight.getDate() + 1);
+    nextMidnight.setHours(0, 0, 0, 0);
+    refreshTimer = window.setTimeout(
+      () => {
+        setToday(new Date());
+        scheduleTodayRefresh();
+      },
+      nextMidnight.getTime() - now.getTime() + 100
+    );
+  };
+  scheduleTodayRefresh();
+  onCleanup(() => {
+    if (refreshTimer !== undefined) clearTimeout(refreshTimer);
+  });
   const groups = () => groupTasks(props.tasks);
   const loadMoreLabel = () => {
     if (props.fetchingNextPage) return 'Loading more…';
     if (props.error) return 'Retry loading more';
     return 'Load more tasks';
   };
+
+  const rangeRuler = createMemo(() => {
+    const value = range();
+    if (value.kind === 'not-set') {
+      return (
+        <p class="px-3 py-2 text-xs text-ink-muted">
+          Project dates are not set.
+        </p>
+      );
+    }
+    if (value.kind === 'invalid' || value.kind === 'unavailable') {
+      return (
+        <p class="px-3 py-2 text-xs text-ink-muted">
+          Project date range is unavailable.
+        </p>
+      );
+    }
+    const rulerModel = getProjectTimelineRuler(value, rulerWidth());
+    const todayRelation = getProjectTimelineToday(value, today());
+    const bounds = `${formatProjectTimelineDate(value.start)} to ${formatProjectTimelineDate(value.end)}`;
+    const todayText =
+      todayRelation.relation === 'inside'
+        ? `Today is ${formatProjectTimelineDate(todayRelation.date)} within this range.`
+        : `Today is ${formatProjectTimelineDate(todayRelation.date)}, ${todayRelation.relation} this range.`;
+    return (
+      <div class="border-b border-edge-muted px-3 py-2">
+        <div
+          ref={setRuler}
+          role="img"
+          aria-label={`Project range ${bounds}. ${rulerModel.scale === 'boundary' ? 'Range boundaries only.' : `${rulerModel.scale} scale.`} ${todayText}`}
+          class="relative flex min-h-6 items-end justify-between"
+          data-project-timeline-scale={rulerModel.scale}
+        >
+          <Show
+            when={rulerModel.scale !== 'boundary'}
+            fallback={
+              <span
+                aria-hidden="true"
+                class="flex w-full justify-between text-xs text-ink-muted"
+              >
+                <span>{formatProjectTimelineDate(value.start)}</span>
+                <span>{formatProjectTimelineDate(value.end)}</span>
+              </span>
+            }
+          >
+            <For each={rulerModel.ticks}>
+              {(tick) => (
+                <span
+                  aria-hidden="true"
+                  class="min-w-0 border-l border-edge-muted px-1 text-xs text-ink-muted"
+                  style={{
+                    'flex-basis': '0%',
+                    'flex-grow': getInclusiveLocalCalendarDays(
+                      tick.start,
+                      tick.end
+                    ),
+                  }}
+                >
+                  <span class="block truncate">
+                    {formatProjectTimelineTick(tick, rulerModel.scale)}
+                  </span>
+                </span>
+              )}
+            </For>
+          </Show>
+          <Show when={todayRelation.relation === 'inside'}>
+            <span
+              aria-hidden="true"
+              class="absolute bottom-0 top-0 w-px bg-accent"
+              style={{
+                left: `${getProjectTimelineTodayPercent(
+                  value,
+                  todayRelation.date
+                )}%`,
+              }}
+            />
+          </Show>
+        </div>
+        <Show when={todayRelation.relation !== 'inside'}>
+          <p class="pt-1 text-xs text-ink-muted">
+            Today is {todayRelation.relation} this range.
+          </p>
+        </Show>
+      </div>
+    );
+  });
 
   return (
     <Show
@@ -107,6 +240,7 @@ export function ProjectTaskDeadlineTimeline(props: {
         aria-label="Project task deadline timeline"
         class="project-task-deadline-timeline flex size-full min-w-0 min-h-0 flex-col overflow-y-auto"
       >
+        {rangeRuler()}
         <div class="min-w-0 flex-1 divide-y divide-edge-muted">
           <For each={groups()}>
             {(group) => {

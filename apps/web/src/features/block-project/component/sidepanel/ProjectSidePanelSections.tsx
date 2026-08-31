@@ -7,17 +7,20 @@ import { SidePanel } from '@components/app/side-panel';
 import { useBlockId } from '@core/block';
 import { useCanEdit } from '@core/signal/permissions';
 import { useBlockDocumentName } from '@core/util/currentBlockDocumentName';
+import type { useProjectOverviewQuery } from '@queries/storage/project-overview';
 import { Suspense } from 'solid-js';
 import { ProjectOverviewSection } from './ProjectOverviewSection';
 
-export function ProjectSidePanelSections() {
+export function ProjectSidePanelSections(props: {
+  query: ReturnType<typeof useProjectOverviewQuery>;
+}) {
   const projectId = useBlockId();
   const canEdit = useCanEdit();
   const projectName = useBlockDocumentName();
 
   return (
     <>
-      <ProjectOverviewSection order={5} />
+      <ProjectOverviewSection order={5} query={props.query} />
       <SidePanel.Section id="details" title="Details" defaultOpen order={10}>
         <Suspense fallback={<SidePanel.Loading />}>
           <EntityPropertiesSection
