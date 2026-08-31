@@ -1,10 +1,12 @@
 import { OwnerValue, SidePanel } from '@components/app/side-panel';
 import { useBlockId } from '@core/block';
+import { useCanEdit } from '@core/signal/permissions';
 import { formatDate } from '@core/util/date';
 import { thrownResultErrorHasCode } from '@core/util/result';
 import { useProjectOverviewQuery } from '@queries/storage/project-overview';
 import { Button } from '@ui';
-import { createMemo, Match, Show, Switch } from 'solid-js';
+import { createMemo, createSignal, Match, Show, Switch } from 'solid-js';
+import { ProjectOperationsEditor } from './ProjectOperationsEditor';
 
 const statusLabels = {
   planned: 'Planned',
@@ -30,7 +32,9 @@ function formatDateOnly(value: string) {
 
 export function ProjectOverviewSection(props: { order?: number }) {
   const projectId = useBlockId();
+  const canEdit = useCanEdit();
   const query = useProjectOverviewQuery(() => projectId);
+  const [editorOpen, setEditorOpen] = createSignal(false);
   const hasAccessError = createMemo(
     () =>
       thrownResultErrorHasCode(query.error, 'UNAUTHORIZED') ||
@@ -46,6 +50,21 @@ export function ProjectOverviewSection(props: { order?: number }) {
       title="Overview"
       defaultOpen
       order={props.order}
+      actions={
+        <Show
+          when={
+            query.data && query.data.userAccessLevel === 'owner' && canEdit()
+          }
+        >
+          <Button
+            size="sm"
+            aria-label="Edit project details"
+            onClick={() => setEditorOpen(true)}
+          >
+            Edit
+          </Button>
+        </Show>
+      }
     >
       <Switch>
         <Match when={hasAccessError()}>
@@ -135,6 +154,14 @@ export function ProjectOverviewSection(props: { order?: number }) {
                   <CountValue value={overview().immediateChildren.chats} />
                 </SidePanel.Row>
               </SidePanel.Grid>
+              <Show when={editorOpen()}>
+                <ProjectOperationsEditor
+                  open={editorOpen()}
+                  operations={() => query.data!.operations}
+                  onClose={() => setEditorOpen(false)}
+                  refetchOverview={() => query.refetch()}
+                />
+              </Show>
             </>
           )}
         </Match>

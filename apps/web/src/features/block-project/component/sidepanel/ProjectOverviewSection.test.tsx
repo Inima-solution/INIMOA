@@ -8,6 +8,7 @@ import type { JSX } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  canEdit: false,
   query: {} as Record<string, unknown>,
   refetch: vi.fn(),
   sections: vi.fn(),
@@ -33,10 +34,8 @@ vi.mock('@core/util/date', () => ({
 }));
 
 vi.mock('@ui', () => ({
-  Button: (props: { children: string; onClick: () => void }) => (
-    <button type="button" onClick={props.onClick}>
-      {props.children}
-    </button>
+  Button: (props: JSX.ButtonHTMLAttributes<HTMLButtonElement>) => (
+    <button type="button" {...props} />
   ),
 }));
 
@@ -44,6 +43,7 @@ vi.mock('@components/app/side-panel', () => ({
   OwnerValue: () => <span>Lead Display</span>,
   SidePanel: {
     Section: (props: {
+      actions?: JSX.Element;
       children: JSX.Element;
       defaultOpen?: boolean;
       id: string;
@@ -58,6 +58,7 @@ vi.mock('@components/app/side-panel', () => ({
           data-section={props.id}
         >
           <h2>{props.title}</h2>
+          {props.actions}
           {props.children}
         </section>
       );
@@ -85,7 +86,7 @@ vi.mock('@app/features/property/side-panel/properties', () => ({
 }));
 
 vi.mock('@core/signal/permissions', () => ({
-  useCanEdit: () => () => false,
+  useCanEdit: () => () => mocks.canEdit,
 }));
 
 vi.mock('@core/util/currentBlockDocumentName', () => ({
@@ -138,6 +139,7 @@ function renderOverview() {
 }
 
 beforeEach(() => {
+  mocks.canEdit = false;
   mocks.refetch.mockReset();
   mocks.sections.mockReset();
   mocks.query = readyQuery();
@@ -307,5 +309,43 @@ describe('ProjectOverviewSection', () => {
       defaultOpen: true,
     });
     expect(overviewIndex).toBeLessThan(detailsIndex);
+  });
+
+  it('shows Edit only for an owner with document edit access', () => {
+    mocks.canEdit = true;
+    mocks.query = readyQuery({
+      ...populatedOverview,
+      userAccessLevel: 'owner',
+    });
+    const owner = renderOverview();
+    expect(
+      owner.getByRole('button', { name: 'Edit project details' })
+    ).toBeTruthy();
+    owner.unmount();
+
+    mocks.query = readyQuery({ ...populatedOverview, userAccessLevel: 'edit' });
+    const nonOwner = renderOverview();
+    expect(
+      nonOwner.queryByRole('button', { name: 'Edit project details' })
+    ).toBeNull();
+    nonOwner.unmount();
+
+    mocks.query = readyQuery({
+      ...populatedOverview,
+      userAccessLevel: 'owner',
+    });
+    mocks.canEdit = false;
+    const noDocumentEdit = renderOverview();
+    expect(
+      noDocumentEdit.queryByRole('button', { name: 'Edit project details' })
+    ).toBeNull();
+    noDocumentEdit.unmount();
+
+    mocks.canEdit = true;
+    mocks.query = { ...readyQuery(), data: undefined, isError: true };
+    const error = renderOverview();
+    expect(
+      error.queryByRole('button', { name: 'Edit project details' })
+    ).toBeNull();
   });
 });
