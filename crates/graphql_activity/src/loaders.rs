@@ -10,6 +10,9 @@ use uuid::Uuid;
 
 use crate::objects::GraphqlActivityEvent;
 
+#[cfg(test)]
+mod test;
+
 /// Keys per SQL round trip. Bounds the size of one UNNEST+LATERAL query, not
 /// what a client may request: per-entity work is already bounded by
 /// [`MAX_ACTIVITY_EDGE_LIMIT`], so total cost scales with what the operation
@@ -280,8 +283,7 @@ where
 }
 
 /// Resolve the `activity` edge for one entity through the request's
-/// DataLoader. An internal read failure degrades to an empty timeline
-/// (logged server-side) so an activity outage never breaks Soup queries.
+/// DataLoader.
 pub async fn load_entity_activity<R>(
     ctx: &async_graphql::Context<'_>,
     key: ActivityEdgeKey,
@@ -292,6 +294,8 @@ where
     let loader = ctx.data::<DataLoader<EntityActivityLoader<R>>>()?;
     match loader.load_one(key).await? {
         Some(ActivityEdgeLoad::Found(records)) => Ok(records.into_iter().map(Into::into).collect()),
-        Some(ActivityEdgeLoad::Failed) | None => Ok(Vec::new()),
+        Some(ActivityEdgeLoad::Failed) | None => {
+            Err(async_graphql::Error::new("activity is unavailable"))
+        }
     }
 }
