@@ -47,9 +47,11 @@ function projectsQueryOptions() {
 }
 
 function sortProjects(projects: Project[]): Project[] {
-  return [...projects].sort((a, b) =>
-    compareDateDesc(a.createdAt, b.createdAt)
-  );
+  return [...projects].sort((a, b) => {
+    const dateOrder = compareDateDesc(a.createdAt, b.createdAt);
+    if (dateOrder !== 0) return dateOrder;
+    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+  });
 }
 
 function filterByUserId(
