@@ -169,6 +169,7 @@ pub async fn apply(
 
     seed_users(ctx, spec).await?;
     seed_teams(ctx, spec).await?;
+    seed_bots_and_business_roles(ctx, spec).await?;
     seed_channels(ctx, spec).await?;
     seed_contacts(ctx, spec).await?;
     seed_projects(ctx, spec).await?;
@@ -182,6 +183,50 @@ pub async fn apply(
     println!("\nScenario `{}` applied.", spec.scenario);
     print_login_links(spec);
     Ok(())
+}
+
+async fn seed_bots_and_business_roles(
+    ctx: &SeedCliContext,
+    spec: &ScenarioSpec,
+) -> anyhow::Result<()> {
+    if spec.bots.is_empty() && spec.business_role_assignments.is_empty() {
+        return Ok(());
+    }
+    let bots = spec
+        .bots
+        .iter()
+        .map(|(key, bot)| crate::service::db::SeedBotArgs {
+            id: spec.bot_id(key).as_uuid(),
+            team_id: spec.team_id(&bot.team),
+            name: bot.name.clone().unwrap_or_else(|| key.clone()),
+            handle: bot.handle.clone().unwrap_or_else(|| key.clone()),
+            created_by: spec.user_id(&spec.teams[&bot.team].owner),
+        })
+        .collect();
+    let roles = spec
+        .business_role_assignments
+        .iter()
+        .map(|assignment| {
+            let principal = assignment
+                .principal
+                .strip_prefix("user:")
+                .map(|key| spec.user_id(key))
+                .or_else(|| {
+                    assignment
+                        .principal
+                        .strip_prefix("bot:")
+                        .map(|key| spec.bot_principal(key))
+                })
+                .expect("validated business-role principal");
+            crate::service::db::SeedBusinessRoleArgs {
+                team_id: spec.team_id(&assignment.team),
+                principal,
+                role: assignment.role,
+                granted_by: spec.user_id(&spec.teams[&assignment.team].owner),
+            }
+        })
+        .collect();
+    ctx.db.seed_bots_and_business_roles(bots, roles).await
 }
 
 /// Print one login link per persona.

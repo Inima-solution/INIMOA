@@ -10,6 +10,12 @@ fn example() -> ScenarioSpec {
     ScenarioSpec::parse(&example_json()).expect("example scenario is valid")
 }
 
+fn inimoa_personas() -> ScenarioSpec {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("seed/scenarios/inimoa-personas.json");
+    ScenarioSpec::parse(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
 fn minimal(json: serde_json::Value) -> Result<ScenarioSpec, anyhow::Error> {
     ScenarioSpec::parse(&json.to_string())
 }
@@ -38,6 +44,124 @@ fn derive_id_is_deterministic_and_marked() {
         scenario_marker("team-perms")
     );
     assert_eq!(a.get_version_num(), 8);
+}
+
+#[test]
+fn inimoa_personas_are_deterministic_and_keep_member_derived() {
+    let spec = inimoa_personas();
+    assert_eq!(spec.users.len(), 7);
+    assert_eq!(spec.bots.len(), 1);
+    assert!(spec.users.contains_key("member"));
+    assert!(spec.bots.contains_key("agent"));
+    assert_eq!(spec.bot_id("agent"), spec.bot_id("agent"));
+    assert!(
+        spec.bot_id("agent")
+            .to_string()
+            .starts_with(&scenario_marker(&spec.scenario))
+    );
+    assert_eq!(
+        spec.bot_principal("agent"),
+        format!("bot|{}", spec.bot_id("agent"))
+    );
+    assert!(
+        !spec
+            .business_role_assignments
+            .iter()
+            .any(|row| row.role == models_team::BusinessRole::Member)
+    );
+    for (key, role) in [
+        ("manager", models_team::BusinessRole::Manager),
+        ("approver", models_team::BusinessRole::Approver),
+        ("hr-admin", models_team::BusinessRole::HrAdmin),
+        ("payroll-admin", models_team::BusinessRole::PayrollAdmin),
+        ("org-admin", models_team::BusinessRole::OrgAdmin),
+        ("auditor", models_team::BusinessRole::Auditor),
+    ] {
+        assert!(
+            spec.business_role_assignments
+                .iter()
+                .any(|row| row.principal == format!("user:{key}") && row.role == role)
+        );
+    }
+    assert!(spec.business_role_assignments.iter().any(|row| row.principal == "bot:agent" && row.role == models_team::BusinessRole::Agent));
+}
+
+#[test]
+fn rejects_invalid_business_role_personas() {
+    let fixture = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("seed/scenarios/inimoa-personas.json"),
+    )
+    .unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&fixture).unwrap();
+    let rows = value["business_role_assignments"].as_array_mut().unwrap();
+    rows.push(serde_json::json!({"team":"missing", "principal":"user:ghost", "role":"member"}));
+    rows.push(serde_json::json!({"team":"inimoa", "principal":"user:manager", "role":"agent"}));
+    rows.push(serde_json::json!({"team":"inimoa", "principal":"bot:agent", "role":"manager"}));
+    rows.push(serde_json::json!({"team":"inimoa", "principal":"nope", "role":"manager"}));
+    rows.push(serde_json::json!({"team":"inimoa", "principal":"user:manager", "role":"manager"}));
+    let error = ScenarioSpec::parse(&value.to_string())
+        .unwrap_err()
+        .to_string();
+    for expected in [
+        "unknown team",
+        "unknown user",
+        "member` is membership-derived",
+        "cannot receive business role `agent`",
+        "may only receive business role `agent`",
+        "must be user:<key> or bot:<key>",
+        "duplicate business role assignment",
+    ] {
+        assert!(error.contains(expected), "missing {expected}: {error}");
+    }
+}
+
+#[test]
+fn rejects_bot_without_its_required_agent_assignment() {
+    let fixture = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("seed/scenarios/inimoa-personas.json"),
+    )
+    .unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&fixture).unwrap();
+    value["business_role_assignments"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|row| row["principal"] != "bot:agent");
+
+    let error = ScenarioSpec::parse(&value.to_string())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("bot `agent` must receive exactly one `agent` business role"),
+        "{error}"
+    );
+}
+
+#[test]
+fn rejects_bot_business_role_for_a_non_owning_team() {
+    let fixture = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("seed/scenarios/inimoa-personas.json"),
+    )
+    .unwrap();
+    let mut value: serde_json::Value = serde_json::from_str(&fixture).unwrap();
+    value["teams"]["other"] = serde_json::json!({"owner": "org-admin"});
+    let assignment = value["business_role_assignments"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["principal"] == "bot:agent")
+        .unwrap();
+    assignment["team"] = serde_json::json!("other");
+
+    let error = ScenarioSpec::parse(&value.to_string())
+        .unwrap_err()
+        .to_string();
+    assert!(
+        error.contains("bot `agent` is not owned by team `other`"),
+        "{error}"
+    );
 }
 
 #[test]

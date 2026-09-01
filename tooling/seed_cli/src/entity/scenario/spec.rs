@@ -13,6 +13,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use models_permissions::share_permission::LinkShare;
+use models_team::BusinessRole;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
@@ -173,6 +174,32 @@ pub struct TeamSpec {
     /// Whether the team has CRM enabled.
     #[serde(default)]
     pub crm_enabled: bool,
+}
+
+/// A team-owned agent bot in a scenario.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BotSpec {
+    /// Owning team key.
+    pub team: String,
+    /// Display name. Defaults to the key.
+    #[serde(default)]
+    pub name: Option<String>,
+    /// Stable handle. Defaults to the key.
+    #[serde(default)]
+    pub handle: Option<String>,
+}
+
+/// One stored, non-derived company business-role assignment.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BusinessRoleAssignmentSpec {
+    /// Team key.
+    pub team: String,
+    /// `user:<key>` or `bot:<key>` principal.
+    pub principal: String,
+    /// Stored company role; `member` is always derived and is rejected.
+    pub role: BusinessRole,
 }
 
 /// A channel in the scenario.
@@ -424,6 +451,12 @@ pub struct ScenarioSpec {
     /// Teams keyed by a short name.
     #[serde(default)]
     pub teams: BTreeMap<String, TeamSpec>,
+    /// Team-owned agent bots keyed by a scenario-local name.
+    #[serde(default)]
+    pub bots: BTreeMap<String, BotSpec>,
+    /// Stored company role assignments; human membership derives `member`.
+    #[serde(default)]
+    pub business_role_assignments: Vec<BusinessRoleAssignmentSpec>,
     /// Channels keyed by a short name.
     #[serde(default)]
     pub channels: BTreeMap<String, ChannelSpec>,
@@ -515,6 +548,16 @@ impl ScenarioSpec {
     /// The derived team uuid for a team key.
     pub fn team_id(&self, key: &str) -> Uuid {
         derive_id(&self.scenario, "team", key)
+    }
+
+    /// The deterministic bot UUID for a bot key.
+    pub fn bot_id(&self, key: &str) -> bot_id::BotId {
+        bot_id::BotId::new_from_uuid(derive_id(&self.scenario, "bot", key))
+    }
+
+    /// Canonical storage principal for a bot key.
+    pub fn bot_principal(&self, key: &str) -> String {
+        self.bot_id(key).into_storage_id().to_string()
     }
 
     /// The derived channel uuid for a channel key.
@@ -695,6 +738,99 @@ impl ScenarioSpec {
                         "user `{user}` is on both team `{previous}` and team `{key}`; users can only belong to one team"
                     ));
                 }
+            }
+        }
+
+        for (key, bot) in &self.bots {
+            if !self.teams.contains_key(&bot.team) {
+                errors.push(format!(
+                    "bot `{key}` references unknown team `{}`",
+                    bot.team
+                ));
+            }
+        }
+
+        let mut assignments = BTreeSet::new();
+        let mut bot_agent_assignments = BTreeSet::new();
+        for assignment in &self.business_role_assignments {
+            if !self.teams.contains_key(&assignment.team) {
+                errors.push(format!(
+                    "business role references unknown team `{}`",
+                    assignment.team
+                ));
+            }
+            let (kind, key) = match assignment.principal.split_once(':') {
+                Some((kind, key)) if !key.is_empty() => (kind, key),
+                _ => {
+                    errors.push(format!(
+                        "business role principal `{}` must be user:<key> or bot:<key>",
+                        assignment.principal
+                    ));
+                    continue;
+                }
+            };
+            let duplicate = assignments.insert((
+                assignment.team.clone(),
+                assignment.principal.clone(),
+                assignment.role.to_string(),
+            ));
+            if !duplicate {
+                errors.push(format!(
+                    "duplicate business role assignment `{}` on team `{}`",
+                    assignment.principal, assignment.team
+                ));
+            }
+            if assignment.role == BusinessRole::Member {
+                errors.push(
+                    "business role `member` is membership-derived and must not be stored"
+                        .to_string(),
+                );
+            }
+            match kind {
+                "user" => {
+                    if !self.users.contains_key(key) {
+                        errors.push(format!("business role references unknown user `{key}`"));
+                    } else if self.team_of(key) != Some(assignment.team.as_str()) {
+                        errors.push(format!(
+                            "business role user `{key}` is not on team `{}`",
+                            assignment.team
+                        ));
+                    }
+                    if assignment.role == BusinessRole::Agent {
+                        errors.push(format!(
+                            "human principal `user:{key}` cannot receive business role `agent`"
+                        ));
+                    }
+                }
+                "bot" => {
+                    match self.bots.get(key) {
+                        Some(bot) if bot.team == assignment.team => {}
+                        Some(_) => errors.push(format!(
+                            "bot `{key}` is not owned by team `{}`",
+                            assignment.team
+                        )),
+                        None => {
+                            errors.push(format!("business role references unknown bot `{key}`"))
+                        }
+                    }
+                    if assignment.role != BusinessRole::Agent {
+                        errors.push(format!(
+                            "bot principal `bot:{key}` may only receive business role `agent`"
+                        ));
+                    } else {
+                        bot_agent_assignments.insert(key.to_string());
+                    }
+                }
+                other => errors.push(format!(
+                    "business role principal `{other}:{key}` must be user:<key> or bot:<key>"
+                )),
+            }
+        }
+        for key in self.bots.keys() {
+            if !bot_agent_assignments.contains(key) {
+                errors.push(format!(
+                    "bot `{key}` must receive exactly one `agent` business role"
+                ));
             }
         }
 

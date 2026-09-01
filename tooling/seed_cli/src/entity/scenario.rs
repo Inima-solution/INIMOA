@@ -6,6 +6,9 @@ pub mod reset;
 pub mod spec;
 pub mod status;
 
+#[cfg(test)]
+mod test;
+
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, ensure};
@@ -366,6 +369,10 @@ async fn reset_scenario(ctx: &SeedCliContext, args: &ResetScenarioArgs) -> anyho
             .collect();
         (spec::scenario_marker(&scenario.scenario), emails)
     };
+
+    for email in &emails {
+        ctx.fusionauth_client.delete_user_by_email(email).await?;
+    }
 
     println!("Deleting seeded rows with marker {marker}");
     ctx.db

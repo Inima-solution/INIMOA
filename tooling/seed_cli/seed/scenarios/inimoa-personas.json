@@ -1,0 +1,33 @@
+{
+  "scenario": "inimoa-personas",
+  "description": "Deterministic INIMOA company-role personas: seven local human accounts and one team-owned agent bot.",
+  "users": {
+    "member": { "email": "member@inimoa.local" },
+    "manager": { "email": "manager@inimoa.local" },
+    "approver": { "email": "approver@inimoa.local" },
+    "hr-admin": { "email": "hr-admin@inimoa.local" },
+    "payroll-admin": { "email": "payroll-admin@inimoa.local" },
+    "org-admin": { "email": "org-admin@inimoa.local" },
+    "auditor": { "email": "auditor@inimoa.local" }
+  },
+  "teams": {
+    "inimoa": {
+      "name": "INIMOA",
+      "owner": "org-admin",
+      "members": {
+        "member": "member", "manager": "member", "approver": "member",
+        "hr-admin": "member", "payroll-admin": "member", "auditor": "member"
+      }
+    }
+  },
+  "bots": { "agent": { "team": "inimoa", "name": "INIMOA Agent", "handle": "inimoa-agent" } },
+  "business_role_assignments": [
+    { "team": "inimoa", "principal": "user:manager", "role": "manager" },
+    { "team": "inimoa", "principal": "user:approver", "role": "approver" },
+    { "team": "inimoa", "principal": "user:hr-admin", "role": "hr_admin" },
+    { "team": "inimoa", "principal": "user:payroll-admin", "role": "payroll_admin" },
+    { "team": "inimoa", "principal": "user:org-admin", "role": "org_admin" },
+    { "team": "inimoa", "principal": "user:auditor", "role": "auditor" },
+    { "team": "inimoa", "principal": "bot:agent", "role": "agent" }
+  ]
+}

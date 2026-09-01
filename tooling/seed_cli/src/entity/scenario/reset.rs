@@ -71,6 +71,10 @@ DELETE FROM "SharePermission" WHERE id IN (SELECT id FROM sp_ids)"#
         format!("DELETE FROM \"Chat\" WHERE id LIKE '{m}'"),
         format!("DELETE FROM \"Project\" WHERE id LIKE '{m}'"),
         format!("DELETE FROM team_invite WHERE team_id::text LIKE '{m}'"),
+        // Stored business roles and bots are scenario-owned through their
+        // marker-prefixed team/bot ids. Bot tokens cascade with bots.
+        format!("DELETE FROM team_business_role WHERE team_id::text LIKE '{m}'"),
+        format!("DELETE FROM bots WHERE id::text LIKE '{m}'"),
         format!("DELETE FROM team_user WHERE team_id::text LIKE '{m}'"),
         // team_crm_settings cascades with the team.
         format!("DELETE FROM team WHERE id::text LIKE '{m}'"),

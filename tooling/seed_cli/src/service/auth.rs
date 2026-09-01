@@ -7,9 +7,20 @@ pub use MockSeedAuth as Auth;
 #[cfg(not(test))]
 pub use SeedAuth as Auth;
 
-use fusionauth::FusionAuthClient;
+use fusionauth::{FusionAuthClient, error::FusionAuthClientError};
 #[allow(unused_imports)]
 use mockall::automock;
+
+#[cfg(test)]
+mod test;
+
+fn missing_user_is_none<T>(result: fusionauth::Result<T>) -> anyhow::Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(FusionAuthClientError::UserDoesNotExist) => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
 
 /// Wrapper around the FusionAuth client.
 #[cfg_attr(test, allow(dead_code))]
@@ -47,6 +58,17 @@ impl SeedAuth {
     /// returns false when FusionAuth is unreachable.
     pub async fn user_exists(&self, email: &str) -> anyhow::Result<bool> {
         Ok(self.inner.get_user_id_by_email(email).await.is_ok())
+    }
+
+    /// Hard-delete a FusionAuth account by email. A missing account is already reset.
+    #[tracing::instrument(skip(self, email), err)]
+    pub async fn delete_user_by_email(&self, email: &str) -> anyhow::Result<()> {
+        let Some(user_id) = missing_user_is_none(self.inner.get_user_id_by_email(email).await)?
+        else {
+            return Ok(());
+        };
+        let _ = missing_user_is_none(self.inner.delete_user(&user_id).await)?;
+        Ok(())
     }
 
     /// Ensure a FusionAuth user exists and is registered to the application,

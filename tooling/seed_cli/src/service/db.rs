@@ -21,6 +21,7 @@ use model::document::DocumentMetadata;
 use models_email::email::service;
 use models_permissions::share_permission::SharePermissionV2;
 use models_permissions::share_permission::access_level::AccessLevel;
+use models_team::BusinessRole;
 use uuid::Uuid;
 
 /// Everything needed to seed one scenario user.
@@ -71,6 +72,34 @@ pub struct InsertCallRecordArgs {
     pub transcripts: Vec<(String, String, DateTime<Utc>, DateTime<Utc>)>,
 }
 
+/// One deterministic, team-owned scenario bot.
+#[derive(Debug)]
+pub struct SeedBotArgs {
+    /// Deterministic bot UUID.
+    pub id: Uuid,
+    /// Owning team UUID.
+    pub team_id: Uuid,
+    /// Bot display name.
+    pub name: String,
+    /// Bot handle.
+    pub handle: String,
+    /// Creating scenario user's canonical principal.
+    pub created_by: String,
+}
+
+/// One stored (non-derived) company role row.
+#[derive(Debug)]
+pub struct SeedBusinessRoleArgs {
+    /// Team UUID that scopes the stored role.
+    pub team_id: Uuid,
+    /// Canonical user or bot storage principal.
+    pub principal: String,
+    /// Source-of-truth stored business role.
+    pub role: BusinessRole,
+    /// Scenario owner's canonical principal.
+    pub granted_by: String,
+}
+
 /// Wrapper around the database connection pool.
 #[cfg_attr(test, allow(dead_code))]
 pub struct SeedDb {
@@ -81,6 +110,52 @@ pub struct SeedDb {
 #[cfg_attr(test, automock)]
 #[cfg_attr(test, allow(dead_code))]
 impl SeedDb {
+    /// Fixture-only scenario seeding of prevalidated bots and stored roles in one transaction.
+    ///
+    /// This deliberately bypasses production reauthentication and audit flows;
+    /// it must not be used outside local `seed_cli scenario` fixtures.
+    #[tracing::instrument(skip(self, bots, roles), err)]
+    #[allow(
+        clippy::disallowed_methods,
+        reason = "fixture-only parameterized writes; SQLx macros require unavailable offline metadata"
+    )]
+    pub async fn seed_bots_and_business_roles(
+        &self,
+        bots: Vec<SeedBotArgs>,
+        roles: Vec<SeedBusinessRoleArgs>,
+    ) -> anyhow::Result<()> {
+        let mut transaction = self.inner.begin().await?;
+        for bot in bots {
+            sqlx::query(
+                "INSERT INTO bots (id, kind, team_id, name, handle, created_by, has_agent) \
+                 VALUES ($1, 'owned', $2, $3, $4, $5, true) \
+                 ON CONFLICT (id) DO UPDATE SET team_id = EXCLUDED.team_id, name = EXCLUDED.name, \
+                 handle = EXCLUDED.handle, created_by = EXCLUDED.created_by, has_agent = true, deleted_at = NULL",
+            )
+            .bind(bot.id)
+            .bind(bot.team_id)
+            .bind(bot.name)
+            .bind(bot.handle)
+            .bind(bot.created_by)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        for role in roles {
+            sqlx::query(
+                "INSERT INTO team_business_role (team_id, principal, business_role, granted_by) \
+                 VALUES ($1, $2, $3, $4) \
+                 ON CONFLICT (team_id, principal, business_role) DO NOTHING",
+            )
+            .bind(role.team_id)
+            .bind(role.principal)
+            .bind(role.role)
+            .bind(role.granted_by)
+            .execute(&mut *transaction)
+            .await?;
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
     /// Create a new database wrapper.
     pub fn new(inner: sqlx::PgPool) -> Self {
         Self { inner }

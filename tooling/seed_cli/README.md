@@ -12,11 +12,14 @@ be run through the `just seed` base command.
 ## Scenarios
 
 A scenario file describes a complete world — users, teams, channels, and
-entities (documents, tasks, projects, chats, calls, emails, messages) with the
+entities (documents, tasks, projects, chats, calls, emails, messages), owned
+agent bots, and stored company-role assignments with the
 access edges between them — so varied permission patterns are testable
 locally. Tasks are markdown documents with the task subtype plus status and
 assignee properties (and an optional share-with-team grant). See
 `seed/scenarios/team-perms.json` for the reference example.
+`seed/scenarios/inimoa-personas.json` is the deterministic INIMOA role-persona
+fixture: seven passwordless human accounts plus one team-owned agent bot.
 
 ```bash
 # From the repository root (postgres + localstack must be up):
