@@ -5,9 +5,9 @@ use std::{
 };
 
 use axum::{
+    Router,
     body::Body,
     http::{Request, StatusCode},
-    Router,
 };
 use entity_access::domain::{
     models::{
@@ -26,27 +26,27 @@ use model::{
     folder::{FileSystemNodeWithIds, UploadFolderRequest, UploadFolderResponseData},
     item::ItemWithUserAccessLevel,
     project::{
+        BasicProject, PendingProject, Project, ProjectPreview,
         request::{CreateProjectRequest, PatchProjectRequestV2},
         response::GetProjectResponseData,
-        BasicProject, PendingProject, Project, ProjectPreview,
     },
 };
 use model_user::UserContext;
 use models_bulk_upload::{UploadExtractFolderRequest, UploadExtractFolderResponseData};
 use models_permissions::share_permission::{
-    access_level::AccessLevel as ShareAccessLevel, SharePermissionV2,
+    SharePermissionV2, access_level::AccessLevel as ShareAccessLevel,
 };
 use rootcause::Report;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use tower::ServiceExt;
 use uuid::Uuid;
 
-use super::{projects_router, ProjectRouterState};
+use super::{ProjectRouterState, projects_router};
 use crate::domain::{
     models::{
         ProjectError, ProjectOperationalStatus, ProjectOperations, ProjectOverview,
-        ProjectOverviewImmediateChildren, ProjectPriority, PurgedProjectTree, RevertDeleteResult,
-        SoftDeleteResult, UpdateProjectOperationsRequest,
+        ProjectOverviewImmediateChildren, ProjectPriority, ProjectTaskProgress, ProjectTaskRisk,
+        PurgedProjectTree, RevertDeleteResult, SoftDeleteResult, UpdateProjectOperationsRequest,
     },
     ports::ProjectService,
 };
@@ -68,6 +68,7 @@ struct FakeProjectService {
     operations_read_failure: Arc<Mutex<Option<&'static str>>>,
     operations_update_failure: Arc<Mutex<Option<&'static str>>>,
     overview_calls: Arc<Mutex<usize>>,
+    overview_as_of_dates: Arc<Mutex<Vec<chrono::NaiveDate>>>,
     overview_failure: Arc<Mutex<Option<&'static str>>>,
 }
 
@@ -89,6 +90,7 @@ impl FakeProjectService {
             operations_read_failure: Arc::new(Mutex::new(None)),
             operations_update_failure: Arc::new(Mutex::new(None)),
             overview_calls: Arc::new(Mutex::new(0)),
+            overview_as_of_dates: Arc::new(Mutex::new(Vec::new())),
             overview_failure: Arc::new(Mutex::new(None)),
         }
     }
@@ -104,6 +106,7 @@ impl FakeProjectService {
             operations_read_failure: Arc::new(Mutex::new(None)),
             operations_update_failure: Arc::new(Mutex::new(None)),
             overview_calls: Arc::new(Mutex::new(0)),
+            overview_as_of_dates: Arc::new(Mutex::new(Vec::new())),
             overview_failure: Arc::new(Mutex::new(None)),
         }
     }
@@ -157,11 +160,16 @@ impl ProjectService for FakeProjectService {
         &self,
         _receipt: EntityAccessReceipt<entity_access::domain::models::ViewAccessLevel>,
         _company_receipt: EntityAccessReceipt<entity_access::domain::models::ReadProjectWorkScoped>,
+        as_of_date: chrono::NaiveDate,
     ) -> Result<ProjectOverview, ProjectError> {
         *self
             .overview_calls
             .lock()
             .expect("overview calls lock poisoned") += 1;
+        self.overview_as_of_dates
+            .lock()
+            .expect("overview as-of dates lock poisoned")
+            .push(as_of_date);
         if let Some(failure) = *self
             .overview_failure
             .lock()
@@ -179,6 +187,8 @@ impl ProjectService for FakeProjectService {
                 non_task_documents: 0,
                 chats: 0,
             },
+            progress: ProjectTaskProgress::new(0, 0, false).unwrap(),
+            risk: ProjectTaskRisk::new(0, 0, 0, false, false).unwrap(),
         })
     }
 
@@ -795,10 +805,12 @@ async fn operations_put_maps_invalid_auth_missing_conflict_and_internal_without_
         json_body(invalid).await,
         json!({ "error": true, "message": "bad request: invalid project operations request" })
     );
-    assert!(invalid_calls
-        .lock()
-        .expect("operations update lock poisoned")
-        .is_empty());
+    assert!(
+        invalid_calls
+            .lock()
+            .expect("operations update lock poisoned")
+            .is_empty()
+    );
 
     let denied_service = FakeProjectService::with_project(USER_ID, false);
     let denied_calls = denied_service.operations_update_requests.clone();
@@ -813,10 +825,12 @@ async fn operations_put_maps_invalid_auth_missing_conflict_and_internal_without_
         .await
         .expect("router should respond");
     assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
-    assert!(denied_calls
-        .lock()
-        .expect("operations update lock poisoned")
-        .is_empty());
+    assert!(
+        denied_calls
+            .lock()
+            .expect("operations update lock poisoned")
+            .is_empty()
+    );
 
     let project_denied_service = FakeProjectService::with_project("macro|owner@example.com", false);
     let project_denied_calls = project_denied_service.operations_update_requests.clone();
@@ -831,10 +845,12 @@ async fn operations_put_maps_invalid_auth_missing_conflict_and_internal_without_
         .await
         .expect("router should respond");
     assert_eq!(project_denied.status(), StatusCode::UNAUTHORIZED);
-    assert!(project_denied_calls
-        .lock()
-        .expect("operations update lock poisoned")
-        .is_empty());
+    assert!(
+        project_denied_calls
+            .lock()
+            .expect("operations update lock poisoned")
+            .is_empty()
+    );
 
     let missing = router_with_team(
         FakeProjectService::missing(),
@@ -908,8 +924,11 @@ async fn operations_user_only_rejects_internal_before_project_or_team_access() {
 async fn overview_returns_exact_bounded_camel_case_envelope_after_one_service_call() {
     let service = FakeProjectService::with_project("macro|owner@example.com", false);
     let calls = service.overview_calls.clone();
+    let as_of_dates = service.overview_as_of_dates.clone();
     let response = router_with_team(service, Some(AccessLevel::View), Some(team_info("member")))
-        .oneshot(authenticated_request(&format!("/{PROJECT_ID}/overview")))
+        .oneshot(authenticated_request(&format!(
+            "/{PROJECT_ID}/overview?asOfDate=2026-09-01"
+        )))
         .await
         .expect("router should respond");
 
@@ -945,11 +964,53 @@ async fn overview_returns_exact_bounded_camel_case_envelope_after_one_service_ca
                     "tasks": 0,
                     "nonTaskDocuments": 0,
                     "chats": 0
+                },
+                "progress": {
+                    "completedTasks": 0,
+                    "includedTasks": 0,
+                    "hasUnavailableStatuses": false
+                },
+                "risk": {
+                    "overdueTasks": 0,
+                    "blockedTasks": 0,
+                    "unassignedTasks": 0,
+                    "approachingTarget": false,
+                    "hasUnavailableRiskData": false
                 }
             }
         })
     );
     assert_eq!(*calls.lock().expect("overview calls lock poisoned"), 1);
+    assert_eq!(
+        *as_of_dates
+            .lock()
+            .expect("overview as-of dates lock poisoned"),
+        [chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap()]
+    );
+}
+
+#[tokio::test]
+async fn overview_rejects_missing_or_malformed_as_of_date_without_calling_the_service() {
+    for path in [
+        format!("/{PROJECT_ID}/overview"),
+        format!("/{PROJECT_ID}/overview?asOfDate=2026-9-1"),
+        format!("/{PROJECT_ID}/overview?asOfDate=not-a-date"),
+    ] {
+        let service = FakeProjectService::with_project("macro|owner@example.com", false);
+        let calls = service.overview_calls.clone();
+        let response =
+            router_with_team(service, Some(AccessLevel::View), Some(team_info("member")))
+                .oneshot(authenticated_request(&path))
+                .await
+                .expect("router should respond");
+
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(
+            json_body(response).await,
+            json!({ "error": true, "message": "bad request: invalid asOfDate" })
+        );
+        assert_eq!(*calls.lock().expect("overview calls lock poisoned"), 0);
+    }
 }
 
 #[tokio::test]
@@ -999,7 +1060,9 @@ async fn overview_stops_before_service_for_auth_access_and_missing_failures() {
     let project_denied_service = FakeProjectService::with_project("macro|owner@example.com", false);
     let project_denied_calls = project_denied_service.overview_calls.clone();
     let project_denied = router_with_team(project_denied_service, None, Some(team_info("member")))
-        .oneshot(authenticated_request(&format!("/{PROJECT_ID}/overview")))
+        .oneshot(authenticated_request(&format!(
+            "/{PROJECT_ID}/overview?asOfDate=2026-09-01"
+        )))
         .await
         .expect("router should respond");
     assert_eq!(project_denied.status(), StatusCode::UNAUTHORIZED);
@@ -1013,7 +1076,9 @@ async fn overview_stops_before_service_for_auth_access_and_missing_failures() {
     let team_denied_service = FakeProjectService::with_project("macro|owner@example.com", false);
     let team_denied_calls = team_denied_service.overview_calls.clone();
     let team_denied = router_with_team(team_denied_service, Some(AccessLevel::View), None)
-        .oneshot(authenticated_request(&format!("/{PROJECT_ID}/overview")))
+        .oneshot(authenticated_request(&format!(
+            "/{PROJECT_ID}/overview?asOfDate=2026-09-01"
+        )))
         .await
         .expect("router should respond");
     assert_eq!(team_denied.status(), StatusCode::UNAUTHORIZED);
@@ -1031,7 +1096,9 @@ async fn overview_stops_before_service_for_auth_access_and_missing_failures() {
         Some(AccessLevel::View),
         Some(team_info("member")),
     )
-    .oneshot(authenticated_request(&format!("/{PROJECT_ID}/overview")))
+    .oneshot(authenticated_request(&format!(
+        "/{PROJECT_ID}/overview?asOfDate=2026-09-01"
+    )))
     .await
     .expect("router should respond");
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
@@ -1050,7 +1117,9 @@ async fn overview_internal_failure_is_generic_and_does_not_leak_sentinel() {
         .lock()
         .expect("overview failure lock poisoned") = Some("internal");
     let response = router_with_team(service, Some(AccessLevel::View), Some(team_info("member")))
-        .oneshot(authenticated_request(&format!("/{PROJECT_ID}/overview")))
+        .oneshot(authenticated_request(&format!(
+            "/{PROJECT_ID}/overview?asOfDate=2026-09-01"
+        )))
         .await
         .expect("router should respond");
 

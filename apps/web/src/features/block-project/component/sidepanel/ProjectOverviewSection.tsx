@@ -154,6 +154,66 @@ export function ProjectOverviewSection(props: {
                 <SidePanel.Row label="Chats">
                   <CountValue value={overview().immediateChildren.chats} />
                 </SidePanel.Row>
+                <SidePanel.Row label="Progress">
+                  <Show
+                    when={!overview().progress.hasUnavailableStatuses}
+                    fallback={<SidePanel.EmptyPill label="Unavailable" />}
+                  >
+                    <Show
+                      when={overview().progress.includedTasks > 0}
+                      fallback={<SidePanel.EmptyPill label="No tasks" />}
+                    >
+                      <CountValue
+                        value={`${overview().progress.completedTasks} of ${overview().progress.includedTasks} complete`}
+                      />
+                    </Show>
+                  </Show>
+                </SidePanel.Row>
+                <Show
+                  when={!overview().risk.hasUnavailableRiskData}
+                  fallback={
+                    <SidePanel.Row label="Risk">
+                      <SidePanel.EmptyPill label="Unavailable" />
+                    </SidePanel.Row>
+                  }
+                >
+                  <Show
+                    when={
+                      overview().risk.overdueTasks > 0 ||
+                      overview().risk.blockedTasks > 0 ||
+                      overview().risk.unassignedTasks > 0 ||
+                      overview().risk.approachingTarget
+                    }
+                    fallback={
+                      <SidePanel.Row label="Risk">
+                        <SidePanel.EmptyPill label="No current risks" />
+                      </SidePanel.Row>
+                    }
+                  >
+                    <Show when={overview().risk.overdueTasks > 0}>
+                      <SidePanel.Row label="Overdue">
+                        <CountValue value={overview().risk.overdueTasks} />
+                      </SidePanel.Row>
+                    </Show>
+                    <Show when={overview().risk.blockedTasks > 0}>
+                      <SidePanel.Row label="Blocked">
+                        <CountValue value={overview().risk.blockedTasks} />
+                      </SidePanel.Row>
+                    </Show>
+                    <Show when={overview().risk.unassignedTasks > 0}>
+                      <SidePanel.Row label="Unassigned">
+                        <CountValue value={overview().risk.unassignedTasks} />
+                      </SidePanel.Row>
+                    </Show>
+                    <Show when={overview().risk.approachingTarget}>
+                      <SidePanel.Row label="Target risk">
+                        <SidePanel.Pill>
+                          <span class="truncate">Within 7 days</span>
+                        </SidePanel.Pill>
+                      </SidePanel.Row>
+                    </Show>
+                  </Show>
+                </Show>
               </SidePanel.Grid>
               <Show when={editorOpen()}>
                 <ProjectOperationsEditor
@@ -204,7 +264,7 @@ function DateOnlyRow(props: {
   );
 }
 
-function CountValue(props: { value: number }) {
+function CountValue(props: { value: number | string }) {
   return (
     <SidePanel.Pill>
       <span class="truncate tabular-nums">{props.value}</span>

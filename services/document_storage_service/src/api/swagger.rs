@@ -89,21 +89,21 @@ use model::{
     annotations::AnnotationIncrementalUpdate,
     chat::Chat,
     document::{
+        BasicDocument, BomPart, DocumentMetadata, DocumentPermissionsToken, FileType, SaveBomPart,
         response::{
             GetDocumentListResult, GetDocumentResponse, GetDocumentResponseData,
             LocationResponseData,
         },
-        BasicDocument, BomPart, DocumentMetadata, DocumentPermissionsToken, FileType, SaveBomPart,
     },
     item::{CloudStorageItemType, Item, ItemWithUserAccessLevel},
-    pin::{request::ReorderPinRequest, PinnedItem},
+    pin::{PinnedItem, request::ReorderPinRequest},
     project::{
+        Project,
         request::{CreateProjectRequest, GetBatchProjectPreviewRequest, PatchProjectRequestV2},
         response::{
             CreateProjectResponse, GetBatchProjectPreviewResponse, GetProjectContentResponse,
             GetProjectResponse, GetProjectResponseData, GetProjectsResponse,
         },
-        Project,
     },
     response::{
         GenericErrorResponse, GenericResponse, GenericSuccessResponse, PresignedUrl,
@@ -129,6 +129,7 @@ use projects_hex::inbound::axum_router::delete_project::{
 use projects_hex::{
     domain::models::{
         ProjectOperationalStatus, ProjectOperations, ProjectOverview, ProjectPriority,
+        ProjectTaskProgress, ProjectTaskRisk,
     },
     inbound::axum_router::project_operations::{
         GetProjectOperationsResponse, ReplaceProjectOperationsRequest,
@@ -659,6 +660,8 @@ use utoipa::OpenApi;
             GetProjectOperationsResponse,
             ReplaceProjectOperationsRequest,
             ProjectOverview,
+            ProjectTaskProgress,
+            ProjectTaskRisk,
             GetProjectOverviewResponse,
             TaskDependencyReadinessBatchRequest,
             GetProjectTaskDependencyReadinessResponse,

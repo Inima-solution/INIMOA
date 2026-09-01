@@ -796,18 +796,37 @@ async fn task_risk_rejects_bad_receipts_before_read_and_hides_absence_or_errors(
 }
 
 #[tokio::test]
-async fn overview_requires_matching_human_project_and_team_receipts_before_one_scoped_read() {
+async fn overview_requires_matching_human_project_and_team_receipts_before_scoped_aggregate_reads()
+{
     let project_id = Uuid::from_u128(300);
     let team_id = Uuid::from_u128(301);
     let actor = user_id("macro|owner@example.com");
+    let as_of_date = chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
     let snapshot = overview_snapshot(project_id);
     let expected_operations = snapshot.operations.clone();
+    let expected_progress = crate::domain::models::ProjectTaskProgress::new(0, 0, false).unwrap();
+    let expected_risk = crate::domain::models::ProjectTaskRisk::new(1, 0, 0, false, false).unwrap();
     let mut repo = MockProjectRepo::new();
     repo.expect_get_project_overview_scoped()
         .return_once(move |id, team| {
             assert_eq!(id, project_id.to_string());
             assert_eq!(team, team_id);
             Box::pin(async move { Ok(Some(snapshot)) })
+        });
+    let progress = expected_progress.clone();
+    repo.expect_get_project_task_progress_scoped()
+        .return_once(move |id, team| {
+            assert_eq!(id, project_id.to_string());
+            assert_eq!(team, team_id);
+            Box::pin(async move { Ok(Some(progress)) })
+        });
+    let risk = expected_risk.clone();
+    repo.expect_get_project_task_risk_scoped()
+        .return_once(move |id, team, date| {
+            assert_eq!(id, project_id.to_string());
+            assert_eq!(team, team_id);
+            assert_eq!(date, as_of_date);
+            Box::pin(async move { Ok(Some(risk)) })
         });
     let overview = service(repo, RecordingBulkUpload::default())
         .get_project_overview(
@@ -817,6 +836,7 @@ async fn overview_requires_matching_human_project_and_team_receipts_before_one_s
                 EntityAccessAuth::Authenticated(actor.clone()),
             ),
             company_receipt::<ReadProjectWorkScoped>(team_id, actor),
+            as_of_date,
         )
         .await
         .unwrap();
@@ -824,6 +844,8 @@ async fn overview_requires_matching_human_project_and_team_receipts_before_one_s
     assert_eq!(overview.project.id, project_id.to_string());
     assert_eq!(overview.operations, expected_operations);
     assert_eq!(overview.immediate_children.non_task_documents, 3);
+    assert_eq!(overview.progress, expected_progress);
+    assert_eq!(overview.risk, expected_risk);
 }
 
 #[tokio::test]
@@ -831,6 +853,7 @@ async fn overview_rejects_invalid_receipts_before_repository_and_maps_repository
     let project_id = Uuid::from_u128(302);
     let team_id = Uuid::from_u128(303);
     let actor = user_id("macro|owner@example.com");
+    let as_of_date = chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
     let invalid_project_receipts = [
         EntityAccessReceipt::<ViewAccessLevel>::try_new(
             EntityAccessAuth::Unauthenticated,
@@ -867,6 +890,7 @@ async fn overview_rejects_invalid_receipts_before_repository_and_maps_repository
                 .get_project_overview(
                     receipt,
                     company_receipt::<ReadProjectWorkScoped>(team_id, actor.clone()),
+                    as_of_date,
                 )
                 .await,
             Err(ProjectError::Unauthorized)
@@ -880,6 +904,7 @@ async fn overview_rejects_invalid_receipts_before_repository_and_maps_repository
                     team_id,
                     user_id("macro|other@example.com")
                 ),
+                as_of_date,
             )
             .await,
         Err(ProjectError::Unauthorized)
@@ -893,6 +918,7 @@ async fn overview_rejects_invalid_receipts_before_repository_and_maps_repository
                     &team_id.to_string(),
                     EntityType::Project,
                 ),
+                as_of_date,
             )
             .await,
         Err(ProjectError::Unauthorized)
@@ -906,6 +932,7 @@ async fn overview_rejects_invalid_receipts_before_repository_and_maps_repository
                     "not-a-uuid",
                     EntityType::Team
                 ),
+                as_of_date,
             )
             .await,
         Err(ProjectError::Unauthorized)
@@ -923,6 +950,7 @@ async fn overview_rejects_invalid_receipts_before_repository_and_maps_repository
                     team_id,
                     user_id("macro|owner@example.com")
                 ),
+                as_of_date,
             )
             .await,
         Err(ProjectError::NotFound(_))
@@ -939,7 +967,98 @@ async fn overview_rejects_invalid_receipts_before_repository_and_maps_repository
                     team_id,
                     user_id("macro|owner@example.com")
                 ),
+                as_of_date,
             )
+            .await,
+        Err(ProjectError::Internal(_))
+    ));
+}
+
+#[tokio::test]
+async fn overview_fails_closed_when_aggregate_reads_are_absent_or_fail() {
+    let project_id = Uuid::from_u128(304);
+    let team_id = Uuid::from_u128(305);
+    let as_of_date = chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
+    let receipt = || mutation_receipt::<ViewAccessLevel>(project_id, AccessLevel::View);
+    let company_receipt =
+        || company_receipt::<ReadProjectWorkScoped>(team_id, user_id("macro|owner@example.com"));
+
+    let mut progress_absent = MockProjectRepo::new();
+    progress_absent
+        .expect_get_project_overview_scoped()
+        .return_once(move |_, _| Box::pin(async move { Ok(Some(overview_snapshot(project_id))) }));
+    progress_absent
+        .expect_get_project_task_progress_scoped()
+        .return_once(|_, _| Box::pin(async { Ok(None) }));
+    progress_absent
+        .expect_get_project_task_risk_scoped()
+        .never();
+    assert!(matches!(
+        service(progress_absent, RecordingBulkUpload::default())
+            .get_project_overview(receipt(), company_receipt(), as_of_date)
+            .await,
+        Err(ProjectError::NotFound(_))
+    ));
+
+    let mut progress_failed = MockProjectRepo::new();
+    progress_failed
+        .expect_get_project_overview_scoped()
+        .return_once(move |_, _| Box::pin(async move { Ok(Some(overview_snapshot(project_id))) }));
+    progress_failed
+        .expect_get_project_task_progress_scoped()
+        .return_once(|_, _| Box::pin(async { Err(anyhow::anyhow!("progress")) }));
+    progress_failed
+        .expect_get_project_task_risk_scoped()
+        .never();
+    assert!(matches!(
+        service(progress_failed, RecordingBulkUpload::default())
+            .get_project_overview(receipt(), company_receipt(), as_of_date)
+            .await,
+        Err(ProjectError::Internal(_))
+    ));
+
+    let mut risk_absent = MockProjectRepo::new();
+    risk_absent
+        .expect_get_project_overview_scoped()
+        .return_once(move |_, _| Box::pin(async move { Ok(Some(overview_snapshot(project_id))) }));
+    risk_absent
+        .expect_get_project_task_progress_scoped()
+        .return_once(|_, _| {
+            Box::pin(async {
+                Ok(Some(
+                    crate::domain::models::ProjectTaskProgress::new(0, 0, false).unwrap(),
+                ))
+            })
+        });
+    risk_absent
+        .expect_get_project_task_risk_scoped()
+        .return_once(|_, _, _| Box::pin(async { Ok(None) }));
+    assert!(matches!(
+        service(risk_absent, RecordingBulkUpload::default())
+            .get_project_overview(receipt(), company_receipt(), as_of_date)
+            .await,
+        Err(ProjectError::NotFound(_))
+    ));
+
+    let mut risk_failed = MockProjectRepo::new();
+    risk_failed
+        .expect_get_project_overview_scoped()
+        .return_once(move |_, _| Box::pin(async move { Ok(Some(overview_snapshot(project_id))) }));
+    risk_failed
+        .expect_get_project_task_progress_scoped()
+        .return_once(|_, _| {
+            Box::pin(async {
+                Ok(Some(
+                    crate::domain::models::ProjectTaskProgress::new(0, 0, false).unwrap(),
+                ))
+            })
+        });
+    risk_failed
+        .expect_get_project_task_risk_scoped()
+        .return_once(|_, _, _| Box::pin(async { Err(anyhow::anyhow!("risk")) }));
+    assert!(matches!(
+        service(risk_failed, RecordingBulkUpload::default())
+            .get_project_overview(receipt(), company_receipt(), as_of_date)
             .await,
         Err(ProjectError::Internal(_))
     ));

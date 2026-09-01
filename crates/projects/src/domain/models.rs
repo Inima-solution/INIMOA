@@ -163,6 +163,10 @@ pub struct ProjectOverview {
     pub operations: ProjectOperations,
     /// Exact counts of live, direct children only.
     pub immediate_children: ProjectOverviewImmediateChildren,
+    /// Bounded aggregate progress for live direct tasks only.
+    pub progress: ProjectTaskProgress,
+    /// Bounded aggregate risk for live direct tasks only.
+    pub risk: ProjectTaskRisk,
 }
 
 /// Exact live depth-one child counts for a project overview.
@@ -198,6 +202,7 @@ pub struct ProjectOverviewSnapshot {
 /// This deliberately contains only aggregate facts: it cannot disclose task
 /// identifiers, names, or individual status values.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "axum", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectTaskProgress {
     /// Direct live tasks whose exact singleton status is Completed.
@@ -245,6 +250,7 @@ pub enum ProjectTaskProgressValidationError {
 /// The result intentionally contains aggregate facts only; task identities and
 /// raw property values never cross the project-domain boundary.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[cfg_attr(feature = "axum", derive(utoipa::ToSchema))]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectTaskRisk {
     /// Overdue direct live canonical Tasks; individual task details are redacted.

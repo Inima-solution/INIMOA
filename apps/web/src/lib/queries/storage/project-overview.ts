@@ -7,11 +7,20 @@ import type { Accessor } from 'solid-js';
 import { entityKeys } from './keys';
 
 export async function fetchProjectOverview(
-  projectId: string
+  projectId: string,
+  asOfDate: string = localAsOfDate()
 ): Promise<GetProjectOverview200DataOneOf> {
   return throwOnErr(() =>
-    storageServiceClient.projects.getOverview({ id: projectId })
+    storageServiceClient.projects.getOverview({ id: projectId, asOfDate })
   );
+}
+
+function localAsOfDate(now = new Date()): string {
+  return [now.getFullYear(), now.getMonth() + 1, now.getDate()]
+    .map((part, index) =>
+      index === 0 ? String(part) : String(part).padStart(2, '0')
+    )
+    .join('-');
 }
 
 /** Mark one project's overview, or every cached project overview, stale. */
@@ -20,7 +29,7 @@ export function invalidateProjectOverviews(projectId?: string): Promise<void> {
     queryKey: projectId
       ? entityKeys.projectOverview(projectId).queryKey
       : entityKeys.projectOverview._def,
-    exact: projectId !== undefined,
+    exact: false,
   });
 }
 
@@ -29,11 +38,12 @@ export function useProjectOverviewQuery(
 ) {
   return useQuery(() => {
     const id = projectId();
+    const asOfDate = localAsOfDate();
     return {
       queryKey: id
-        ? entityKeys.projectOverview(id).queryKey
+        ? [...entityKeys.projectOverview(id).queryKey, asOfDate]
         : entityKeys.projectOverview._def,
-      queryFn: () => fetchProjectOverview(id!),
+      queryFn: () => fetchProjectOverview(id!, asOfDate),
       enabled: !!id,
     };
   });

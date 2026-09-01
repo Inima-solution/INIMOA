@@ -388,6 +388,7 @@ where
         &self,
         receipt: EntityAccessReceipt<ViewAccessLevel>,
         company_receipt: EntityAccessReceipt<ReadProjectWorkScoped>,
+        as_of_date: NaiveDate,
     ) -> Result<ProjectOverview, ProjectError> {
         let access_level = receipt_access_level(&receipt)?;
         let actor = receipt
@@ -404,11 +405,25 @@ where
             .await
             .map_err(|error| internal_error(error, "unable to get project overview"))?
             .ok_or_else(|| ProjectError::NotFound(project_id.clone()))?;
+        let progress = self
+            .repo
+            .get_project_task_progress_scoped(project_id, team_id)
+            .await
+            .map_err(|error| internal_error(error, "unable to get project task progress"))?
+            .ok_or_else(|| ProjectError::NotFound(project_id.clone()))?;
+        let risk = self
+            .repo
+            .get_project_task_risk_scoped(project_id, team_id, as_of_date)
+            .await
+            .map_err(|error| internal_error(error, "unable to get project task risk"))?
+            .ok_or_else(|| ProjectError::NotFound(project_id.clone()))?;
         Ok(ProjectOverview {
             project: snapshot.project,
             user_access_level: access_level,
             operations: snapshot.operations,
             immediate_children: snapshot.immediate_children,
+            progress,
+            risk,
         })
     }
 

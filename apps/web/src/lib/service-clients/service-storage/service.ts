@@ -152,7 +152,10 @@ const ProjectsSvc = new Svc('Projects Service')
   })
   .fn('getOverview', {
     description: schemas.getProjectOverviewParams.description!,
-    args: schemas.getProjectOverviewParams.shape,
+    args: {
+      ...schemas.getProjectOverviewParams.shape,
+      ...schemas.getProjectOverviewQueryParams.shape,
+    },
     result: schemas.getProjectOverviewResponse.shape.data.extend({
       operations: ProjectOperationsSchema,
     }).shape,

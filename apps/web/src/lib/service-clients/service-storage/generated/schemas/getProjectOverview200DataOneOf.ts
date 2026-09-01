@@ -9,6 +9,8 @@ import type { AccessLevel } from './accessLevel';
 import type { GetProjectOverview200DataOneOfProjectOneOf } from './getProjectOverview200DataOneOfProjectOneOf';
 import type { ProjectOperations } from './projectOperations';
 import type { ProjectOverviewImmediateChildren } from './projectOverviewImmediateChildren';
+import type { ProjectTaskProgress } from './projectTaskProgress';
+import type { ProjectTaskRisk } from './projectTaskRisk';
 
 /**
  * The bounded, canonical overview for one project.
@@ -18,8 +20,12 @@ export type GetProjectOverview200DataOneOf = {
   immediateChildren: ProjectOverviewImmediateChildren;
   /** The canonical project operational metadata. */
   operations: ProjectOperations;
+  /** Bounded progress totals for the live direct tasks of one project. */
+  progress: ProjectTaskProgress;
   /** The canonical project row. */
   project: GetProjectOverview200DataOneOfProjectOneOf;
+  /** Bounded risk totals for the live direct tasks of one project. */
+  risk: ProjectTaskRisk;
   /** The validated caller access level for this project. */
   userAccessLevel: AccessLevel;
 };

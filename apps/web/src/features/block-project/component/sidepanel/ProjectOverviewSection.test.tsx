@@ -115,10 +115,22 @@ const populatedOverview: GetProjectOverview200DataOneOf = {
     nonTaskDocuments: 4,
     chats: 5,
   },
+  progress: {
+    completedTasks: 2,
+    hasUnavailableStatuses: false,
+    includedTasks: 3,
+  },
   project: {
     id: 'project-1',
     name: 'Project',
     userId: 'macro|lead@example.com',
+  },
+  risk: {
+    approachingTarget: true,
+    blockedTasks: 1,
+    hasUnavailableRiskData: false,
+    overdueTasks: 2,
+    unassignedTasks: 3,
   },
   userAccessLevel: 'view',
 };
@@ -178,9 +190,22 @@ describe('ProjectOverviewSection', () => {
     ).toContain('5');
     expect(view.container.textContent).not.toContain('macro|lead@example.com');
     expect(view.container.textContent).not.toContain('hidden');
-    expect(view.container.textContent).not.toMatch(
-      /objective|progress|risk|next action/i
-    );
+    expect(
+      view.container.querySelector('[data-row="Progress"]')?.textContent
+    ).toContain('2 of 3 complete');
+    expect(
+      view.container.querySelector('[data-row="Overdue"]')?.textContent
+    ).toContain('2');
+    expect(
+      view.container.querySelector('[data-row="Blocked"]')?.textContent
+    ).toContain('1');
+    expect(
+      view.container.querySelector('[data-row="Unassigned"]')?.textContent
+    ).toContain('3');
+    expect(
+      view.container.querySelector('[data-row="Target risk"]')?.textContent
+    ).toContain('Within 7 days');
+    expect(view.container.textContent).not.toMatch(/objective|next action/i);
     expect(view.container.querySelector('.tabular-nums')?.textContent).toBe(
       '2'
     );
@@ -204,10 +229,24 @@ describe('ProjectOverviewSection', () => {
         nonTaskDocuments: 0,
         chats: 0,
       },
+      progress: {
+        completedTasks: 0,
+        hasUnavailableStatuses: false,
+        includedTasks: 0,
+      },
+      risk: {
+        approachingTarget: false,
+        blockedTasks: 0,
+        hasUnavailableRiskData: false,
+        overdueTasks: 0,
+        unassignedTasks: 0,
+      },
     });
     const view = renderOverview();
 
-    expect(view.getByText('Unassigned')).toBeTruthy();
+    expect(
+      view.container.querySelector('[data-row="Lead"]')?.textContent
+    ).toContain('Unassigned');
     expect(view.getAllByText('Not set')).toHaveLength(2);
     for (const label of ['Child projects', 'Tasks', 'Files', 'Chats']) {
       expect(
@@ -215,6 +254,54 @@ describe('ProjectOverviewSection', () => {
       ).toContain('0');
     }
     expect(view.container.querySelector('.card')).toBeNull();
+    expect(
+      view.container.querySelector('[data-row="Progress"]')?.textContent
+    ).toContain('No tasks');
+    expect(
+      view.container.querySelector('[data-row="Risk"]')?.textContent
+    ).toContain('No current risks');
+    for (const label of ['Overdue', 'Blocked', 'Unassigned', 'Target risk']) {
+      expect(view.container.querySelector(`[data-row="${label}"]`)).toBeNull();
+    }
+  });
+
+  it('renders unavailable aggregates without risk counts', () => {
+    mocks.query = readyQuery({
+      ...populatedOverview,
+      progress: { ...populatedOverview.progress, hasUnavailableStatuses: true },
+      risk: { ...populatedOverview.risk, hasUnavailableRiskData: true },
+    });
+    const view = renderOverview();
+    expect(
+      view.container.querySelector('[data-row="Progress"]')?.textContent
+    ).toContain('Unavailable');
+    expect(
+      view.container.querySelector('[data-row="Risk"]')?.textContent
+    ).toContain('Unavailable');
+    for (const label of ['Overdue', 'Blocked', 'Unassigned', 'Target risk']) {
+      expect(view.container.querySelector(`[data-row="${label}"]`)).toBeNull();
+    }
+  });
+
+  it('renders only current positive risk facts', () => {
+    mocks.query = readyQuery({
+      ...populatedOverview,
+      risk: {
+        approachingTarget: false,
+        blockedTasks: 0,
+        hasUnavailableRiskData: false,
+        overdueTasks: 2,
+        unassignedTasks: 0,
+      },
+    });
+    const view = renderOverview();
+
+    expect(
+      view.container.querySelector('[data-row="Overdue"]')?.textContent
+    ).toContain('2');
+    for (const label of ['Risk', 'Blocked', 'Unassigned', 'Target risk']) {
+      expect(view.container.querySelector(`[data-row="${label}"]`)).toBeNull();
+    }
   });
 
   it.each(['FORBIDDEN', 'UNAUTHORIZED'])(

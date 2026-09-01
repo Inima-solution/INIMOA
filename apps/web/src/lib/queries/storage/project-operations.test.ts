@@ -68,6 +68,11 @@ const projectOverviewA: GetProjectOverview200DataOneOf = {
     tasks: 0,
   },
   operations: projectA,
+  progress: {
+    completedTasks: 0,
+    hasUnavailableStatuses: false,
+    includedTasks: 0,
+  },
   project: {
     createdAt: '2026-08-28T00:00:00.000Z',
     deletedAt: null,
@@ -76,6 +81,13 @@ const projectOverviewA: GetProjectOverview200DataOneOf = {
     parentId: null,
     updatedAt: '2026-08-28T01:00:00.000Z',
     userId: 'user-a',
+  },
+  risk: {
+    approachingTarget: false,
+    blockedTasks: 0,
+    hasUnavailableRiskData: false,
+    overdueTasks: 0,
+    unassignedTasks: 0,
   },
   userAccessLevel: 'owner',
 };

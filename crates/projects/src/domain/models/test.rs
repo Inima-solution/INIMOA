@@ -101,6 +101,8 @@ fn project_overview_serializes_only_the_fixed_sections_and_immediate_child_count
             non_task_documents: 3,
             chats: 4,
         },
+        progress: ProjectTaskProgress::new(1, 2, false).unwrap(),
+        risk: ProjectTaskRisk::new(1, 0, 1, true, false).unwrap(),
     };
 
     let value = serde_json::to_value(overview).unwrap();
@@ -111,7 +113,9 @@ fn project_overview_serializes_only_the_fixed_sections_and_immediate_child_count
             "project",
             "userAccessLevel",
             "operations",
-            "immediateChildren"
+            "immediateChildren",
+            "progress",
+            "risk"
         ]
     );
     let children = value["immediateChildren"].as_object().unwrap();
@@ -131,8 +135,36 @@ fn project_overview_serializes_only_the_fixed_sections_and_immediate_child_count
         [
             "immediateChildren",
             "operations",
+            "progress",
             "project",
+            "risk",
             "userAccessLevel"
+        ]
+    );
+    let progress_schema = serde_json::to_value(ProjectTaskProgress::schema()).unwrap();
+    assert_eq!(
+        progress_schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["completedTasks", "hasUnavailableStatuses", "includedTasks"]
+    );
+    let risk_schema = serde_json::to_value(ProjectTaskRisk::schema()).unwrap();
+    assert_eq!(
+        risk_schema["properties"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [
+            "approachingTarget",
+            "blockedTasks",
+            "hasUnavailableRiskData",
+            "overdueTasks",
+            "unassignedTasks"
         ]
     );
     let child_schema = serde_json::to_value(ProjectOverviewImmediateChildren::schema()).unwrap();

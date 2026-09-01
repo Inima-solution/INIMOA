@@ -119,6 +119,7 @@ import type { GetPendingProjectsHandler200 } from './generated/schemas/getPendin
 import type { GetProjectContentResponse } from './generated/schemas/getProjectContentResponse';
 import type { GetProjectOperations200 } from './generated/schemas/getProjectOperations200';
 import type { GetProjectOverview200 } from './generated/schemas/getProjectOverview200';
+import type { GetProjectOverviewParams } from './generated/schemas/getProjectOverviewParams';
 import type { GetProjectResponse } from './generated/schemas/getProjectResponse';
 import type { GetProjectTaskDependencyReadiness200Item } from './generated/schemas/getProjectTaskDependencyReadiness200Item';
 import type { GetSystemSkillsHandler200 } from './generated/schemas/getSystemSkillsHandler200';
@@ -2272,11 +2273,15 @@ export const storageServiceClient = {
       ).map((result) => result.data);
     },
 
-    async getOverview({ id }) {
+    async getOverview({
+      id,
+      asOfDate,
+    }: { id: string } & GetProjectOverviewParams) {
       return (
-        await dssFetch<GetProjectOverview200>(`/v2/projects/${id}/overview`, {
-          method: 'GET',
-        })
+        await dssFetch<GetProjectOverview200>(
+          `/v2/projects/${id}/overview?asOfDate=${encodeURIComponent(asOfDate)}`,
+          { method: 'GET' }
+        )
       ).map((result) => result.data);
     },
 

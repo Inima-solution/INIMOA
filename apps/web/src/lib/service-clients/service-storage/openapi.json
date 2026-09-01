@@ -11103,6 +11103,15 @@
             "schema": {
               "type": "string"
             }
+          },
+          {
+            "name": "asOfDate",
+            "in": "query",
+            "description": "Calendar date in YYYY-MM-DD format",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -11123,7 +11132,9 @@
                             "project",
                             "userAccessLevel",
                             "operations",
-                            "immediateChildren"
+                            "immediateChildren",
+                            "progress",
+                            "risk"
                           ],
                           "properties": {
                             "immediateChildren": {
@@ -11133,6 +11144,10 @@
                             "operations": {
                               "$ref": "#/components/schemas/ProjectOperations",
                               "description": "The canonical project operational metadata."
+                            },
+                            "progress": {
+                              "$ref": "#/components/schemas/ProjectTaskProgress",
+                              "description": "Bounded aggregate progress for live direct tasks only."
                             },
                             "project": {
                               "oneOf": [
@@ -11175,6 +11190,10 @@
                               ],
                               "description": "The canonical project row."
                             },
+                            "risk": {
+                              "$ref": "#/components/schemas/ProjectTaskRisk",
+                              "description": "Bounded aggregate risk for live direct tasks only."
+                            },
                             "userAccessLevel": {
                               "$ref": "#/components/schemas/AccessLevel",
                               "description": "The validated caller access level for this project."
@@ -11189,6 +11208,16 @@
                       "description": "Indicates if an error occurred"
                     }
                   }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
                 }
               }
             }
@@ -22216,7 +22245,9 @@
           "project",
           "userAccessLevel",
           "operations",
-          "immediateChildren"
+          "immediateChildren",
+          "progress",
+          "risk"
         ],
         "properties": {
           "immediateChildren": {
@@ -22226,6 +22257,10 @@
           "operations": {
             "$ref": "#/components/schemas/ProjectOperations",
             "description": "The canonical project operational metadata."
+          },
+          "progress": {
+            "$ref": "#/components/schemas/ProjectTaskProgress",
+            "description": "Bounded aggregate progress for live direct tasks only."
           },
           "project": {
             "oneOf": [
@@ -22267,6 +22302,10 @@
               }
             ],
             "description": "The canonical project row."
+          },
+          "risk": {
+            "$ref": "#/components/schemas/ProjectTaskRisk",
+            "description": "Bounded aggregate risk for live direct tasks only."
           },
           "userAccessLevel": {
             "$ref": "#/components/schemas/AccessLevel",
@@ -25898,6 +25937,67 @@
         "properties": {
           "id": {
             "type": "string"
+          }
+        }
+      },
+      "ProjectTaskProgress": {
+        "type": "object",
+        "description": "Bounded progress totals for the live direct tasks of one project.\n\nThis deliberately contains only aggregate facts: it cannot disclose task\nidentifiers, names, or individual status values.",
+        "required": [
+          "completedTasks",
+          "includedTasks",
+          "hasUnavailableStatuses"
+        ],
+        "properties": {
+          "completedTasks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Direct live tasks whose exact singleton status is Completed."
+          },
+          "hasUnavailableStatuses": {
+            "type": "boolean",
+            "description": "At least one included task had an unusable status representation."
+          },
+          "includedTasks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Direct live tasks included in progress; canceled tasks are excluded."
+          }
+        }
+      },
+      "ProjectTaskRisk": {
+        "type": "object",
+        "description": "Bounded risk totals for the live direct tasks of one project.\n\nThe result intentionally contains aggregate facts only; task identities and\nraw property values never cross the project-domain boundary.",
+        "required": [
+          "overdueTasks",
+          "blockedTasks",
+          "unassignedTasks",
+          "approachingTarget",
+          "hasUnavailableRiskData"
+        ],
+        "properties": {
+          "approachingTarget": {
+            "type": "boolean",
+            "description": "Whether an operational Planned or Active project target falls within seven calendar days."
+          },
+          "blockedTasks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Blocked direct live canonical Tasks; individual task details are redacted."
+          },
+          "hasUnavailableRiskData": {
+            "type": "boolean",
+            "description": "Whether any aggregate risk input was unavailable without exposing its source."
+          },
+          "overdueTasks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Overdue direct live canonical Tasks; individual task details are redacted."
+          },
+          "unassignedTasks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unassigned direct live canonical Tasks; individual task details are redacted."
           }
         }
       }

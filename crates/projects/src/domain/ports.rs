@@ -403,6 +403,7 @@ pub trait ProjectService: Send + Sync + 'static {
         &self,
         receipt: EntityAccessReceipt<ViewAccessLevel>,
         company_receipt: EntityAccessReceipt<ReadProjectWorkScoped>,
+        as_of_date: NaiveDate,
     ) -> impl Future<Output = Result<ProjectOverview, ProjectError>> + Send;
 
     /// Atomically replace operational metadata after typed project/company receipt checks.

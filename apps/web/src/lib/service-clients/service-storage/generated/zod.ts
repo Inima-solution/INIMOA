@@ -27193,6 +27193,10 @@ export const getProjectOverviewParams = zod.object({
   id: zod.string().describe('ID of the project'),
 });
 
+export const getProjectOverviewQueryParams = zod.object({
+  asOfDate: zod.string().describe('Calendar date in YYYY-MM-DD format'),
+});
+
 export const getProjectOverviewResponse = zod.object({
   data: zod
     .object({
@@ -27246,6 +27250,27 @@ export const getProjectOverviewResponse = zod.object({
         .describe(
           'Operational metadata attached one-to-one to a canonical project.\n\nThis model deliberately excludes project content and generic project fields.'
         ),
+      progress: zod
+        .object({
+          completedTasks: zod
+            .number()
+            .describe(
+              'Direct live tasks whose exact singleton status is Completed.'
+            ),
+          hasUnavailableStatuses: zod
+            .boolean()
+            .describe(
+              'At least one included task had an unusable status representation.'
+            ),
+          includedTasks: zod
+            .number()
+            .describe(
+              'Direct live tasks included in progress; canceled tasks are excluded.'
+            ),
+        })
+        .describe(
+          'Bounded progress totals for the live direct tasks of one project.\n\nThis deliberately contains only aggregate facts: it cannot disclose task\nidentifiers, names, or individual status values.'
+        ),
       project: zod
         .object({
           createdAt: zod.iso
@@ -27265,6 +27290,37 @@ export const getProjectOverviewResponse = zod.object({
             .describe('The user id of who created the project'),
         })
         .describe('The canonical project row.'),
+      risk: zod
+        .object({
+          approachingTarget: zod
+            .boolean()
+            .describe(
+              'Whether an operational Planned or Active project target falls within seven calendar days.'
+            ),
+          blockedTasks: zod
+            .number()
+            .describe(
+              'Blocked direct live canonical Tasks; individual task details are redacted.'
+            ),
+          hasUnavailableRiskData: zod
+            .boolean()
+            .describe(
+              'Whether any aggregate risk input was unavailable without exposing its source.'
+            ),
+          overdueTasks: zod
+            .number()
+            .describe(
+              'Overdue direct live canonical Tasks; individual task details are redacted.'
+            ),
+          unassignedTasks: zod
+            .number()
+            .describe(
+              'Unassigned direct live canonical Tasks; individual task details are redacted.'
+            ),
+        })
+        .describe(
+          'Bounded risk totals for the live direct tasks of one project.\n\nThe result intentionally contains aggregate facts only; task identities and\nraw property values never cross the project-domain boundary.'
+        ),
       userAccessLevel: zod
         .enum(['view', 'comment', 'edit', 'owner'])
         .describe('Ordered from least to most access top -> bottom'),
