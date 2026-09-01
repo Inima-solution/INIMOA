@@ -253,6 +253,8 @@ pub struct ProjectTaskRisk {
     pub blocked_tasks: i64,
     /// Unassigned direct live canonical Tasks; individual task details are redacted.
     pub unassigned_tasks: i64,
+    /// Whether an operational Planned or Active project target falls within seven calendar days.
+    pub approaching_target: bool,
     /// Whether any aggregate risk input was unavailable without exposing its source.
     pub has_unavailable_risk_data: bool,
 }
@@ -263,6 +265,7 @@ impl ProjectTaskRisk {
         overdue_tasks: i64,
         blocked_tasks: i64,
         unassigned_tasks: i64,
+        approaching_target: bool,
         has_unavailable_risk_data: bool,
     ) -> Result<Self, ProjectTaskRiskValidationError> {
         if overdue_tasks < 0 || blocked_tasks < 0 || unassigned_tasks < 0 {
@@ -272,6 +275,7 @@ impl ProjectTaskRisk {
             overdue_tasks,
             blocked_tasks,
             unassigned_tasks,
+            approaching_target,
             has_unavailable_risk_data,
         })
     }

@@ -691,7 +691,8 @@ async fn task_risk_uses_one_scoped_read_with_the_caller_selected_date() {
     let team_id = Uuid::from_u128(0x504);
     let actor = user_id("macro|owner@example.com");
     let as_of_date = chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
-    let expected = crate::domain::models::ProjectTaskRisk::new(1, 2, 3, true).unwrap();
+    let expected = crate::domain::models::ProjectTaskRisk::new(1, 2, 3, true, true).unwrap();
+    let expected_from_repo = expected.clone();
     let mut repo = MockProjectRepo::new();
     repo.expect_get_project_task_risk_scoped()
         .once()
@@ -699,7 +700,7 @@ async fn task_risk_uses_one_scoped_read_with_the_caller_selected_date() {
             assert_eq!(id, project_id.to_string());
             assert_eq!(team, team_id);
             assert_eq!(date, as_of_date);
-            Box::pin(async move { Ok(Some(expected)) })
+            Box::pin(async move { Ok(Some(expected_from_repo)) })
         });
     assert_eq!(
         service(repo, RecordingBulkUpload::default())
@@ -713,9 +714,8 @@ async fn task_risk_uses_one_scoped_read_with_the_caller_selected_date() {
                 as_of_date,
             )
             .await
-            .unwrap()
-            .blocked_tasks,
-        2
+            .unwrap(),
+        expected
     );
 }
 

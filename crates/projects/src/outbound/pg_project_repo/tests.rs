@@ -486,7 +486,9 @@ async fn task_risk_is_scoped_fail_closed_and_uses_calendar_date(
                 chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap()
             )
             .await?,
-        Some(crate::domain::models::ProjectTaskRisk::new(0, 0, 0, false)?)
+        Some(crate::domain::models::ProjectTaskRisk::new(
+            0, 0, 0, false, true
+        )?)
     );
     assert!(
         PgProjectRepo::new(pool)
@@ -498,6 +500,101 @@ async fn task_risk_is_scoped_fail_closed_and_uses_calendar_date(
             .await?
             .is_none()
     );
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn task_risk_includes_only_operational_targets_approaching_the_caller_date(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let team = uuid::Uuid::from_u128(0x451);
+    let project = "10000000-0000-0000-0000-000000000451";
+    let zero_project = "10000000-0000-0000-0000-000000000452";
+    let missing_operations_project = "10000000-0000-0000-0000-000000000453";
+    let as_of_date = chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
+    let repo = PgProjectRepo::new(pool.clone());
+
+    sqlx::query(
+        r#"INSERT INTO "team" (id,name,owner_id) VALUES ($1,'target-risk','macro|owner@test.com')"#,
+    )
+    .bind(team)
+    .execute(&pool)
+    .await?;
+    sqlx::query("INSERT INTO team_user (user_id,team_id,team_role) VALUES ('macro|owner@test.com',$1,'owner')")
+        .bind(team)
+        .execute(&pool)
+        .await?;
+    for id in [project, zero_project, missing_operations_project] {
+        sqlx::query(
+            r#"INSERT INTO "Project" (id,name,"userId") VALUES ($1,$1,'macro|owner@test.com')"#,
+        )
+        .bind(id)
+        .execute(&pool)
+        .await?;
+    }
+
+    macro_rules! assert_risk {
+        ($id:expr, $approaching:expr, $unavailable:expr) => {{
+            let risk = repo
+                .get_project_task_risk_scoped($id, team, as_of_date)
+                .await?
+                .expect("scoped project risk");
+            assert_eq!(
+                (
+                    risk.overdue_tasks,
+                    risk.blocked_tasks,
+                    risk.unassigned_tasks,
+                    risk.approaching_target,
+                    risk.has_unavailable_risk_data,
+                ),
+                (0, 0, 0, $approaching, $unavailable)
+            );
+        }};
+    }
+
+    for (status, target_date, approaching) in [
+        ("planned", as_of_date, true),
+        ("active", as_of_date + chrono::Days::new(7), true),
+        ("active", as_of_date - chrono::Days::new(1), false),
+        ("active", as_of_date + chrono::Days::new(8), false),
+        ("paused", as_of_date, false),
+        ("completed", as_of_date, false),
+        ("archived", as_of_date, false),
+    ] {
+        sqlx::query(
+            "UPDATE project_operations SET status = $1, target_date = $2 WHERE project_id = $3",
+        )
+        .bind(status)
+        .bind(target_date)
+        .bind(project)
+        .execute(&pool)
+        .await?;
+        assert_risk!(project, approaching, false);
+    }
+
+    sqlx::query("UPDATE project_operations SET status = 'planned', target_date = NULL WHERE project_id = $1")
+        .bind(project)
+        .execute(&pool)
+        .await?;
+    assert_risk!(project, false, true);
+
+    sqlx::query(
+        "UPDATE project_operations SET status = 'active', target_date = $1 WHERE project_id = $2",
+    )
+    .bind(as_of_date)
+    .bind(zero_project)
+    .execute(&pool)
+    .await?;
+    assert_risk!(zero_project, true, false);
+
+    sqlx::query("DELETE FROM project_operations WHERE project_id = $1")
+        .bind(missing_operations_project)
+        .execute(&pool)
+        .await?;
+    assert_risk!(missing_operations_project, false, true);
     Ok(())
 }
 

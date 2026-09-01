@@ -19,16 +19,17 @@ fn timestamp(value: &str) -> DateTime<Utc> {
 
 #[test]
 fn task_risk_serializes_only_bounded_aggregate_facts_and_rejects_negative_totals() {
-    let risk = ProjectTaskRisk::new(0, 2, 3, true).unwrap();
+    let risk = ProjectTaskRisk::new(0, 2, 3, true, true).unwrap();
     assert_eq!(
         serde_json::to_value(risk).unwrap(),
         json!({
             "overdueTasks": 0, "blockedTasks": 2, "unassignedTasks": 3,
+            "approachingTarget": true,
             "hasUnavailableRiskData": true
         })
     );
     assert!(matches!(
-        ProjectTaskRisk::new(-1, 0, 0, false),
+        ProjectTaskRisk::new(-1, 0, 0, false, false),
         Err(ProjectTaskRiskValidationError::NegativeTotal)
     ));
 }

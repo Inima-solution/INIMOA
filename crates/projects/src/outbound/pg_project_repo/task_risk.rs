@@ -12,7 +12,10 @@ pub(super) async fn get_project_task_risk_scoped(
 ) -> Result<Option<ProjectTaskRisk>, sqlx::Error> {
     let row = sqlx::query(r#"
       WITH scoped_project AS (
-        SELECT p.id FROM "Project" p JOIN team_user m ON m.user_id = p."userId" AND m.team_id = $2
+        SELECT p.id, operations.status AS operations_status, operations.target_date
+        FROM "Project" p
+        JOIN team_user m ON m.user_id = p."userId" AND m.team_id = $2
+        LEFT JOIN project_operations operations ON operations.project_id = p.id
         WHERE p.id = $1 AND p."deletedAt" IS NULL
       ), tasks AS (
         SELECT d.id, s.values status_values, due.values due_values, a.values assignee_values, dep.values dependency_values
@@ -97,7 +100,11 @@ pub(super) async fn get_project_task_risk_scoped(
         FROM source JOIN dependencies dep ON dep.id=source.id
       )
       SELECT risk.overdue_tasks, risk.blocked_tasks, risk.unassigned_tasks,
+        COALESCE(project.operations_status IN ('planned', 'active')
+          AND project.target_date BETWEEN $12 AND ($12 + 7), false) AS approaching_target,
         risk.has_unavailable_risk_data
+          OR project.operations_status IS NULL
+          OR project.target_date IS NULL AS has_unavailable_risk_data
       FROM scoped_project project
       CROSS JOIN LATERAL (
         SELECT COUNT(*) FILTER (WHERE state='open' AND overdue) overdue_tasks,
@@ -117,6 +124,7 @@ pub(super) async fn get_project_task_risk_scoped(
             r.try_get("overdue_tasks")?,
             r.try_get("blocked_tasks")?,
             r.try_get("unassigned_tasks")?,
+            r.try_get("approaching_target")?,
             r.try_get("has_unavailable_risk_data")?,
         )
         .map_err(|e| sqlx::Error::Decode(Box::new(e)))
