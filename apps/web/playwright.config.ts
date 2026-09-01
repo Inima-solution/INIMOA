@@ -204,6 +204,6 @@ export default defineConfig({
         : 'bun run dev',
     url: `http://localhost:${localE2EPort}/app`,
     reuseExistingServer: !process.env.CI && !isLocalE2E,
-    timeout: isLocalE2E ? 60_000 : 15000,
+    timeout: isLocalE2E ? 300_000 : 15000,
   },
 });

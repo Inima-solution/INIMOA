@@ -37,6 +37,7 @@ import {
 } from '@core/util/upload';
 import type { TaskEntityWithProperties } from '@entity';
 import { isTaskEntity } from '@entity/types/entity';
+import { buildEntityData } from '@entity/utils/buildEntityData';
 import { getTaskStatusOptionId } from '@entity/utils/task-properties';
 import { SYSTEM_PROPERTY_IDS } from '@property/constants';
 import { useAllProperties } from '@property/editor/hooks/useAllProperties';
@@ -49,6 +50,7 @@ import { useProjectOverviewQuery } from '@queries/storage/project-overview';
 import { EntityType } from '@service-properties/generated/schemas/entityType';
 import { refetchResources } from '@service-storage/util/refetchResources';
 import { type Component, createMemo, createSignal, Show } from 'solid-js';
+import { projectBlockDataSignal } from '../signal/projectBlockData';
 import { ModalsProvider } from './ModalsProvider';
 import { ProjectTaskDeadlineTimeline } from './ProjectTaskDeadlineTimeline';
 import { ProjectTaskStatusBoard } from './ProjectTaskStatusBoard';
@@ -63,10 +65,21 @@ false && fileSelector;
 const PROJECT_ENTITY_TYPES = ['document', 'task', 'chat', 'project', 'email'];
 
 const Block: Component = () => {
-  useBlockEntityCommands();
-  const [isDragging, setIsDragging] = createSignal(false);
   const projectId = useBlockId();
   const isSpecialProject = getIsSpecialProject(projectId);
+  useBlockEntityCommands(() => {
+    if (isSpecialProject) return undefined;
+    const project = projectBlockDataSignal()?.projectMetadata;
+    return project
+      ? buildEntityData({
+          id: projectId,
+          name: project.name,
+          ownerId: project.userId,
+          blockName: 'project',
+        })
+      : undefined;
+  });
+  const [isDragging, setIsDragging] = createSignal(false);
   // One shared observer keeps the Overview panel and Timeline on identical retained data.
   const projectOverview = useProjectOverviewQuery(() =>
     isSpecialProject ? undefined : projectId

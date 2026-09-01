@@ -149,6 +149,25 @@ fn boot_stubs_are_local_only() {
 }
 
 #[test]
+fn macro_api_token_boot_stubs_use_the_local_rsa_identity() {
+    let env = local_env();
+
+    assert_eq!(
+        env.get("MACRO_API_TOKEN_PRIVATE_SECRET_KEY")
+            .map(String::as_str),
+        Some(identity::MACRO_API_TOKEN_PRIVATE_KEY)
+    );
+    assert_eq!(
+        env.get("MACRO_API_TOKEN_PUBLIC_KEY").map(String::as_str),
+        Some(identity::MACRO_API_TOKEN_PUBLIC_KEY)
+    );
+    assert!(identity::MACRO_API_TOKEN_PRIVATE_KEY.starts_with("-----BEGIN RSA PRIVATE KEY-----\n"));
+    assert!(identity::MACRO_API_TOKEN_PRIVATE_KEY.ends_with("\n-----END RSA PRIVATE KEY-----"));
+    assert!(identity::MACRO_API_TOKEN_PUBLIC_KEY.starts_with("-----BEGIN PUBLIC KEY-----\n"));
+    assert!(identity::MACRO_API_TOKEN_PUBLIC_KEY.ends_with("\n-----END PUBLIC KEY-----"));
+}
+
+#[test]
 fn internal_auth_values_are_authoritative_local_env() {
     let env =
         LocalEnv::for_instance(Mode::Local, &Instance::derive(None, None).unwrap(), true).to_env();

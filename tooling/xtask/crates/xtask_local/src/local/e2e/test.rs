@@ -46,3 +46,18 @@ fn ui_requires_the_web_suite() {
             .contains("only supported with --suite web")
     );
 }
+
+#[test]
+fn local_e2e_rust_commands_force_the_sqlx_offline_cache() {
+    let mut command = Command::new("cargo");
+    command.env("SQLX_OFFLINE", "false");
+
+    force_sqlx_offline(&mut command);
+
+    let offline = command
+        .get_envs()
+        .find(|(key, _)| *key == "SQLX_OFFLINE")
+        .and_then(|(_, value)| value)
+        .map(|value| value.to_string_lossy().into_owned());
+    assert_eq!(offline.as_deref(), Some("true"));
+}

@@ -507,17 +507,17 @@ impl BootStubEnv {
             "local-stripe-webhook-secret".into(),
         );
         // macro_auth's `JwtValidationArgs` (used by every service that mounts
-        // the auth middleware) reads these at boot. The keys are only parsed
-        // when a Macro API token is actually validated — normal local auth
-        // uses FusionAuth JWTs — so dummies are fine.
+        // the auth middleware) reads these at boot. Local E2E signs Macro API
+        // tokens with this deterministic local-only pair, so both the token
+        // generator and the validating services must receive matching PEMs.
         env.insert("MACRO_API_TOKEN_ISSUER".into(), "local".into());
         env.insert(
             "MACRO_API_TOKEN_PUBLIC_KEY".into(),
-            "local-macro-api-token-public-key".into(),
+            identity::MACRO_API_TOKEN_PUBLIC_KEY.into(),
         );
         env.insert(
             "MACRO_API_TOKEN_PRIVATE_SECRET_KEY".into(),
-            "local-macro-api-token-private-key".into(),
+            identity::MACRO_API_TOKEN_PRIVATE_KEY.into(),
         );
         env.insert("MACRO_API_TOKEN_EXPIRY_SECONDS".into(), "3600".into());
         // email_service's GCP pubsub queue (gmail watch notifications) and

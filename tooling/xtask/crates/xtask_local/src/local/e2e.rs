@@ -10,7 +10,8 @@ use clap::{Args, ValueEnum};
 
 use super::cli::{BuildArgs, EnvArgs, InstanceArgs, RunArgs};
 use super::instance::{Instance, Port};
-use super::{Mode, frontend, proxy, repo_root, stack};
+use super::stage::Stage;
+use super::{Mode, db, frontend, proxy, repo_root, stack};
 
 const DEFAULT_INSTANCE: &str = "local-e2e";
 
@@ -135,6 +136,7 @@ pub fn run(args: &LocalE2eArgs) -> Result<()> {
         endpoints.generated_env.display()
     );
 
+    db::wait_read_write(&Stage::from_env(), &instance)?;
     run_seed(&endpoints)?;
     let test_env = endpoints.test_env();
     match args.suite {
@@ -176,8 +178,8 @@ fn run_seed(endpoints: &Endpoints) -> Result<()> {
         .args(["run", "--quiet", "--manifest-path"])
         .arg(repo_root().join("Cargo.toml"))
         .args(["-p", "seed_cli", "--", "scenario", "local-e2e-smoke"])
-        .envs(env)
-        .env_remove("SQLX_OFFLINE");
+        .envs(env);
+    force_sqlx_offline(&mut command);
     require_success(&mut command, "local E2E seed")
 }
 
@@ -196,8 +198,8 @@ fn run_rust(env: &BTreeMap<String, String>, test_args: &[String]) -> Result<()> 
             "--nocapture",
         ])
         .args(test_args)
-        .envs(env)
-        .env_remove("SQLX_OFFLINE");
+        .envs(env);
+    force_sqlx_offline(&mut command);
     require_success(&mut command, "Rust local E2E tests")
 }
 
@@ -223,6 +225,10 @@ fn load_generated_env(path: &Path) -> Result<BTreeMap<String, String>> {
 
 fn cargo_command() -> Command {
     Command::new(std::env::var_os("CARGO").unwrap_or_else(|| OsString::from("cargo")))
+}
+
+fn force_sqlx_offline(command: &mut Command) {
+    command.env("SQLX_OFFLINE", "true");
 }
 
 fn require_success(command: &mut Command, description: &str) -> Result<()> {

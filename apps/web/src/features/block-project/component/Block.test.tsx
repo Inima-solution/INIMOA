@@ -6,6 +6,9 @@ import type { Accessor, ParentProps } from 'solid-js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  blockEntityResolver: undefined as
+    | (() => Record<string, unknown> | undefined)
+    | undefined,
   dependencyProviderTaskIds: [] as string[][],
   dependencyProviderCount: 0,
   boardProps: undefined as
@@ -66,6 +69,7 @@ const mocks = vi.hoisted(() => ({
   soupViewProviderCount: 0,
   openEntityInSplit: vi.fn(),
   projectId: 'project-id',
+  projectMetadata: { name: 'Project Atlas', userId: 'owner-id' },
   projectOverviewAccessors: [] as Array<Accessor<string | undefined>>,
   projectOverviewQuery: {
     data: undefined as
@@ -113,7 +117,11 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('@app/features/next-soup/actions', () => ({
-  useBlockEntityCommands: () => {},
+  useBlockEntityCommands: (
+    resolver?: () => Record<string, unknown> | undefined
+  ) => {
+    mocks.blockEntityResolver = resolver;
+  },
 }));
 vi.mock('@app/features/next-soup/create-soup-state', () => ({
   createSoupState: () => ({}),
@@ -183,6 +191,9 @@ vi.mock('@app/features/next-soup/utils', () => ({
 }));
 vi.mock('@block-project/isSpecial', () => ({
   getIsSpecialProject: (id: string) => id === 'special-project',
+}));
+vi.mock('../signal/projectBlockData', () => ({
+  projectBlockDataSignal: () => ({ projectMetadata: mocks.projectMetadata }),
 }));
 vi.mock('@components/app/side-panel', () => ({
   SidePanel: { Layout: (props: ParentProps) => props.children },
@@ -328,6 +339,7 @@ import Block from './Block';
 afterEach(cleanup);
 
 beforeEach(() => {
+  mocks.blockEntityResolver = undefined;
   mocks.dependencyProviderCount = 0;
   mocks.dependencyProviderTaskIds = [];
   mocks.boardProps = undefined;
@@ -344,6 +356,7 @@ beforeEach(() => {
   mocks.soupViewProviderCount = 0;
   mocks.openEntityInSplit.mockReset();
   mocks.projectId = 'project-id';
+  mocks.projectMetadata = { name: 'Project Atlas', userId: 'owner-id' };
   mocks.projectOverviewAccessors = [];
   mocks.projectOverviewQuery = {
     data: undefined,
@@ -376,6 +389,24 @@ beforeEach(() => {
   vi.mocked(refetchSoupEntity).mockReset();
   vi.mocked(refetchResources).mockReset();
   vi.mocked(toast.failure).mockReset();
+});
+
+it('resolves the current project for block-scoped entity commands', () => {
+  render(() => <Block />);
+
+  expect(mocks.blockEntityResolver?.()).toMatchObject({
+    id: 'project-id',
+    name: 'Project Atlas',
+    ownerId: 'owner-id',
+    type: 'project',
+  });
+});
+
+it('does not resolve special projects for entity commands', () => {
+  mocks.projectId = 'special-project';
+  render(() => <Block />);
+
+  expect(mocks.blockEntityResolver?.()).toBeUndefined();
 });
 
 describe('project native drop upload lifecycle', () => {

@@ -264,6 +264,7 @@ function SidePanelHeaderToggle() {
           'border-transparent! hover:bg-transparent! active:bg-transparent! focus-visible:bg-transparent! active:text-accent',
         isTouchDevice() && ctx.isOpen() && 'text-accent'
       )}
+      aria-label={ctx.isOpen() ? 'Hide Side Panel' : 'Show Side Panel'}
       tooltip={ctx.isOpen() ? 'Hide Side Panel' : 'Show Side Panel'}
       hotkey={TOKENS.block.toggleSidePanel}
       onClick={() => ctx.toggle()}
