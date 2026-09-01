@@ -1,11 +1,16 @@
 use super::*;
-use macro_event_broker::Event;
+use macro_event_broker::{Event, MacroEventCollection};
 use macro_user_id::cowlike::CowLike;
 use properties::domain::events::{
     PropertyTopicEvent, TaskReadyMetadata as SourceTaskReadyMetadata,
 };
+use sqlx::{PgPool, Postgres};
 use std::sync::Mutex;
+use system_properties::{StatusOption, SystemPropertyKey};
 use uuid::Uuid;
+
+static MACRO_DB_MIGRATIONS: sqlx::migrate::Migrator =
+    sqlx::migrate!("../../crates/macro_db_client/migrations");
 
 struct FakeAccess {
     denied_user: Option<&'static str>,
@@ -46,6 +51,160 @@ fn snapshot(
             })
             .collect(),
     }
+}
+
+async fn live_task(pool: &PgPool, id: Uuid, name: &str) -> anyhow::Result<()> {
+    sqlx::query(
+        r#"INSERT INTO "Document" (id, name, owner, "projectId")
+           VALUES ($1, $2, 'task-dependencies-owner', 'task-dependencies-project-a')"#,
+    )
+    .bind(id.to_string())
+    .bind(name)
+    .execute(pool)
+    .await?;
+    sqlx::query("INSERT INTO document_sub_type (document_id, sub_type) VALUES ($1, 'task')")
+        .bind(id.to_string())
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+async fn task_property(
+    pool: &PgPool,
+    task_id: Uuid,
+    property_definition_id: Uuid,
+    values: serde_json::Value,
+) -> anyhow::Result<()> {
+    sqlx::query(
+        "INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4) ON CONFLICT (entity_id, entity_type, property_definition_id) DO UPDATE SET values = EXCLUDED.values",
+    )
+    .bind(Uuid::new_v4())
+    .bind(task_id.to_string())
+    .bind(property_definition_id)
+    .bind(values)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+async fn task_status(pool: &PgPool, task_id: Uuid, status: StatusOption) -> anyhow::Result<()> {
+    task_property(
+        pool,
+        task_id,
+        SystemPropertyKey::STATUS_UUID,
+        serde_json::json!({"type":"SelectOption","value":[status.uuid()]}),
+    )
+    .await
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(
+        path = "../../../../../crates/properties/fixtures",
+        scripts("task_dependencies_seed")
+    )
+)]
+async fn migrated_ready_snapshot_filters_access_and_suppresses_stale_event(
+    pool: sqlx::Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let predecessor_id = Uuid::from_u128(0x401);
+    let task_id = Uuid::from_u128(0x402);
+    let original_event_id = Uuid::from_u128(0x403);
+    let stale_event_id = Uuid::from_u128(0x404);
+    let permitted_user = "macro|permitted@example.com";
+    let denied_user = "macro|denied@example.com";
+
+    live_task(&pool, predecessor_id, "Completed predecessor").await?;
+    live_task(&pool, task_id, "Canonical live dependent task").await?;
+    task_status(&pool, predecessor_id, StatusOption::Completed).await?;
+    task_status(&pool, task_id, StatusOption::NotStarted).await?;
+    task_property(
+        &pool,
+        task_id,
+        SystemPropertyKey::DEPENDS_ON_UUID,
+        serde_json::json!({"type":"EntityReference","value":[{
+            "entity_id": predecessor_id,
+            "entity_type":"TASK",
+            "specific_message_id": null
+        }]}),
+    )
+    .await?;
+    task_property(
+        &pool,
+        task_id,
+        SystemPropertyKey::ASSIGNEES_UUID,
+        serde_json::json!({"type":"EntityReference","value":[
+            {"entity_id": permitted_user, "entity_type":"USER", "specific_message_id": null},
+            {"entity_id": permitted_user, "entity_type":"USER", "specific_message_id": null},
+            {"entity_id": denied_user, "entity_type":"USER", "specific_message_id": null}
+        ]}),
+    )
+    .await?;
+
+    let snapshot = properties::outbound::task_ready_notification_queries::load_current_task_ready_notification(
+        &pool, task_id,
+    )
+    .await?
+    .expect("the completed predecessor makes the live dependent task ready");
+    assert_eq!(snapshot.task_name, "Canonical live dependent task");
+    assert_eq!(snapshot.recipient_ids.len(), 2);
+
+    let ingress = FakeIngress::default();
+    assert_eq!(
+        dispatch_snapshot(
+            &FakeAccess {
+                denied_user: Some(denied_user),
+                fail: false,
+            },
+            &ingress,
+            original_event_id,
+            task_id,
+            snapshot,
+        )
+        .await?,
+        MaterializeOutcome::Enqueued
+    );
+    let requests = ingress.0.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert_eq!(request["uuid_to_write"], original_event_id.to_string());
+    assert_eq!(
+        request["req"]["notification_entity"]["entity_type"],
+        "document"
+    );
+    assert_eq!(
+        request["req"]["notification_entity"]["entity_id"],
+        task_id.to_string()
+    );
+    assert_eq!(
+        request["req"]["notification"]["content"]["taskId"],
+        task_id.to_string()
+    );
+    assert_eq!(
+        request["req"]["notification"]["content"]["taskName"],
+        "Canonical live dependent task"
+    );
+    assert_eq!(
+        request["req"]["recipient_ids"],
+        serde_json::json!([permitted_user])
+    );
+    assert!(request["build_apns"].is_object());
+    assert_eq!(request["send_conn_gateway"], true);
+    assert!(!request.to_string().contains(denied_user));
+    assert!(!request.to_string().contains(&predecessor_id.to_string()));
+    drop(requests);
+
+    task_status(&pool, predecessor_id, StatusOption::NotStarted).await?;
+    let stale_snapshot = properties::outbound::task_ready_notification_queries::load_current_task_ready_notification(
+        &pool, task_id,
+    )
+    .await?;
+    assert!(
+        stale_snapshot.is_none(),
+        "stale event {stale_event_id} must be suppressed"
+    );
+    assert_eq!(ingress.0.lock().unwrap().len(), 1);
+    Ok(())
 }
 
 #[tokio::test]
