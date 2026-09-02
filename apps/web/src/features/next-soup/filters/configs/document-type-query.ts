@@ -33,7 +33,7 @@ const documentTypeExpressions: Record<
     op: 'and',
     clauses: [
       { include: { fileType: ['md'] } },
-      { exclude: { subType: ['snippet', 'task', 'skill'] } },
+      { exclude: { subType: ['snippet', 'task', 'skill', 'decision'] } },
     ],
   },
   'doc-canvas': { include: { fileType: ['canvas'] } },

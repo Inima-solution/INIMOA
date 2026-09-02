@@ -30,4 +30,7 @@ pub enum DocumentSubType {
     /// A skill document — a markdown document containing instructions that AI
     /// can read and follow when referenced in an AI input
     Skill,
+    /// A project decision record whose body remains a normal collaborative
+    /// markdown document.
+    Decision,
 }

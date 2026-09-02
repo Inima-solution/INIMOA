@@ -268,7 +268,10 @@ export function setPreviewOnCreate({
   itemType: Exclude<ItemType, 'calendar_event'>;
   name?: string;
   fileType?: string;
-  subType?: { type: 'task' | 'snippet' | 'skill'; is_completed?: boolean };
+  subType?: {
+    type: 'task' | 'snippet' | 'skill' | 'decision';
+    is_completed?: boolean;
+  };
 }) {
   const defaultPreviewItem: AccessiblePreviewItem = {
     id: itemId,

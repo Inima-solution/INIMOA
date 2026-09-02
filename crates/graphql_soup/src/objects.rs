@@ -632,6 +632,13 @@ pub struct GraphqlSkillSubType {
     nothing: bool,
 }
 
+/// Represents a Decision subtype without duplicating its system properties.
+#[derive(SimpleObject)]
+pub struct GraphqlDecisionSubType {
+    /// This object has no fields yet, but GraphQL objects require one.
+    nothing: bool,
+}
+
 /// GraphQL representation of the soup document sub type.
 #[derive(Union)]
 pub enum GraphqlSoupDocumentSubType {
@@ -641,6 +648,8 @@ pub enum GraphqlSoupDocumentSubType {
     Snippet(GraphqlSnippetSubType),
     /// the sub type is a skill
     Skill(GraphqlSkillSubType),
+    /// the sub type is a Decision document
+    Decision(GraphqlDecisionSubType),
 }
 
 impl GraphqlSoupDocumentSubType {
@@ -654,6 +663,9 @@ impl GraphqlSoupDocumentSubType {
                 Self::Snippet(GraphqlSnippetSubType { nothing: false })
             }
             SoupDocumentSubType::Skill {} => Self::Skill(GraphqlSkillSubType { nothing: false }),
+            SoupDocumentSubType::Decision {} => {
+                Self::Decision(GraphqlDecisionSubType { nothing: false })
+            }
         }
     }
 }

@@ -21,6 +21,8 @@ pub enum SoupDocumentSubType {
     Snippet {},
     /// A skill document — markdown instructions for AI
     Skill {},
+    /// A project decision record backed by collaborative markdown.
+    Decision {},
 }
 
 impl SoupDocumentSubType {
@@ -33,6 +35,7 @@ impl SoupDocumentSubType {
             }),
             DocumentSubType::Snippet => Some(Self::Snippet {}),
             DocumentSubType::Skill => Some(Self::Skill {}),
+            DocumentSubType::Decision => Some(Self::Decision {}),
         }
     }
 
@@ -40,7 +43,7 @@ impl SoupDocumentSubType {
     pub fn is_task_completed(&self) -> Option<bool> {
         match self {
             Self::Task { is_completed } => Some(*is_completed),
-            Self::Snippet {} | Self::Skill {} => None,
+            Self::Snippet {} | Self::Skill {} | Self::Decision {} => None,
         }
     }
 }
@@ -122,9 +125,35 @@ impl<T> SoupDocument<T> {
     pub fn entity_type(&self) -> EntityType {
         match &self.sub_type {
             Some(SoupDocumentSubType::Task { .. }) => EntityType::Task,
-            Some(SoupDocumentSubType::Snippet {} | SoupDocumentSubType::Skill {}) | None => {
-                EntityType::Document
-            }
+            Some(
+                SoupDocumentSubType::Snippet {}
+                | SoupDocumentSubType::Skill {}
+                | SoupDocumentSubType::Decision {},
+            )
+            | None => EntityType::Document,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decision_subtype_round_trips_and_is_not_a_task() {
+        let subtype = SoupDocumentSubType::from_db(Some(DocumentSubType::Decision), Some(true))
+            .expect("Decision subtype should materialize");
+
+        assert_eq!(
+            serde_json::to_value(&subtype).unwrap(),
+            serde_json::json!({ "type": "decision" })
+        );
+        assert_eq!(subtype.is_task_completed(), None);
+
+        let decoded: SoupDocumentSubType = serde_json::from_value(serde_json::json!({
+            "type": "decision"
+        }))
+        .unwrap();
+        assert!(matches!(decoded, SoupDocumentSubType::Decision {}));
     }
 }

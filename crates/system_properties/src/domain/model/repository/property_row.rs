@@ -76,6 +76,24 @@ impl PropertyRow {
         }
     }
 
+    /// Create a single select-option property row.
+    pub fn select_option(
+        entity_id: impl Into<String>,
+        entity_type: EntityType,
+        property_definition_id: Uuid,
+        option_id: Uuid,
+    ) -> Self {
+        Self {
+            entity_id: entity_id.into(),
+            entity_type,
+            property_definition_id,
+            values: serde_json::json!({
+                "type": "SelectOption",
+                "value": [option_id]
+            }),
+        }
+    }
+
     /// Create a property row with a null JSON value.
     ///
     /// Used to initialize system properties with empty/null values.
@@ -89,6 +107,22 @@ impl PropertyRow {
             entity_type,
             property_definition_id,
             values: serde_json::Value::Null,
+        }
+    }
+
+    /// Rehydrate a value already validated and stored by the properties
+    /// service. This is intentionally crate-visible for bounded copy paths.
+    pub(crate) fn raw_value(
+        entity_id: impl Into<String>,
+        entity_type: EntityType,
+        property_definition_id: Uuid,
+        values: serde_json::Value,
+    ) -> Self {
+        Self {
+            entity_id: entity_id.into(),
+            entity_type,
+            property_definition_id,
+            values,
         }
     }
 

@@ -294,6 +294,52 @@ export async function createSkill(
   return documentId;
 }
 
+type CreateDecisionArgs = {
+  title?: string;
+  content?: string;
+  projectId: string;
+  /** UI surface the creation originated from, for analytics. */
+  source?: string;
+};
+
+/**
+ * Creates a Decision in a project and initializes collaborative markdown.
+ */
+export async function createDecision(
+  args: CreateDecisionArgs
+): Promise<string | undefined> {
+  const result = await storageServiceClient.createDecision({
+    decisionName: args.title ?? '',
+    markdown: args.content ?? '',
+    projectId: args.projectId,
+  });
+
+  invalidateUserQuota();
+
+  if (result.isErr()) return;
+
+  const { documentId } = result.value;
+
+  setPreviewOnCreate({
+    itemId: documentId,
+    itemType: 'document',
+    name: args.title ?? '',
+    fileType: 'md',
+    subType: { type: 'decision' },
+  });
+  refetchSoupEntity(documentId, 'document', { ownTouch: true });
+  void invalidateProjectOverviews(args.projectId);
+
+  analytics.track('create_entity', {
+    entityType: 'decision',
+    entityId: documentId,
+    projectId: args.projectId,
+    source: args.source,
+  });
+
+  return documentId;
+}
+
 export async function createCodeFileFromText({
   code,
   extension,

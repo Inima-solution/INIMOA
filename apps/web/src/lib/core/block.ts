@@ -88,7 +88,13 @@ export type BlockName = (typeof BlockRegistry)[BlockNameKeys];
  * List of strongly-typed, valid aliases that can be used as pseudo-differentiated
  * block types.
  */
-export const BlockAliasRegistry = ['csv', 'task', 'snippet', 'skill'] as const;
+export const BlockAliasRegistry = [
+  'csv',
+  'task',
+  'snippet',
+  'skill',
+  'decision',
+] as const;
 
 type BlockAliasKeys = keyof typeof BlockAliasRegistry & number;
 
@@ -167,6 +173,7 @@ const _ValidBlockCombinations: BlockCombinationRules = {
   task: allBlockNames,
   snippet: allBlockNames,
   skill: allBlockNames,
+  decision: allBlockNames,
   automation: allBlockNames,
   csv: allBlockNames,
   pr: allBlockNames,
@@ -194,6 +201,7 @@ export const ValidNestingCombinations: BlockCombinationRules = {
   task: new Set([]),
   snippet: new Set([]),
   skill: new Set([]),
+  decision: new Set([]),
   automation: new Set([]),
   csv: new Set([]),
   pr: new Set([]),

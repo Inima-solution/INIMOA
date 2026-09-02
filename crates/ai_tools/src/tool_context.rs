@@ -387,6 +387,9 @@ impl TaskPropertiesPort for NoOpTaskProperties {
     async fn attach_task_properties(&self, _entity_ids: Vec<String>) -> anyhow::Result<()> {
         Ok(())
     }
+    async fn attach_decision_properties(&self, _entity_ids: Vec<String>) -> anyhow::Result<()> {
+        Ok(())
+    }
     async fn set_entity_property(
         &self,
         _user_id: &str,
@@ -400,6 +403,13 @@ impl TaskPropertiesPort for NoOpTaskProperties {
         &self,
         _from_task_id: &str,
         _to_task_id: &str,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn copy_decision_properties(
+        &self,
+        _from_document_id: &str,
+        _to_document_id: &str,
     ) -> anyhow::Result<()> {
         Ok(())
     }
@@ -420,6 +430,13 @@ impl TaskPropertiesPort for TaskPropertiesAdapter {
     async fn attach_task_properties(&self, entity_ids: Vec<String>) -> anyhow::Result<()> {
         self.system_properties
             .attach_task_properties(entity_ids)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn attach_decision_properties(&self, entity_ids: Vec<String>) -> anyhow::Result<()> {
+        self.system_properties
+            .attach_decision_properties(entity_ids)
             .await
             .map_err(Into::into)
     }
@@ -479,6 +496,17 @@ impl TaskPropertiesPort for TaskPropertiesAdapter {
     ) -> anyhow::Result<()> {
         self.system_properties
             .copy_task_properties(from_task_id, to_task_id)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn copy_decision_properties(
+        &self,
+        from_document_id: &str,
+        to_document_id: &str,
+    ) -> anyhow::Result<()> {
+        self.system_properties
+            .copy_decision_properties(from_document_id, to_document_id)
             .await
             .map_err(Into::into)
     }

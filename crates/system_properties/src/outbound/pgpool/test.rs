@@ -3,7 +3,7 @@
 use models_properties::EntityType;
 
 use super::*;
-use crate::domain::model::{PropertyRow, SystemPropertyKey};
+use crate::domain::model::{DecisionStateOption, PropertyRow, SystemPropertyKey};
 use crate::domain::service::{SystemPropertiesService, SystemPropertiesServiceImpl};
 use macro_db_migrator::MACRO_DB_MIGRATIONS;
 use sqlx::{Pool, Postgres};
@@ -534,6 +534,159 @@ async fn test_copy_task_properties_preserves_start_date_and_null(
             expected
         );
     }
+
+    Ok(())
+}
+
+#[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
+async fn decision_attach_is_bounded_and_does_not_overwrite_existing_state(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let service = SystemPropertiesServiceImpl::new(PgSystemPropertiesRepository::new(pool.clone()));
+    let decision_id = "decision-attach-idempotent";
+
+    service
+        .attach_decision_properties(vec![decision_id.to_owned()])
+        .await?;
+    assert_eq!(
+        sqlx::query_scalar::<_, Option<serde_json::Value>>(
+            "SELECT values FROM entity_properties WHERE entity_id = $1 AND entity_type = 'DOCUMENT' AND property_definition_id = $2",
+        )
+        .bind(decision_id)
+        .bind(SystemPropertyKey::DECISION_STATE_UUID)
+        .fetch_one(&pool)
+        .await?,
+        Some(serde_json::json!({
+            "type": "SelectOption",
+            "value": [DecisionStateOption::PROPOSED_UUID]
+        }))
+    );
+    sqlx::query(
+        "UPDATE entity_properties SET values = $1 WHERE entity_id = $2 AND entity_type = 'DOCUMENT' AND property_definition_id = $3",
+    )
+    .bind(serde_json::json!({
+        "type": "SelectOption",
+        "value": [DecisionStateOption::ACCEPTED_UUID]
+    }))
+    .bind(decision_id)
+    .bind(SystemPropertyKey::DECISION_STATE_UUID)
+    .execute(&pool)
+    .await?;
+
+    service
+        .attach_decision_properties(vec![decision_id.to_owned()])
+        .await?;
+
+    let rows = sqlx::query_as::<_, (Uuid, Option<serde_json::Value>)>(
+        "SELECT property_definition_id, values FROM entity_properties WHERE entity_id = $1 AND entity_type = 'DOCUMENT' ORDER BY property_definition_id",
+    )
+    .bind(decision_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(rows.len(), 4);
+    assert_eq!(
+        rows.iter()
+            .find(|(id, _)| *id == SystemPropertyKey::DECISION_STATE_UUID)
+            .and_then(|(_, value)| value.clone()),
+        Some(serde_json::json!({
+            "type": "SelectOption",
+            "value": [DecisionStateOption::ACCEPTED_UUID]
+        }))
+    );
+    assert!(rows.iter().all(|(id, _)| {
+        [
+            SystemPropertyKey::DECISION_STATE_UUID,
+            SystemPropertyKey::DECIDED_BY_UUID,
+            SystemPropertyKey::DECIDED_AT_UUID,
+            SystemPropertyKey::DECISION_SOURCES_UUID,
+        ]
+        .contains(id)
+    }));
+
+    Ok(())
+}
+
+#[sqlx::test(migrator = "MACRO_DB_MIGRATIONS")]
+async fn decision_copy_preserves_only_decision_values(pool: Pool<Postgres>) -> anyhow::Result<()> {
+    let service = SystemPropertiesServiceImpl::new(PgSystemPropertiesRepository::new(pool.clone()));
+    let source = "decision-copy-source";
+    let destination = "decision-copy-destination";
+    let values = [
+        (
+            SystemPropertyKey::DECISION_STATE_UUID,
+            serde_json::json!({
+                "type": "SelectOption",
+                "value": [DecisionStateOption::SUPERSEDED_UUID]
+            }),
+        ),
+        (
+            SystemPropertyKey::DECIDED_BY_UUID,
+            serde_json::json!({
+                "type": "EntityReference",
+                "value": [{"entity_type": "USER", "entity_id": "macro|decider@example.test"}]
+            }),
+        ),
+        (
+            SystemPropertyKey::DECIDED_AT_UUID,
+            serde_json::json!({"type": "Date", "value": "2026-09-03T03:00:00Z"}),
+        ),
+        (
+            SystemPropertyKey::DECISION_SOURCES_UUID,
+            serde_json::json!({
+                "type": "Link",
+                "value": ["https://example.test/source-a", "https://example.test/source-b"]
+            }),
+        ),
+    ];
+
+    service
+        .attach_decision_properties(vec![source.to_owned()])
+        .await?;
+    for (property_id, value) in &values {
+        sqlx::query(
+            "UPDATE entity_properties SET values = $1 WHERE entity_id = $2 AND entity_type = 'DOCUMENT' AND property_definition_id = $3",
+        )
+        .bind(value)
+        .bind(source)
+        .bind(property_id)
+        .execute(&pool)
+        .await?;
+    }
+    sqlx::query(
+        "INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'DOCUMENT', $3, $4)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(source)
+    .bind(SystemPropertyKey::SUBJECT_UUID)
+    .bind(serde_json::json!({"type": "String", "value": "not a Decision property"}))
+    .execute(&pool)
+    .await?;
+
+    service
+        .copy_decision_properties(source, destination)
+        .await?;
+
+    let copied = sqlx::query_as::<_, (Uuid, Option<serde_json::Value>)>(
+        "SELECT property_definition_id, values FROM entity_properties WHERE entity_id = $1 AND entity_type = 'DOCUMENT' ORDER BY property_definition_id",
+    )
+    .bind(destination)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(copied.len(), 4);
+    for (property_id, expected) in values {
+        assert_eq!(
+            copied
+                .iter()
+                .find(|(id, _)| *id == property_id)
+                .and_then(|(_, value)| value.clone()),
+            Some(expected)
+        );
+    }
+    assert!(
+        !copied
+            .iter()
+            .any(|(id, _)| *id == SystemPropertyKey::SUBJECT_UUID)
+    );
 
     Ok(())
 }

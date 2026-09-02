@@ -422,7 +422,7 @@ export const editCommentResponse = zod
         .union([
           zod.null(),
           zod
-            .enum(['task', 'snippet', 'skill'])
+            .enum(['task', 'snippet', 'skill', 'decision'])
             .describe(
               'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
             ),
@@ -4617,7 +4617,7 @@ export const getUserDocumentsHandlerResponse = zod.object({
               .union([
                 zod.null(),
                 zod
-                  .enum(['task', 'snippet', 'skill'])
+                  .enum(['task', 'snippet', 'skill', 'decision'])
                   .describe(
                     'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
                   ),
@@ -4786,7 +4786,7 @@ export const createDocumentResponse = zod.object({
             .union([
               zod.null(),
               zod
-                .enum(['task', 'snippet', 'skill'])
+                .enum(['task', 'snippet', 'skill', 'decision'])
                 .describe(
                   'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
                 ),
@@ -4866,6 +4866,32 @@ export const createDocumentResponse = zod.object({
     .describe('Data to be returned'),
   error: zod.boolean().describe('Indicates if an error occurred'),
 });
+
+/**
+ * @summary Create a project-scoped Decision backed by collaborative markdown.
+ */
+export const createDecisionHandlerBody = zod
+  .object({
+    decisionName: zod.string().describe('The Decision title.'),
+    markdown: zod
+      .string()
+      .nullish()
+      .describe(
+        'Markdown source text. Defaults to an empty Decision document.'
+      ),
+    projectId: zod.uuid().describe('The project that owns this Decision.'),
+  })
+  .describe(
+    'Request body for creating a project-scoped Decision markdown document.'
+  );
+
+export const createDecisionHandlerResponse = zod
+  .object({
+    documentId: zod
+      .string()
+      .describe('The document ID of the created Decision.'),
+  })
+  .describe('Response for creating a Decision document.');
 
 /**
  * @summary Creates and initializes a markdown document in one backend-owned lifecycle.
@@ -4962,7 +4988,7 @@ export const createMarkdownHandlerResponse = zod
         .union([
           zod.null(),
           zod
-            .enum(['task', 'snippet', 'skill'])
+            .enum(['task', 'snippet', 'skill', 'decision'])
             .describe(
               'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
             ),
@@ -5274,7 +5300,7 @@ export const createTaskHandlerResponse = zod
         .union([
           zod.null(),
           zod
-            .enum(['task', 'snippet', 'skill'])
+            .enum(['task', 'snippet', 'skill', 'decision'])
             .describe(
               'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
             ),
@@ -5474,6 +5500,13 @@ export const getBatchPreviewHandlerResponse = zod.object({
                     .describe(
                       'A skill document — markdown instructions for AI'
                     ),
+                  zod
+                    .object({
+                      type: zod.enum(['decision']),
+                    })
+                    .describe(
+                      'A project decision record backed by collaborative markdown.'
+                    ),
                 ])
                 .describe(
                   'The sub type of a document preview with associated properties.\nTask-related properties are encoded within the variant to ensure valid states.'
@@ -5603,6 +5636,13 @@ export const getDocumentByTeamSlugResponse = zod.object({
                         })
                         .describe(
                           'A skill document — markdown instructions for AI'
+                        ),
+                      zod
+                        .object({
+                          type: zod.enum(['decision']),
+                        })
+                        .describe(
+                          'A project decision record backed by collaborative markdown.'
                         ),
                     ])
                     .describe(
@@ -5802,7 +5842,7 @@ export const getDocumentResponse = zod.object({
             .union([
               zod.null(),
               zod
-                .enum(['task', 'snippet', 'skill'])
+                .enum(['task', 'snippet', 'skill', 'decision'])
                 .describe(
                   'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
                 ),
@@ -5974,7 +6014,7 @@ export const saveDocumentHandlerResponse = zod.object({
         .union([
           zod.null(),
           zod
-            .enum(['task', 'snippet', 'skill'])
+            .enum(['task', 'snippet', 'skill', 'decision'])
             .describe(
               'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
             ),
@@ -6653,7 +6693,7 @@ export const copyDocumentResponse = zod
               .union([
                 zod.null(),
                 zod
-                  .enum(['task', 'snippet', 'skill'])
+                  .enum(['task', 'snippet', 'skill', 'decision'])
                   .describe(
                     'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
                   ),
@@ -7086,7 +7126,7 @@ export const getDocumentLocationV3Response = zod
               .union([
                 zod.null(),
                 zod
-                  .enum(['task', 'snippet', 'skill'])
+                  .enum(['task', 'snippet', 'skill', 'decision'])
                   .describe(
                     'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
                   ),
@@ -7142,7 +7182,7 @@ export const getDocumentLocationV3Response = zod
               .union([
                 zod.null(),
                 zod
-                  .enum(['task', 'snippet', 'skill'])
+                  .enum(['task', 'snippet', 'skill', 'decision'])
                   .describe(
                     'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
                   ),
@@ -7209,7 +7249,7 @@ export const getDocumentLocationV3Response = zod
               .union([
                 zod.null(),
                 zod
-                  .enum(['task', 'snippet', 'skill'])
+                  .enum(['task', 'snippet', 'skill', 'decision'])
                   .describe(
                     'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
                   ),
@@ -7378,7 +7418,7 @@ export const simpleSaveResponse = zod.object({
         .union([
           zod.null(),
           zod
-            .enum(['task', 'snippet', 'skill'])
+            .enum(['task', 'snippet', 'skill', 'decision'])
             .describe(
               'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
             ),
@@ -7562,7 +7602,7 @@ export const getDocumentVersionResponse = zod.object({
         .union([
           zod.null(),
           zod
-            .enum(['task', 'snippet', 'skill'])
+            .enum(['task', 'snippet', 'skill', 'decision'])
             .describe(
               'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
             ),
@@ -8026,6 +8066,13 @@ export const getHistoryHandlerResponse = zod.object({
                     })
                     .describe(
                       'A skill document — markdown instructions for AI'
+                    ),
+                  zod
+                    .object({
+                      type: zod.enum(['decision']),
+                    })
+                    .describe(
+                      'A project decision record backed by collaborative markdown.'
                     ),
                 ])
                 .describe(
@@ -8494,6 +8541,13 @@ export const getItemsSoupResponse = zod
                               })
                               .describe(
                                 'A skill document — markdown instructions for AI'
+                              ),
+                            zod
+                              .object({
+                                type: zod.enum(['decision']),
+                              })
+                              .describe(
+                                'A project decision record backed by collaborative markdown.'
                               ),
                           ])
                           .describe(
@@ -12238,6 +12292,13 @@ export const postItemsSoupResponse = zod
                               .describe(
                                 'A skill document — markdown instructions for AI'
                               ),
+                            zod
+                              .object({
+                                type: zod.enum(['decision']),
+                              })
+                              .describe(
+                                'A project decision record backed by collaborative markdown.'
+                              ),
                           ])
                           .describe(
                             'Sub type of a document with associated properties encoded in each variant.\nThis ensures type-safety: task properties only exist when the document is a task.'
@@ -15344,6 +15405,13 @@ export const postItemsSoupAstResponse = zod
                               })
                               .describe(
                                 'A skill document — markdown instructions for AI'
+                              ),
+                            zod
+                              .object({
+                                type: zod.enum(['decision']),
+                              })
+                              .describe(
+                                'A project decision record backed by collaborative markdown.'
                               ),
                           ])
                           .describe(
@@ -18709,6 +18777,13 @@ export const postItemsSoupAstGroupedResponse = zod
                                     .describe(
                                       'A skill document — markdown instructions for AI'
                                     ),
+                                  zod
+                                    .object({
+                                      type: zod.enum(['decision']),
+                                    })
+                                    .describe(
+                                      'A project decision record backed by collaborative markdown.'
+                                    ),
                                 ])
                                 .describe(
                                   'Sub type of a document with associated properties encoded in each variant.\nThis ensures type-safety: task properties only exist when the document is a task.'
@@ -21819,6 +21894,13 @@ export const postItemsSoupAstGroupedResponse = zod
                                     .describe(
                                       'A skill document — markdown instructions for AI'
                                     ),
+                                  zod
+                                    .object({
+                                      type: zod.enum(['decision']),
+                                    })
+                                    .describe(
+                                      'A project decision record backed by collaborative markdown.'
+                                    ),
                                 ])
                                 .describe(
                                   'Sub type of a document with associated properties encoded in each variant.\nThis ensures type-safety: task properties only exist when the document is a task.'
@@ -24668,6 +24750,13 @@ export const getPinsHandlerResponse = zod.object({
                             .describe(
                               'A skill document — markdown instructions for AI'
                             ),
+                          zod
+                            .object({
+                              type: zod.enum(['decision']),
+                            })
+                            .describe(
+                              'A project decision record backed by collaborative markdown.'
+                            ),
                         ])
                         .describe(
                           'Sub type of a document with associated properties encoded in each variant.\nThis ensures type-safety: task properties only exist when the document is a task.'
@@ -24812,6 +24901,13 @@ export const getPinsHandlerResponse = zod.object({
                             })
                             .describe(
                               'A skill document — markdown instructions for AI'
+                            ),
+                          zod
+                            .object({
+                              type: zod.enum(['decision']),
+                            })
+                            .describe(
+                              'A project decision record backed by collaborative markdown.'
                             ),
                         ])
                         .describe(
@@ -26217,6 +26313,13 @@ export const getProjectContentHandlerResponse = zod.object({
                       .describe(
                         'A skill document — markdown instructions for AI'
                       ),
+                    zod
+                      .object({
+                        type: zod.enum(['decision']),
+                      })
+                      .describe(
+                        'A project decision record backed by collaborative markdown.'
+                      ),
                   ])
                   .describe(
                     'Sub type of a document with associated properties encoded in each variant.\nThis ensures type-safety: task properties only exist when the document is a task.'
@@ -26499,6 +26602,13 @@ export const recentlyDeletedResponse = zod.object({
                         })
                         .describe(
                           'A skill document — markdown instructions for AI'
+                        ),
+                      zod
+                        .object({
+                          type: zod.enum(['decision']),
+                        })
+                        .describe(
+                          'A project decision record backed by collaborative markdown.'
                         ),
                     ])
                     .describe(

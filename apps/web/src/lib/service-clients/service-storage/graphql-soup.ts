@@ -458,6 +458,9 @@ function mapDocumentSubType(subType: GraphqlSoupDocument['subType']) {
     .with({ __typename: 'GraphqlSkillSubType' }, () => ({
       type: 'skill' as const,
     }))
+    .with({ __typename: 'GraphqlDecisionSubType' }, () => ({
+      type: 'decision' as const,
+    }))
     .exhaustive();
 }
 

@@ -5874,6 +5874,73 @@
         }
       }
     },
+    "/documents/create_decision": {
+      "post": {
+        "tags": ["document"],
+        "summary": "Create a project-scoped Decision backed by collaborative markdown.",
+        "operationId": "create_decision_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Response for creating a Decision document.",
+                  "required": ["documentId"],
+                  "properties": {
+                    "documentId": {
+                      "type": "string",
+                      "description": "The document ID of the created Decision."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/documents/create_markdown": {
       "post": {
         "tags": ["document"],
@@ -13878,6 +13945,17 @@
                 "enum": ["skill"]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "A project decision record backed by collaborative markdown.",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["decision"]
+              }
+            }
           }
         ],
         "description": "Sub type of a document with associated properties encoded in each variant.\nThis ensures type-safety: task properties only exist when the document is a task."
@@ -16510,6 +16588,37 @@
           }
         }
       },
+      "CreateDecisionRequest": {
+        "type": "object",
+        "description": "Request body for creating a project-scoped Decision markdown document.",
+        "required": ["decisionName", "projectId"],
+        "properties": {
+          "decisionName": {
+            "type": "string",
+            "description": "The Decision title."
+          },
+          "markdown": {
+            "type": ["string", "null"],
+            "description": "Markdown source text. Defaults to an empty Decision document."
+          },
+          "projectId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The project that owns this Decision."
+          }
+        }
+      },
+      "CreateDecisionResponse": {
+        "type": "object",
+        "description": "Response for creating a Decision document.",
+        "required": ["documentId"],
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "description": "The document ID of the created Decision."
+          }
+        }
+      },
       "CreateDocumentRequest": {
         "type": "object",
         "required": ["sha", "documentName"],
@@ -18308,6 +18417,17 @@
                 "enum": ["skill"]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "A project decision record backed by collaborative markdown.",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["decision"]
+              }
+            }
           }
         ],
         "description": "The sub type of a document preview with associated properties.\nTask-related properties are encoded within the variant to ensure valid states."
@@ -18455,7 +18575,7 @@
       "DocumentSubType": {
         "type": "string",
         "description": "The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.",
-        "enum": ["task", "snippet", "skill"]
+        "enum": ["task", "snippet", "skill", "decision"]
       },
       "DocumentSyncContentUpdatedMetadata": {
         "type": "object",
@@ -24575,6 +24695,17 @@
               "type": {
                 "type": "string",
                 "enum": ["skill"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "A project decision record backed by collaborative markdown.",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["decision"]
               }
             }
           }

@@ -1500,6 +1500,268 @@ fn task_status_definition() -> PropertyDefinition {
     }
 }
 
+fn decision_property_definition(
+    id: Uuid,
+    display_name: &str,
+    data_type: DataType,
+    is_multi_select: bool,
+) -> PropertyDefinition {
+    PropertyDefinition {
+        id,
+        owner: PropertyOwner::System,
+        display_name: display_name.to_string(),
+        data_type,
+        is_multi_select,
+        specific_entity_type: None,
+        created_at: event_timestamp(),
+        updated_at: event_timestamp(),
+        is_system: true,
+        is_metadata: false,
+    }
+}
+
+#[tokio::test]
+async fn regular_document_rejects_decision_only_property() {
+    let document_id = Uuid::new_v4();
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_document_sub_types()
+        .return_once(|_| Box::pin(async { Ok(HashMap::new()) }));
+    repo.expect_get_property_definition().return_once(|_| {
+        Box::pin(async {
+            Ok(Some(decision_property_definition(
+                SystemPropertyKey::DECISION_STATE_UUID,
+                "Decision State",
+                DataType::SelectString,
+                false,
+            )))
+        })
+    });
+    repo.expect_upsert_entity_property().times(0);
+    let service = PropertiesServiceImpl::new(
+        repo,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+
+    let result = service
+        .set_entity_property(
+            &edit_receipt(&document_id.to_string(), EntityType::Document),
+            SystemPropertyKey::DECISION_STATE_UUID,
+            Some(
+                models_properties::api::requests::SetPropertyValue::SelectOption {
+                    option_id: Uuid::new_v4(),
+                },
+            ),
+        )
+        .await;
+
+    assert!(matches!(result, Err(PropertiesErr::Validation(_))));
+}
+
+#[tokio::test]
+async fn decision_state_rejects_null_before_upsert() {
+    let document_id = Uuid::new_v4();
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_document_sub_types().return_once(move |_| {
+        Box::pin(async move { Ok(HashMap::from([(document_id, DocumentSubType::Decision)])) })
+    });
+    repo.expect_get_property_definition().return_once(|_| {
+        Box::pin(async {
+            Ok(Some(decision_property_definition(
+                SystemPropertyKey::DECISION_STATE_UUID,
+                "Decision State",
+                DataType::SelectString,
+                false,
+            )))
+        })
+    });
+    repo.expect_upsert_entity_property().times(0);
+    let service = PropertiesServiceImpl::new(
+        repo,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+
+    let result = service
+        .set_entity_property(
+            &edit_receipt(&document_id.to_string(), EntityType::Document),
+            SystemPropertyKey::DECISION_STATE_UUID,
+            None,
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(PropertiesErr::Validation(message))
+            if message == "Decision State must be one of Proposed, Accepted, Rejected, or Superseded"
+    ));
+}
+
+#[tokio::test]
+async fn decision_state_rejects_option_removal_before_repository_mutation() {
+    let document_id = Uuid::new_v4();
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_document_sub_types().return_once(move |_| {
+        Box::pin(async move { Ok(HashMap::from([(document_id, DocumentSubType::Decision)])) })
+    });
+    repo.expect_remove_entity_property_option().times(0);
+    let service = PropertiesServiceImpl::new(
+        repo,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+
+    let result = service
+        .remove_entity_property_option(
+            &edit_receipt(&document_id.to_string(), EntityType::Document),
+            SystemPropertyKey::DECISION_STATE_UUID,
+            system_properties::DecisionStateOption::Proposed.uuid(),
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(PropertiesErr::Validation(message)) if message == "Decision State cannot be cleared"
+    ));
+}
+
+#[tokio::test]
+async fn decision_source_links_reject_non_http_url_before_upsert() {
+    let document_id = Uuid::new_v4();
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_document_sub_types().return_once(move |_| {
+        Box::pin(async move { Ok(HashMap::from([(document_id, DocumentSubType::Decision)])) })
+    });
+    repo.expect_get_property_definition().return_once(|_| {
+        Box::pin(async {
+            Ok(Some(decision_property_definition(
+                SystemPropertyKey::DECISION_SOURCES_UUID,
+                "Source Links",
+                DataType::Link,
+                true,
+            )))
+        })
+    });
+    repo.expect_upsert_entity_property().times(0);
+    let service = PropertiesServiceImpl::new(
+        repo,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+
+    let result = service
+        .set_entity_property(
+            &edit_receipt(&document_id.to_string(), EntityType::Document),
+            SystemPropertyKey::DECISION_SOURCES_UUID,
+            Some(
+                models_properties::api::requests::SetPropertyValue::MultiLink {
+                    urls: vec!["javascript:alert(1)".to_string()],
+                },
+            ),
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(PropertiesErr::Validation(message))
+            if message == "Decision Source Links must contain valid HTTP(S) URLs"
+    ));
+}
+
+#[tokio::test]
+async fn decision_decided_by_rejects_non_user_reference_before_upsert() {
+    let document_id = Uuid::new_v4();
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_document_sub_types().return_once(move |_| {
+        Box::pin(async move { Ok(HashMap::from([(document_id, DocumentSubType::Decision)])) })
+    });
+    repo.expect_get_property_definition().return_once(|_| {
+        Box::pin(async {
+            Ok(Some(decision_property_definition(
+                SystemPropertyKey::DECIDED_BY_UUID,
+                "Decided By",
+                DataType::Entity,
+                false,
+            )))
+        })
+    });
+    repo.expect_upsert_entity_property().times(0);
+    let service = PropertiesServiceImpl::new(
+        repo,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+
+    let result = service
+        .set_entity_property(
+            &edit_receipt(&document_id.to_string(), EntityType::Document),
+            SystemPropertyKey::DECIDED_BY_UUID,
+            Some(
+                models_properties::api::requests::SetPropertyValue::EntityReference {
+                    reference: models_properties::shared::EntityReference {
+                        entity_type: EntityType::Project,
+                        entity_id: "project-1".to_string(),
+                        specific_message_id: None,
+                    },
+                },
+            ),
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(PropertiesErr::Validation(message))
+            if message == "Decision Decided By must reference a user"
+    ));
+}
+
+#[tokio::test]
+async fn decision_decided_by_rejects_invalid_user_id_before_upsert() {
+    let document_id = Uuid::new_v4();
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_get_document_sub_types().return_once(move |_| {
+        Box::pin(async move { Ok(HashMap::from([(document_id, DocumentSubType::Decision)])) })
+    });
+    repo.expect_get_property_definition().return_once(|_| {
+        Box::pin(async {
+            Ok(Some(decision_property_definition(
+                SystemPropertyKey::DECIDED_BY_UUID,
+                "Decided By",
+                DataType::Entity,
+                false,
+            )))
+        })
+    });
+    repo.expect_upsert_entity_property().times(0);
+    let service = PropertiesServiceImpl::new(
+        repo,
+        None::<MockPermissionService>,
+        None::<MockNotificationService>,
+    );
+
+    let result = service
+        .set_entity_property(
+            &edit_receipt(&document_id.to_string(), EntityType::Document),
+            SystemPropertyKey::DECIDED_BY_UUID,
+            Some(
+                models_properties::api::requests::SetPropertyValue::EntityReference {
+                    reference: models_properties::shared::EntityReference {
+                        entity_type: EntityType::User,
+                        entity_id: String::new(),
+                        specific_message_id: None,
+                    },
+                },
+            ),
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(PropertiesErr::Validation(message))
+            if message == "Decision Decided By must contain a valid Macro user ID"
+    ));
+}
+
 #[tokio::test]
 async fn task_status_transition_publishes_one_authoritative_snapshot() {
     let task_id = Uuid::new_v4();
@@ -3787,6 +4049,38 @@ async fn entity_property_event_required_property_failure_publishes_nothing() {
     let result = service
         .delete_entity_property(
             &edit_receipt(&task_id.to_string(), EntityType::Task),
+            entity_property_id,
+        )
+        .await;
+
+    assert!(matches!(result, Err(PropertiesErr::RequiredProperty)));
+    assert!(event_broker.events().is_empty());
+}
+
+#[tokio::test]
+async fn decision_builtin_property_cannot_be_deleted() {
+    let document_id = Uuid::new_v4();
+    let entity_property_id = Uuid::new_v4();
+    let mut repo = MockPropertiesRepo::new();
+    repo.expect_lookup_entity_property().return_once(move |_| {
+        Box::pin(async move {
+            Ok(Some(models_properties::EntityPropertyReference {
+                entity_id: document_id.to_string(),
+                entity_type: EntityType::Document,
+                property_definition_id: SystemPropertyKey::DECISION_STATE_UUID,
+            }))
+        })
+    });
+    repo.expect_get_document_sub_types().return_once(move |_| {
+        Box::pin(async move { Ok(HashMap::from([(document_id, DocumentSubType::Decision)])) })
+    });
+    repo.expect_delete_entity_property().times(0);
+    let event_broker = RecordingEventBroker::default();
+    let service = service_with_event_broker(repo, event_broker.clone());
+
+    let result = service
+        .delete_entity_property(
+            &edit_receipt(&document_id.to_string(), EntityType::Document),
             entity_property_id,
         )
         .await;

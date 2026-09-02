@@ -31,6 +31,7 @@ export const definition = defineBlock({
     { name: 'task', defaultFileName: 'New Task' },
     { name: 'snippet', defaultFileName: 'New Snippet' },
     { name: 'skill', defaultFileName: 'New Skill' },
+    { name: 'decision', defaultFileName: 'New Decision' },
   ],
   component: MarkdownBlock,
   accepted: {

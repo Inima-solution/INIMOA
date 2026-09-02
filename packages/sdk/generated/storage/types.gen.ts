@@ -1017,6 +1017,8 @@ export type BasicDocumentSubType = {
     type: 'snippet';
 } | {
     type: 'skill';
+} | {
+    type: 'decision';
 };
 
 export type BomPart = {
@@ -3091,6 +3093,34 @@ export type CreateReminderRequest = {
 };
 
 /**
+ * Request body for creating a project-scoped Decision markdown document.
+ */
+export type CreateDecisionRequest = {
+    /**
+     * The Decision title.
+     */
+    decisionName: string;
+    /**
+     * Markdown source text. Defaults to an empty Decision document.
+     */
+    markdown?: string | null;
+    /**
+     * The project that owns this Decision.
+     */
+    projectId: string;
+};
+
+/**
+ * Response for creating a Decision document.
+ */
+export type CreateDecisionResponse = {
+    /**
+     * The document ID of the created Decision.
+     */
+    documentId: string;
+};
+
+/**
  * Request body for creating a skill — a markdown document containing
  * instructions that AI reads and follows when the skill is referenced in an
  * AI input.
@@ -4089,6 +4119,8 @@ export type DocumentPreviewDataSubType = {
     type: 'snippet';
 } | {
     type: 'skill';
+} | {
+    type: 'decision';
 };
 
 /**
@@ -4201,7 +4233,7 @@ export type DocumentStorageServiceApiVersion = 'v1' | 'v2';
  * The document sub type enum represents all values of document sub types.
  * These values should match the `document_sub_type_value` table in macrodb.
  */
-export type DocumentSubType = 'task' | 'snippet' | 'skill';
+export type DocumentSubType = 'task' | 'snippet' | 'skill' | 'decision';
 
 /**
  * Metadata for [`DocumentTopicEvent::SyncContentUpdated`].
@@ -7347,6 +7379,8 @@ export type SoupDocumentSubType = {
     type: 'snippet';
 } | {
     type: 'skill';
+} | {
+    type: 'decision';
 };
 
 /**
@@ -10866,6 +10900,35 @@ export type CreateDocumentResponses = {
 };
 
 export type CreateDocumentResponse = CreateDocumentResponses[keyof CreateDocumentResponses];
+
+export type CreateDecisionHandlerData = {
+    body: CreateDecisionRequest;
+    path?: never;
+    query?: never;
+    url: '/documents/create_decision';
+};
+
+export type CreateDecisionHandlerErrors = {
+    400: ErrorResponse;
+    401: ErrorResponse;
+    500: ErrorResponse;
+};
+
+export type CreateDecisionHandlerError = CreateDecisionHandlerErrors[keyof CreateDecisionHandlerErrors];
+
+export type CreateDecisionHandlerResponses = {
+    /**
+     * Response for creating a Decision document.
+     */
+    200: {
+        /**
+         * The document ID of the created Decision.
+         */
+        documentId: string;
+    };
+};
+
+export type CreateDecisionHandlerResponse = CreateDecisionHandlerResponses[keyof CreateDecisionHandlerResponses];
 
 export type CreateMarkdownHandlerData = {
     body: CreateMarkdownDocumentRequest;

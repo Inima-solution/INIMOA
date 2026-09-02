@@ -257,6 +257,60 @@ impl SystemPropertiesRepository for PgSystemPropertiesRepository {
 
         Ok(())
     }
+
+    async fn copy_decision_properties(
+        &self,
+        from_document_id: &str,
+        to_document_id: &str,
+    ) -> Result<(), SystemPropertyError> {
+        let property_ids = [
+            SystemPropertyKey::DECISION_STATE_UUID,
+            SystemPropertyKey::DECIDED_BY_UUID,
+            SystemPropertyKey::DECIDED_AT_UUID,
+            SystemPropertyKey::DECISION_SOURCES_UUID,
+        ];
+
+        let source_properties = sqlx::query_as::<_, (Uuid, Option<serde_json::Value>)>(
+            r#"
+            SELECT property_definition_id, values
+            FROM entity_properties
+            WHERE entity_id = $1
+              AND entity_type = 'DOCUMENT'
+              AND property_definition_id = ANY($2)
+            "#,
+        )
+        .bind(from_document_id)
+        .bind(&property_ids)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let source_values: std::collections::HashMap<Uuid, serde_json::Value> = source_properties
+            .into_iter()
+            .map(|(property_definition_id, values)| {
+                (
+                    property_definition_id,
+                    values.unwrap_or(serde_json::Value::Null),
+                )
+            })
+            .collect();
+
+        let rows = crate::domain::service::collect_decision_property_rows(to_document_id)
+            .into_iter()
+            .map(|row| {
+                let property_id = row.property_definition_id();
+                source_values.get(&property_id).map_or(row, |value| {
+                    PropertyRow::raw_value(
+                        to_document_id,
+                        models_properties::EntityType::Document,
+                        property_id,
+                        value.clone(),
+                    )
+                })
+            })
+            .collect();
+
+        self.bulk_upsert_properties(rows).await
+    }
 }
 
 // The domain error stays sqlx-free; this adapter owns the mapping so `?`

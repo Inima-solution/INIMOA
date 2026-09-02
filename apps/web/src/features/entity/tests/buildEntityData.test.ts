@@ -81,6 +81,27 @@ describe('buildEntityData', () => {
     });
   });
 
+  describe('decision', () => {
+    it('requires a project and builds a Decision markdown entity', () => {
+      expect(
+        buildEntityData({ ...base, blockName: 'decision' })
+      ).toBeUndefined();
+      expect(
+        buildEntityData({
+          ...base,
+          blockName: 'decision',
+          projectId: 'project-1',
+        })
+      ).toEqual({
+        ...base,
+        type: 'document',
+        fileType: 'md',
+        subType: { type: 'decision' },
+        projectId: 'project-1',
+      });
+    });
+  });
+
   describe('chat / project', () => {
     it('builds a chat', () => {
       expect(buildEntityData({ ...base, blockName: 'chat' })).toEqual({

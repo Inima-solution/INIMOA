@@ -48,6 +48,12 @@ pub trait DocumentCreationService: Send + Sync {
         request: &CreateTaskRequest,
     ) -> impl Future<Output = Result<(), DocumentError>> + Send;
 
+    /// Attach the Decision-only property set after the document row exists.
+    fn attach_decision_properties(
+        &self,
+        document_id: &str,
+    ) -> impl Future<Output = Result<(), DocumentError>> + Send;
+
     /// Mark a created document's upload/finalization lifecycle as complete.
     fn mark_document_uploaded(
         &self,
@@ -87,6 +93,10 @@ where
         (**self)
             .handle_task_properties(user_id, document_id, request)
             .await
+    }
+
+    async fn attach_decision_properties(&self, document_id: &str) -> Result<(), DocumentError> {
+        (**self).attach_decision_properties(document_id).await
     }
 
     async fn mark_document_uploaded(&self, document_id: &str) -> Result<(), DocumentError> {

@@ -12,6 +12,7 @@
 //! - `POST /create_markdown` — create and initialize a markdown document
 //! - `POST /create_snippet` — create and initialize a snippet document
 //! - `POST /create_skill` — create and initialize a skill document
+//! - `POST /create_decision` — create a project-scoped Decision document
 //! - `GET /system_skills` — list the built-in system skills
 //! - `DELETE /{document_id}` — soft-delete a document
 
@@ -20,6 +21,8 @@ mod tests;
 
 pub mod content_uploaded;
 pub mod copy_document;
+#[cfg(feature = "document_create")]
+pub mod create_decision;
 pub mod create_document;
 #[cfg(feature = "document_create")]
 pub mod create_markdown;
@@ -61,6 +64,8 @@ use serde::Deserialize;
 use sqlx::PgPool;
 use task_dedup::PgTaskDedupService;
 
+#[cfg(feature = "document_create")]
+use self::create_decision::create_decision_handler;
 #[cfg(feature = "document_create")]
 use self::create_markdown::create_markdown_handler;
 #[cfg(feature = "document_create")]
@@ -316,6 +321,10 @@ where
         .route(
             "/create_skill",
             axum::routing::post(create_skill_handler::<T, Svc, Auth>),
+        )
+        .route(
+            "/create_decision",
+            axum::routing::post(create_decision_handler::<T, Svc, Auth>),
         );
 
     router.with_state(state)

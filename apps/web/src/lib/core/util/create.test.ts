@@ -3,6 +3,7 @@ import { err, ok } from 'neverthrow';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
+  createDecision: vi.fn(),
   createTask: vi.fn(),
   invalidateProjectOverviews: vi.fn(async () => {}),
   invalidateUserQuota: vi.fn(),
@@ -38,10 +39,13 @@ vi.mock('@queries/storage/project-overview', () => ({
   invalidateProjectOverviews: mocks.invalidateProjectOverviews,
 }));
 vi.mock('@service-storage/client', () => ({
-  storageServiceClient: { createTask: mocks.createTask },
+  storageServiceClient: {
+    createDecision: mocks.createDecision,
+    createTask: mocks.createTask,
+  },
 }));
 
-import { createTask } from './create';
+import { createDecision, createTask } from './create';
 
 const createdTask = {
   documentId: 'task-project-a',
@@ -140,5 +144,62 @@ describe('createTask project overview invalidation', () => {
     expect(mocks.seedDocumentLoadBundle).not.toHaveBeenCalled();
     expect(mocks.refetchSoupEntity).not.toHaveBeenCalled();
     expect(mocks.setPreviewOnCreate).not.toHaveBeenCalled();
+  });
+});
+
+describe('createDecision', () => {
+  it('creates a project-scoped Decision and seeds the Decision preview', async () => {
+    mocks.createDecision.mockResolvedValueOnce(
+      ok({ documentId: 'decision-project-a' })
+    );
+
+    await expect(
+      createDecision({
+        title: 'Adopt event sourcing',
+        content: '# Context',
+        projectId: 'project-a',
+        source: 'project-overview',
+      })
+    ).resolves.toBe('decision-project-a');
+
+    expect(mocks.createDecision).toHaveBeenCalledWith({
+      decisionName: 'Adopt event sourcing',
+      markdown: '# Context',
+      projectId: 'project-a',
+    });
+    expect(mocks.setPreviewOnCreate).toHaveBeenCalledWith({
+      itemId: 'decision-project-a',
+      itemType: 'document',
+      name: 'Adopt event sourcing',
+      fileType: 'md',
+      subType: { type: 'decision' },
+    });
+    expect(mocks.refetchSoupEntity).toHaveBeenCalledWith(
+      'decision-project-a',
+      'document',
+      { ownTouch: true }
+    );
+    expect(mocks.invalidateProjectOverviews).toHaveBeenCalledWith('project-a');
+    expect(mocks.track).toHaveBeenCalledWith('create_entity', {
+      entityType: 'decision',
+      entityId: 'decision-project-a',
+      projectId: 'project-a',
+      source: 'project-overview',
+    });
+  });
+
+  it('does not seed client state when Decision creation fails', async () => {
+    mocks.createDecision.mockResolvedValueOnce(
+      err([{ code: 'FORBIDDEN', message: 'missing access' }])
+    );
+
+    await expect(
+      createDecision({ title: 'Denied', projectId: 'project-a' })
+    ).resolves.toBeUndefined();
+
+    expect(mocks.setPreviewOnCreate).not.toHaveBeenCalled();
+    expect(mocks.refetchSoupEntity).not.toHaveBeenCalled();
+    expect(mocks.invalidateProjectOverviews).not.toHaveBeenCalled();
+    expect(mocks.track).not.toHaveBeenCalled();
   });
 });

@@ -149,17 +149,23 @@ pub async fn create_comment_handler(
                     document_id: document_id.to_string(),
                     owner: document_context.owner.clone(),
                     file_type: document_context.file_type.clone(),
-                    sub_type: document_context.sub_type.map(|sub_type| match sub_type {
-                        document_sub_type::DocumentSubType::Task => {
-                            NotificationDocumentSubType::Task
-                        }
-                        document_sub_type::DocumentSubType::Snippet => {
-                            NotificationDocumentSubType::Snippet
-                        }
-                        document_sub_type::DocumentSubType::Skill => {
-                            NotificationDocumentSubType::Skill
-                        }
-                    }),
+                    // Decision notifications intentionally use the generic
+                    // Document presentation until a distinct notification
+                    // visual contract exists.
+                    sub_type: document_context
+                        .sub_type
+                        .and_then(|sub_type| match sub_type {
+                            document_sub_type::DocumentSubType::Task => {
+                                Some(NotificationDocumentSubType::Task)
+                            }
+                            document_sub_type::DocumentSubType::Snippet => {
+                                Some(NotificationDocumentSubType::Snippet)
+                            }
+                            document_sub_type::DocumentSubType::Skill => {
+                                Some(NotificationDocumentSubType::Skill)
+                            }
+                            document_sub_type::DocumentSubType::Decision => None,
+                        }),
                     sender_id: sender_id.clone(),
                     sender_profile_picture_url,
                 };

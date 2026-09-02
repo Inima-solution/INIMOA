@@ -391,6 +391,8 @@ export type GraphqlDocumentLiteral =
 
 /** GraphQL input representing the document sub type. */
 export type GraphqlDocumentSubType =
+  /** The Decision document option. */
+  | 'DECISION'
   /** The skill option. */
   | 'SKILL'
   /** The snippet option. */
@@ -1781,6 +1783,7 @@ type EntityMutationResultFields_GraphqlMutationSuccess_Fragment = { __typename: 
               | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
              }> }
         | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+            | { __typename: 'GraphqlDecisionSubType' }
             | { __typename: 'GraphqlSkillSubType' }
             | { __typename: 'GraphqlSnippetSubType' }
             | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -2137,6 +2140,7 @@ export type EntityMutationPayloadFieldsFragment = { results: Array<
                   | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
                  }> }
             | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+                | { __typename: 'GraphqlDecisionSubType' }
                 | { __typename: 'GraphqlSkillSubType' }
                 | { __typename: 'GraphqlSnippetSubType' }
                 | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -2494,6 +2498,7 @@ export type RenameEntitiesMutation = { renameEntities: { results: Array<
                     | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
                    }> }
               | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+                  | { __typename: 'GraphqlDecisionSubType' }
                   | { __typename: 'GraphqlSkillSubType' }
                   | { __typename: 'GraphqlSnippetSubType' }
                   | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -2851,6 +2856,7 @@ export type MoveEntitiesMutation = { moveEntities: { results: Array<
                     | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
                    }> }
               | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+                  | { __typename: 'GraphqlDecisionSubType' }
                   | { __typename: 'GraphqlSkillSubType' }
                   | { __typename: 'GraphqlSnippetSubType' }
                   | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -3208,6 +3214,7 @@ export type UpdateEntitySharePoliciesMutation = { updateEntitySharePolicies: { r
                     | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
                    }> }
               | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+                  | { __typename: 'GraphqlDecisionSubType' }
                   | { __typename: 'GraphqlSkillSubType' }
                   | { __typename: 'GraphqlSnippetSubType' }
                   | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -3565,6 +3572,7 @@ export type TrashEntitiesMutation = { trashEntities: { results: Array<
                     | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
                    }> }
               | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+                  | { __typename: 'GraphqlDecisionSubType' }
                   | { __typename: 'GraphqlSkillSubType' }
                   | { __typename: 'GraphqlSnippetSubType' }
                   | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -3922,6 +3930,7 @@ export type RestoreEntitiesMutation = { restoreEntities: { results: Array<
                     | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
                    }> }
               | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+                  | { __typename: 'GraphqlDecisionSubType' }
                   | { __typename: 'GraphqlSkillSubType' }
                   | { __typename: 'GraphqlSnippetSubType' }
                   | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -4279,6 +4288,7 @@ export type DeleteEntitiesPermanentlyMutation = { deleteEntitiesPermanently: { r
                     | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
                    }> }
               | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+                  | { __typename: 'GraphqlDecisionSubType' }
                   | { __typename: 'GraphqlSkillSubType' }
                   | { __typename: 'GraphqlSnippetSubType' }
                   | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -4636,6 +4646,7 @@ export type DuplicateEntitiesMutation = { duplicateEntities: { results: Array<
                     | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
                    }> }
               | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+                  | { __typename: 'GraphqlDecisionSubType' }
                   | { __typename: 'GraphqlSkillSubType' }
                   | { __typename: 'GraphqlSnippetSubType' }
                   | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -4994,6 +5005,7 @@ export type SetEntityFavoriteMutation = { setEntityFavorite:
                   | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
                  }> }
             | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+                | { __typename: 'GraphqlDecisionSubType' }
                 | { __typename: 'GraphqlSkillSubType' }
                 | { __typename: 'GraphqlSnippetSubType' }
                 | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -5473,6 +5485,7 @@ export type GroupSoupQuery = { user: { id: string, groupSoup: { bins: Array<{ ke
                 | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
                }> }
           | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+              | { __typename: 'GraphqlDecisionSubType' }
               | { __typename: 'GraphqlSkillSubType' }
               | { __typename: 'GraphqlSnippetSubType' }
               | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -5636,6 +5649,7 @@ export type GroupSoupQuery = { user: { id: string, groupSoup: { bins: Array<{ ke
         > }> } } };
 
 export type GraphqlDocumentHistoryFieldsFragment = { __typename: 'GraphqlSoupDocument', id: string, ownerId: string, fileType: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, documentName: string, subType:
+    | { __typename: 'GraphqlDecisionSubType' }
     | { __typename: 'GraphqlSkillSubType' }
     | { __typename: 'GraphqlSnippetSubType' }
     | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -5646,6 +5660,7 @@ export type GraphqlChatHistoryFieldsFragment = { __typename: 'GraphqlSoupChat', 
 export type GraphqlProjectHistoryFieldsFragment = { __typename: 'GraphqlSoupProject', id: string, ownerId: string, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, projectName: string };
 
 export type GraphqlDocumentQuickAccessNameFragment = { __typename: 'GraphqlSoupDocument', name: string, ownerId: string, createdAt: string, subType:
+    | { __typename: 'GraphqlDecisionSubType' }
     | { __typename: 'GraphqlSkillSubType' }
     | { __typename: 'GraphqlSnippetSubType' }
     | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -5934,6 +5949,7 @@ type SoupPatchFields_SoupUpdated_Fragment = { __typename: 'SoupUpdated', item:
           | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
          }> }
     | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+        | { __typename: 'GraphqlDecisionSubType' }
         | { __typename: 'GraphqlSkillSubType' }
         | { __typename: 'GraphqlSnippetSubType' }
         | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -6290,6 +6306,7 @@ export type SoupUpdatesSubscription = { soupUpdates: Array<
               | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
              }> }
         | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+            | { __typename: 'GraphqlDecisionSubType' }
             | { __typename: 'GraphqlSkillSubType' }
             | { __typename: 'GraphqlSnippetSubType' }
             | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -6642,6 +6659,7 @@ export type SoupQuery = { user: { id: string, soup: { nextCursor: string | null,
               | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
              }> }
         | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+            | { __typename: 'GraphqlDecisionSubType' }
             | { __typename: 'GraphqlSkillSubType' }
             | { __typename: 'GraphqlSnippetSubType' }
             | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -6993,6 +7011,7 @@ export type SoupBackfillQuery = { user: { id: string, soup: { nextCursor: string
               | { __typename: 'GraphqlTaskReadyMetadata', taskReadyTaskId: string, taskReadyTaskName: string }
              }> }
         | { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+            | { __typename: 'GraphqlDecisionSubType' }
             | { __typename: 'GraphqlSkillSubType' }
             | { __typename: 'GraphqlSnippetSubType' }
             | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }
@@ -7349,6 +7368,7 @@ type SoupItemFields_GraphqlSoupCrmCompany_Fragment = { __typename: 'GraphqlSoupC
      }> };
 
 type SoupItemFields_GraphqlSoupDocument_Fragment = { __typename: 'GraphqlSoupDocument', ownerId: string, fileType: string | null, projectId: string | null, createdAt: string, updatedAt: string, viewedAt: string | null, deletedAt: string | null, frecencyScore: number | null, id: string, entityType: GraphqlSoupEntityType, displayName: string | null, isFavorited: boolean, documentName: string, subType:
+    | { __typename: 'GraphqlDecisionSubType' }
     | { __typename: 'GraphqlSkillSubType' }
     | { __typename: 'GraphqlSnippetSubType' }
     | { __typename: 'GraphqlTaskSubType', isCompleted: boolean }

@@ -62,6 +62,8 @@ import type { CreateCommentResponse } from './generated/schemas/createCommentRes
 import type { CreateCrmCommentRequest } from './generated/schemas/createCrmCommentRequest';
 import type { CreateCrmCompanyRequest } from './generated/schemas/createCrmCompanyRequest';
 import type { CreateCrmContactRequest } from './generated/schemas/createCrmContactRequest';
+import type { CreateDecisionHandler200 } from './generated/schemas/createDecisionHandler200';
+import type { CreateDecisionRequest } from './generated/schemas/createDecisionRequest';
 import type { CreateDocument200 as CreateDocumentResponse } from './generated/schemas/createDocument200';
 import type { CreateDocumentRequest } from './generated/schemas/createDocumentRequest';
 import type { CreateEntityMentionRequest } from './generated/schemas/createEntityMentionRequest';
@@ -1449,6 +1451,29 @@ export const storageServiceClient = {
 
     const response = result.value;
     return ok(response);
+  },
+
+  /**
+   * Creates a project-scoped Decision backed by collaborative markdown.
+   */
+  async createDecision(request: CreateDecisionRequest) {
+    const result = await dssFetch<CreateDecisionHandler200>(
+      `/documents/create_decision`,
+      {
+        method: 'POST',
+        body: JSON.stringify(request),
+      }
+    );
+
+    if (!result.isOk()) {
+      const errors = result.error;
+      if (errors[0].message.includes('403')) {
+        showPaywall(PaywallKey.FILE_LIMIT);
+      }
+      return err(result.error);
+    }
+
+    return ok(result.value);
   },
 
   /**
