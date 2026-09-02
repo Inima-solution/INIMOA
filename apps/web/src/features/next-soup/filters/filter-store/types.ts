@@ -50,10 +50,31 @@ export type DatePropertyFilter = {
   value: DueDateBucket;
 };
 
+/** A finite, Task-only Number range. Exactly one lower and/or upper bound is set. */
+export type NumberRangeFilter = {
+  gt?: number;
+  gte?: number;
+  lt?: number;
+  lte?: number;
+};
+
+/**
+ * Number ranges stay separate predicates: unlike select options, two ranges
+ * for one property must remain AND clauses. `exclude` is omitted for false so
+ * the persisted state has the same shape as the public API.
+ */
+export type NumberPropertyFilter = {
+  propertyId: string;
+  type: 'number';
+  range: NumberRangeFilter;
+  exclude?: true;
+};
+
 export type PropertyFilter =
   | StringPropertyFilter
   | BooleanPropertyFilter
-  | DatePropertyFilter;
+  | DatePropertyFilter
+  | NumberPropertyFilter;
 
 export type TagFilterMode = 'any' | 'all';
 

@@ -50,12 +50,15 @@ import { ConsolidatedFilterChip } from './consolidated-filter-chip';
 import { getSingleSelectFilterPlan } from './filter-categories';
 import { useInboxPicker } from './inbox-picker';
 import {
+  numberRangeForProperty,
   replaceTaskCustomPropertyValues,
+  replaceTaskNumberRange,
   selectedTaskCustomPropertyValues,
   taskCustomProperties,
   taskCustomPropertiesQueryArgs,
   toggleTaskCustomPropertyValue,
 } from './task-custom-property-filter';
+import { TaskNumberRangeEditor } from './task-number-range-editor';
 import {
   buildContactLabel,
   type FilterOption,
@@ -775,118 +778,164 @@ export const MobileFilterDrawer = (props: {
                           </Accordion.Header>
                           <Accordion.Content>
                             <Show
-                              when={property.type === 'entity'}
+                              when={property.type === 'number'}
                               fallback={
-                                <div
-                                  role={
-                                    property.type !== 'select'
-                                      ? 'radiogroup'
-                                      : undefined
-                                  }
-                                  aria-label={
-                                    property.type !== 'select'
-                                      ? property.label
-                                      : undefined
+                                <Show
+                                  when={property.type === 'entity'}
+                                  fallback={
+                                    <div
+                                      role={
+                                        property.type !== 'select'
+                                          ? 'radiogroup'
+                                          : undefined
+                                      }
+                                      aria-label={
+                                        property.type !== 'select'
+                                          ? property.label
+                                          : undefined
+                                      }
+                                    >
+                                      <For each={property.options}>
+                                        {(option) => {
+                                          const active = () =>
+                                            selectedTaskCustomPropertyValues(
+                                              queryFilters.state.include
+                                                .properties,
+                                              property
+                                            ).includes(option.id);
+                                          return (
+                                            <button
+                                              type="button"
+                                              role={
+                                                property.type !== 'select'
+                                                  ? 'radio'
+                                                  : 'checkbox'
+                                              }
+                                              aria-checked={active()}
+                                              class="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-hover transition-colors text-left bg-surface not-last:mb-px"
+                                              onClick={() => {
+                                                const selected =
+                                                  selectedTaskCustomPropertyValues(
+                                                    queryFilters.state.include
+                                                      .properties,
+                                                    property
+                                                  );
+                                                queryFilters.set({
+                                                  include: {
+                                                    properties:
+                                                      replaceTaskCustomPropertyValues(
+                                                        queryFilters.state
+                                                          .include.properties,
+                                                        property,
+                                                        toggleTaskCustomPropertyValue(
+                                                          selected,
+                                                          property,
+                                                          option.id
+                                                        )
+                                                      ),
+                                                  },
+                                                });
+                                              }}
+                                            >
+                                              <span
+                                                class={cn(
+                                                  'size-4 flex items-center justify-center shrink-0 rounded border',
+                                                  active()
+                                                    ? 'bg-accent border-accent'
+                                                    : 'border-edge'
+                                                )}
+                                              >
+                                                <Show when={active()}>
+                                                  <CheckIcon class="size-2.5 text-surface" />
+                                                </Show>
+                                              </span>
+                                              <span
+                                                class={cn(
+                                                  'flex-1 truncate',
+                                                  active()
+                                                    ? 'text-ink'
+                                                    : 'text-ink-muted'
+                                                )}
+                                              >
+                                                {option.label}
+                                              </span>
+                                            </button>
+                                          );
+                                        }}
+                                      </For>
+                                    </div>
                                   }
                                 >
-                                  <For each={property.options}>
-                                    {(option) => {
-                                      const active = () =>
+                                  <PropertyEntitySelector
+                                    config={{
+                                      isMultiSelect:
+                                        property.isMultiSelect ?? false,
+                                      placeholder: `Search ${property.label.toLowerCase()}...`,
+                                      specificEntityType:
+                                        property.specificEntityType,
+                                    }}
+                                    selectedOptions={() =>
+                                      new Set(
                                         selectedTaskCustomPropertyValues(
                                           queryFilters.state.include.properties,
                                           property
-                                        ).includes(option.id);
-                                      return (
-                                        <button
-                                          type="button"
-                                          role={
-                                            property.type !== 'select'
-                                              ? 'radio'
-                                              : 'checkbox'
-                                          }
-                                          aria-checked={active()}
-                                          class="w-full flex items-center gap-3 px-4 py-2.5 text-sm hover:bg-hover transition-colors text-left bg-surface not-last:mb-px"
-                                          onClick={() => {
-                                            const selected =
-                                              selectedTaskCustomPropertyValues(
-                                                queryFilters.state.include
-                                                  .properties,
-                                                property
-                                              );
-                                            queryFilters.set({
-                                              include: {
-                                                properties:
-                                                  replaceTaskCustomPropertyValues(
-                                                    queryFilters.state.include
-                                                      .properties,
-                                                    property,
-                                                    toggleTaskCustomPropertyValue(
-                                                      selected,
-                                                      property,
-                                                      option.id
-                                                    )
-                                                  ),
-                                              },
-                                            });
-                                          }}
-                                        >
-                                          <span
-                                            class={cn(
-                                              'size-4 flex items-center justify-center shrink-0 rounded border',
-                                              active()
-                                                ? 'bg-accent border-accent'
-                                                : 'border-edge'
-                                            )}
-                                          >
-                                            <Show when={active()}>
-                                              <CheckIcon class="size-2.5 text-surface" />
-                                            </Show>
-                                          </span>
-                                          <span
-                                            class={cn(
-                                              'flex-1 truncate',
-                                              active()
-                                                ? 'text-ink'
-                                                : 'text-ink-muted'
-                                            )}
-                                          >
-                                            {option.label}
-                                          </span>
-                                        </button>
-                                      );
+                                        )
+                                      )
+                                    }
+                                    setSelectedOptions={(ids) => {
+                                      queryFilters.set({
+                                        include: {
+                                          properties:
+                                            replaceTaskCustomPropertyValues(
+                                              queryFilters.state.include
+                                                .properties,
+                                              property,
+                                              [...ids]
+                                            ),
+                                        },
+                                      });
                                     }}
-                                  </For>
-                                </div>
+                                  />
+                                </Show>
                               }
                             >
-                              <PropertyEntitySelector
-                                config={{
-                                  isMultiSelect:
-                                    property.isMultiSelect ?? false,
-                                  placeholder: `Search ${property.label.toLowerCase()}...`,
-                                  specificEntityType:
-                                    property.specificEntityType,
-                                }}
-                                selectedOptions={() =>
-                                  new Set(
-                                    selectedTaskCustomPropertyValues(
-                                      queryFilters.state.include.properties,
-                                      property
-                                    )
-                                  )
+                              <TaskNumberRangeEditor
+                                label={property.label}
+                                value={
+                                  numberRangeForProperty(
+                                    queryFilters.state.include.properties,
+                                    property
+                                  )?.range
                                 }
-                                setSelectedOptions={(ids) => {
+                                exclude={
+                                  numberRangeForProperty(
+                                    queryFilters.state.include.properties,
+                                    property
+                                  )?.exclude
+                                }
+                                onApply={(range, exclude) =>
                                   queryFilters.set({
                                     include: {
-                                      properties:
-                                        replaceTaskCustomPropertyValues(
-                                          queryFilters.state.include.properties,
-                                          property,
-                                          [...ids]
-                                        ),
+                                      properties: replaceTaskNumberRange(
+                                        queryFilters.state.include.properties,
+                                        property,
+                                        range,
+                                        exclude
+                                      ),
                                     },
-                                  });
-                                }}
+                                  })
+                                }
+                                onClear={() =>
+                                  queryFilters.set({
+                                    include: {
+                                      properties: replaceTaskNumberRange(
+                                        queryFilters.state.include.properties,
+                                        property,
+                                        undefined
+                                      ),
+                                    },
+                                  })
+                                }
                               />
                             </Show>
                           </Accordion.Content>

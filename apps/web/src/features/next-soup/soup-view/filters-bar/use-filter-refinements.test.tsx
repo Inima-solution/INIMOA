@@ -3,6 +3,11 @@ import type { QuickAccessItem } from '@core/context/quickAccess/types';
 import { describe, expect, it, vi } from 'vitest';
 import type { TaskCustomProperty } from './task-custom-property-filter';
 import {
+  isUnavailableTaskCustomProperty,
+  numberRangeForProperty,
+} from './task-custom-property-filter';
+import {
+  formatTaskNumberRangeFilter,
   isUnavailableTaskEntityPropertyFilter,
   partitionTaskEntityPropertyFilters,
   removeUnavailableTaskEntityPropertyFilters,
@@ -36,6 +41,13 @@ const status: TaskCustomProperty = {
   options: [{ id: 'open', label: 'Open', value: 'open' }],
 };
 
+const estimate: TaskCustomProperty = {
+  id: 'estimate',
+  label: 'Estimate',
+  type: 'number',
+  options: [],
+};
+
 const person = (id: string, name: string): QuickAccessItem =>
   ({
     id,
@@ -45,6 +57,25 @@ const person = (id: string, name: string): QuickAccessItem =>
   }) as QuickAccessItem;
 
 describe('typed entity custom-property refinements', () => {
+  it('keeps valid Number ranges label-safe and classifies malformed restored ranges unavailable', () => {
+    const valid = {
+      propertyId: 'estimate',
+      type: 'number' as const,
+      range: { gte: 2, lt: 5 },
+    };
+    expect(numberRangeForProperty([valid], estimate)).toEqual(valid);
+    expect(formatTaskNumberRangeFilter(valid)).toBe('≥ 2 and < 5');
+    expect(formatTaskNumberRangeFilter({ ...valid, exclude: true })).toBe(
+      'Excluding ≥ 2 and < 5'
+    );
+    expect(
+      isUnavailableTaskCustomProperty(
+        { propertyId: 'estimate', type: 'number', range: {} },
+        [estimate]
+      )
+    ).toBe(true);
+  });
+
   it('uses the existing quickAccess cache once per selected id and exposes only resolved labels', () => {
     const getById = vi.fn((id: string) =>
       id === 'user-1' ? person(id, 'Ada') : undefined

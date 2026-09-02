@@ -1,4 +1,7 @@
-import type { PropertyFilter } from '@app/features/next-soup/filters/filter-store';
+import type {
+  NumberRangeFilter,
+  PropertyFilter,
+} from '@app/features/next-soup/filters/filter-store';
 import type { DueDateBucket } from '@app/features/next-soup/filters/filter-store/task-due-date';
 import { SYSTEM_PROPERTY_IDS } from '@property/constants';
 import { EntityType } from '@service-properties/generated/schemas/entityType';
@@ -7,7 +10,7 @@ import type { PropertyDefinitionResponse } from '@service-properties/generated/s
 export type TaskCustomProperty = {
   id: string;
   label: string;
-  type: 'select' | 'boolean' | 'date' | 'entity';
+  type: 'select' | 'boolean' | 'date' | 'number' | 'entity';
   /** ENTITY definitions retain their authoritative target and cardinality. */
   specificEntityType?: EntityType;
   isMultiSelect?: boolean;
@@ -20,6 +23,10 @@ export type TaskCustomProperty = {
 
 const SYSTEM_IDS = new Set<string>(Object.values(SYSTEM_PROPERTY_IDS));
 
+// v1 deliberately supports SELECT_STRING/SELECT_NUMBER options, BOOLEAN,
+// DATE, finite NUMBER ranges, TAG through the existing Tags filter, and the
+// concrete ENTITY targets below. STRING, LINK, and generic/source-less ENTITY
+// have no safe query/picker contract yet and remain excluded.
 // These are precisely the concrete targets with a bounded source in
 // PropertyEntitySelector. Keep generic and source-less targets out of Soup.
 const SELECTABLE_ENTITY_TYPES = new Set<EntityType>([
@@ -63,6 +70,7 @@ export function taskCustomProperties(
         definition.data_type !== 'SELECT_NUMBER' &&
         definition.data_type !== 'BOOLEAN' &&
         definition.data_type !== 'DATE' &&
+        definition.data_type !== 'NUMBER' &&
         definition.data_type !== 'ENTITY')
     ) {
       continue;
@@ -87,6 +95,16 @@ export function taskCustomProperties(
         label: definition.display_name,
         type: 'date',
         options: DATE_OPTIONS,
+      });
+      continue;
+    }
+
+    if (definition.data_type === 'NUMBER') {
+      result.push({
+        id: definition.id,
+        label: definition.display_name,
+        type: 'number',
+        options: [],
       });
       continue;
     }
@@ -142,6 +160,7 @@ export function selectedTaskCustomPropertyValues(
   properties: readonly PropertyFilter[] | undefined,
   property: TaskCustomProperty
 ): string[] {
+  if (property.type === 'number') return [];
   if (property.type === 'entity') {
     const selected = (properties ?? []).flatMap((filter) =>
       filter.propertyId === property.id &&
@@ -156,7 +175,11 @@ export function selectedTaskCustomPropertyValues(
   }
   const valid = new Set(property.options.map((option) => option.value));
   const selected = (properties ?? []).flatMap((filter) => {
-    if (filter.propertyId !== property.id || filter.type !== property.type)
+    if (
+      filter.propertyId !== property.id ||
+      filter.type !== property.type ||
+      !('value' in filter)
+    )
       return [];
     return valid.has(filter.value) ? [String(filter.value)] : [];
   });
@@ -169,6 +192,7 @@ export function replaceTaskCustomPropertyValues(
   property: TaskCustomProperty,
   valueIds: readonly string[]
 ): PropertyFilter[] {
+  if (property.type === 'number') return properties ? [...properties] : [];
   if (property.type === 'entity') {
     const next = (properties ?? []).filter(
       (filter) =>
@@ -193,6 +217,7 @@ export function replaceTaskCustomPropertyValues(
   const isRecognized = (filter: PropertyFilter) =>
     filter.propertyId === property.id &&
     filter.type === property.type &&
+    'value' in filter &&
     values.has(String(filter.value)) &&
     values.get(String(filter.value)) === filter.value;
   const next = (properties ?? []).filter((filter) => !isRecognized(filter));
@@ -208,6 +233,67 @@ export function replaceTaskCustomPropertyValues(
       } as PropertyFilter);
     }
   }
+  return next;
+}
+
+export function validateNumberRange(
+  range: NumberRangeFilter
+): string | undefined {
+  const lower = range.gt ?? range.gte;
+  const upper = range.lt ?? range.lte;
+  if (
+    (range.gt !== undefined && range.gte !== undefined) ||
+    (range.lt !== undefined && range.lte !== undefined) ||
+    !Object.values(range).every(
+      (value) => value === undefined || Number.isFinite(value)
+    )
+  ) {
+    return 'Enter finite bounds using one operator on each side.';
+  }
+  if (lower === undefined && upper === undefined) {
+    return 'Enter a lower or upper bound.';
+  }
+  if (lower !== undefined && upper !== undefined) {
+    if (lower > upper)
+      return 'The lower bound must not exceed the upper bound.';
+    if (lower === upper && (range.gt !== undefined || range.lt !== undefined)) {
+      return 'Equal bounds must both be inclusive.';
+    }
+  }
+  return undefined;
+}
+
+export function numberRangeForProperty(
+  properties: readonly PropertyFilter[] | undefined,
+  property: TaskCustomProperty
+): Extract<PropertyFilter, { type: 'number' }> | undefined {
+  if (property.type !== 'number') return;
+  const filter = (properties ?? []).find(
+    (candidate): candidate is Extract<PropertyFilter, { type: 'number' }> =>
+      candidate.propertyId === property.id && candidate.type === 'number'
+  );
+  return filter && !validateNumberRange(filter.range) ? filter : undefined;
+}
+
+export function replaceTaskNumberRange(
+  properties: readonly PropertyFilter[] | undefined,
+  property: TaskCustomProperty,
+  range: NumberRangeFilter | undefined,
+  exclude = false
+): PropertyFilter[] {
+  if (property.type !== 'number' || (range && validateNumberRange(range))) {
+    return properties ? [...properties] : [];
+  }
+  const next = (properties ?? []).filter(
+    (filter) => !(filter.propertyId === property.id && filter.type === 'number')
+  );
+  if (!range) return next;
+  next.push({
+    propertyId: property.id,
+    type: 'number',
+    range,
+    ...(exclude ? { exclude: true } : {}),
+  });
   return next;
 }
 
@@ -238,6 +324,12 @@ export function isUnavailableTaskCustomProperty(
     (property) => property.id === filter.propertyId
   );
   if (!known) return true;
+  if (known.type === 'number') {
+    return (
+      filter.type !== 'number' ||
+      validateNumberRange(filter.range) !== undefined
+    );
+  }
   if (known.type === 'entity') {
     return (
       filter.type !== 'entity' ||
@@ -245,6 +337,7 @@ export function isUnavailableTaskCustomProperty(
       filter.value.length === 0
     );
   }
+  if (!('value' in filter)) return true;
   return !known.options.some(
     (option) => option.value === filter.value && known.type === filter.type
   );

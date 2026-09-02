@@ -73,6 +73,50 @@ describe('includePropertiesToFilters', () => {
     ]);
   });
 
+  it('serializes Number ranges separately as TASK-only generated-contract filters', () => {
+    expect(
+      includePropertiesToFilters([
+        {
+          propertyId: 'estimate',
+          type: 'number',
+          range: { gte: 1.5, lt: 3 },
+          exclude: true,
+        },
+        { propertyId: 'estimate', type: 'number', range: { gt: 8 } },
+      ])
+    ).toEqual([
+      {
+        property_definition_id: 'estimate',
+        entity_type: 'TASK',
+        number_range: { gte: 1.5, lt: 3, exclude: true },
+      },
+      {
+        property_definition_id: 'estimate',
+        entity_type: 'TASK',
+        number_range: { gt: 8 },
+      },
+    ]);
+  });
+
+  it('fails closed when a malformed persisted Number exclusion reaches Search', () => {
+    expect(
+      includePropertiesToFilters([
+        {
+          propertyId: 'estimate',
+          type: 'number',
+          range: {},
+          exclude: true,
+        },
+      ])
+    ).toEqual([
+      {
+        property_definition_id: 'estimate',
+        entity_type: 'TASK',
+        number_range: { gt: 0, lte: 0 },
+      },
+    ]);
+  });
+
   it('serializes all Due Date buckets as TASK-only date range filters', () => {
     withFixedLocalTime('Asia/Seoul', '2026-08-30T03:00:00.000Z', () => {
       expect(

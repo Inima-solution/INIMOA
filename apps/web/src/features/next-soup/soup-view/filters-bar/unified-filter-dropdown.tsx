@@ -67,13 +67,16 @@ import {
 } from './searchable-multi-select';
 import { useTagFilter } from './tag-filter';
 import {
+  numberRangeForProperty,
   replaceTaskCustomPropertyValues,
+  replaceTaskNumberRange,
   selectedTaskCustomPropertyValues,
   type TaskCustomProperty,
   taskCustomProperties,
   taskCustomPropertiesQueryArgs,
   toggleTaskCustomPropertyValue,
 } from './task-custom-property-filter';
+import { TaskNumberRangeEditor } from './task-number-range-editor';
 
 export type { FilterCategory, FilterOption } from './filter-categories';
 
@@ -150,6 +153,51 @@ const TaskCustomPropertySubmenu = (props: { property: TaskCustomProperty }) => {
               });
             }}
             onClose={() => setIsOpen(false)}
+          />
+        </Dropdown.SubContent>
+      </Dropdown.Sub>
+    );
+  }
+  if (props.property.type === 'number') {
+    const numberFilter = () =>
+      numberRangeForProperty(
+        queryFilters.state.include.properties,
+        props.property
+      );
+    return (
+      <Dropdown.Sub>
+        <Dropdown.SubTrigger>
+          <span class="text-ink truncate">{props.property.label}</span>
+          <CaretRightIcon class="size-3 text-ink-muted" />
+        </Dropdown.SubTrigger>
+        <Dropdown.SubContent class="w-72 max-w-[90vw]">
+          <TaskNumberRangeEditor
+            label={props.property.label}
+            value={numberFilter()?.range}
+            exclude={numberFilter()?.exclude}
+            onApply={(range, exclude) =>
+              queryFilters.set({
+                include: {
+                  properties: replaceTaskNumberRange(
+                    queryFilters.state.include.properties,
+                    props.property,
+                    range,
+                    exclude
+                  ),
+                },
+              })
+            }
+            onClear={() =>
+              queryFilters.set({
+                include: {
+                  properties: replaceTaskNumberRange(
+                    queryFilters.state.include.properties,
+                    props.property,
+                    undefined
+                  ),
+                },
+              })
+            }
           />
         </Dropdown.SubContent>
       </Dropdown.Sub>
