@@ -10,6 +10,11 @@ maybe_env_var! {
     pub struct LocalAwsUrl;
 }
 
+maybe_env_var! {
+    #[derive(Clone)]
+    pub struct LocalAwsBrowserUrl;
+}
+
 /// Creates an S3 client
 #[cfg(feature = "s3")]
 pub async fn s3_client() -> aws_sdk_s3::Client {
@@ -57,10 +62,18 @@ pub fn is_local_aws() -> bool {
 
 /// internal method to transform the local aws url
 fn transform_local_url(url: &str) -> String {
+    transform_local_url_with_browser_base(url, LocalAwsBrowserUrl::new().as_deref())
+}
+
+fn transform_local_url_with_browser_base(url: &str, browser_base: Option<&str>) -> String {
     // NOTE: it is ok to use expect as this is only run locally
     let parsed = url::Url::parse(url).expect("valid url");
     let host = parsed.host_str().unwrap();
-    let port = parsed.port().unwrap_or(4566);
+    let source_port = parsed.port().unwrap_or(4566);
+    let browser_port = browser_base
+        .map(|base| url::Url::parse(base).expect("valid LOCAL_AWS_BROWSER_URL"))
+        .and_then(|base| base.port_or_known_default())
+        .unwrap_or(source_port);
     let path = parsed.path();
     let query = parsed.query().map(|q| format!("?{q}")).unwrap_or_default();
 
@@ -68,7 +81,7 @@ fn transform_local_url(url: &str) -> String {
     // the host, which the browser on the host machine cannot resolve. Keep the
     // existing path (`/{bucket}/{key}`) and only swap the host to localhost.
     if host == "localstack" || host == "localhost" {
-        return format!("http://localhost:{port}{path}{query}");
+        return format!("http://localhost:{browser_port}{path}{query}");
     }
 
     // hostname should be in the form {asset}.localstack or {asset}.localhost
@@ -77,7 +90,7 @@ fn transform_local_url(url: &str) -> String {
         .or_else(|| host.strip_suffix(".localhost"))
         .unwrap();
 
-    format!("http://localhost:{port}/{asset}{path}{query}")
+    format!("http://localhost:{browser_port}/{asset}{path}{query}")
 }
 
 /// Transforms a localstack url into one that will work within the app

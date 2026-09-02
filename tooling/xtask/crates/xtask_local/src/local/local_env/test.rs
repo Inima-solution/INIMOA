@@ -26,6 +26,7 @@ fn emits_required_keys() {
         "REDIS_URI",
         "OPENSEARCH_URL",
         "LOCAL_AWS_URL",
+        "LOCAL_AWS_BROWSER_URL",
         "AWS_ACCESS_KEY_ID",
         "STATIC_STORAGE_BUCKET",
         "CONNECTION_GATEWAY_TABLE",
@@ -290,6 +291,23 @@ fn fusionauth_public_url_uses_the_instance_host_port() {
     assert_eq!(
         named_env.get("FUSIONAUTH_PUBLIC_URL").map(String::as_str),
         Some(named_public_url.as_str())
+    );
+}
+
+#[test]
+fn local_aws_browser_url_uses_the_instance_host_port() {
+    let default = Instance::derive(None, None).unwrap();
+    let named = Instance::derive(Some("2508"), None).unwrap();
+    let default_env = LocalEnv::for_instance(Mode::Local, &default, true).to_env();
+    let named_env = LocalEnv::for_instance(Mode::Local, &named, true).to_env();
+
+    assert_eq!(
+        default_env.get("LOCAL_AWS_BROWSER_URL").map(String::as_str),
+        Some("http://localhost:4566")
+    );
+    assert_eq!(
+        named_env.get("LOCAL_AWS_BROWSER_URL").map(String::as_str),
+        Some(format!("http://localhost:{}", named.port(Port::LocalStack)).as_str())
     );
 }
 

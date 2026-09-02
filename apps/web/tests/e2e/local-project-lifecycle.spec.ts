@@ -9,7 +9,9 @@ test.skip(!LOCAL_E2E, 'requires LOCAL_E2E=true and the isolated smoke seed');
 
 test.describe
   .serial('local project lifecycle', () => {
-    test.describe.configure({ timeout: 60_000 });
+    // A cold Linux Vite transform can consume most of the default minute
+    // before the first project screen becomes interactive.
+    test.describe.configure({ timeout: 300_000 });
 
     test('creates, renames, verifies access, restores, and permanently deletes one project', async ({
       page,
@@ -46,9 +48,11 @@ test.describe
         );
 
         await expect(page).toHaveURL(new RegExp(id));
-        await expect(
-          page.getByText('New Folder', { exact: true }).first()
-        ).toBeVisible();
+        const newFolderTitle = page
+          .getByText('New Folder', { exact: true })
+          .first();
+        await expect(newFolderTitle).toBeVisible();
+        await page.locator('[data-split-container]').first().click();
         await page.keyboard.press('r');
         const renameDialog = page
           .getByRole('dialog')
@@ -62,6 +66,79 @@ test.describe
         await expect(
           page.getByText(renamedName, { exact: true }).first()
         ).toBeVisible();
+
+        const noteResponsePromise = page.waitForResponse(
+          (response) =>
+            response.request().method() === 'POST' &&
+            new URL(response.url()).pathname.endsWith(
+              '/dss/documents/create_markdown'
+            )
+        );
+        await page.getByRole('button', { name: 'Create', exact: true }).click();
+        await page.getByRole('menuitem', { name: 'Note', exact: true }).click();
+        const noteResponse = await noteResponsePromise;
+        expect(noteResponse.status()).toBe(200);
+        const noteId = documentIdFrom(await noteResponse.json());
+        await expect(page).toHaveURL(new RegExp(noteId));
+
+        await gotoApp(page, `/project/${id}`);
+        const shareButton = page
+          .getByRole('button', { name: 'Share', exact: true })
+          .first();
+        await expect(shareButton).toBeVisible();
+        await shareButton.click();
+        const shareDialog = page
+          .getByRole('dialog')
+          .filter({ hasText: `Share:${renamedName}` });
+        await expect(shareDialog).toBeVisible();
+        await shareDialog
+          .getByRole('button', { name: 'Cancel', exact: true })
+          .click();
+        await expect(shareDialog).not.toBeVisible();
+
+        const chatResponsePromise = page.waitForResponse(
+          (response) =>
+            response.request().method() === 'POST' &&
+            new URL(response.url()).pathname.endsWith('/chats')
+        );
+        await page.getByText('Chat', { exact: true }).first().click();
+        const chatResponse = await chatResponsePromise;
+        expect(chatResponse.status()).toBe(200);
+        const chatId = chatIdFrom(await chatResponse.json());
+        await expect(page).toHaveURL(new RegExp(chatId));
+
+        await gotoApp(page, `/project/${id}`);
+        const uploadName = `${uniqueE2EText('local-lifecycle-upload').replaceAll(' ', '-')}.txt`;
+        const uploadCreatedPromise = page.waitForResponse(
+          (response) =>
+            response.request().method() === 'POST' &&
+            new URL(response.url()).pathname.endsWith('/dss/documents')
+        );
+        const dataTransfer = await page.evaluateHandle((name) => {
+          const transfer = new DataTransfer();
+          transfer.items.add(
+            new File(['local project lifecycle upload'], name, {
+              type: 'text/plain',
+            })
+          );
+          return transfer;
+        }, uploadName);
+        const dropTarget = page
+          .locator('[data-split-container]')
+          .first()
+          .locator('div.size-full.bg-surface.flex.flex-col.relative')
+          .first();
+        await dropTarget.dispatchEvent('dragenter', { dataTransfer });
+        await expect(
+          page.getByText('Upload to this folder', { exact: true })
+        ).toBeVisible();
+        await dropTarget.dispatchEvent('drop', { dataTransfer });
+        expect((await uploadCreatedPromise).status()).toBe(200);
+        await expect(
+          page.getByText(`Uploaded ${uploadName.slice(0, -4)}`, {
+            exact: true,
+          })
+        ).toBeVisible({ timeout: 60_000 });
 
         const showSidePanel = page.getByRole('button', {
           name: 'Show Side Panel',
@@ -128,6 +205,25 @@ function projectIdFrom(response: unknown): string {
   const id = (response as { data?: { id?: unknown } }).data?.id;
   if (typeof id !== 'string')
     throw new Error('Project creation did not return an id');
+  return id;
+}
+
+function documentIdFrom(response: unknown): string {
+  const body = response as {
+    data?: { documentId?: unknown };
+    documentId?: unknown;
+  };
+  const id = body.data?.documentId ?? body.documentId;
+  if (typeof id !== 'string')
+    throw new Error('Document creation did not return an id');
+  return id;
+}
+
+function chatIdFrom(response: unknown): string {
+  const body = response as { data?: { id?: unknown }; id?: unknown };
+  const id = body.data?.id ?? body.id;
+  if (typeof id !== 'string')
+    throw new Error('Chat creation did not return an id');
   return id;
 }
 

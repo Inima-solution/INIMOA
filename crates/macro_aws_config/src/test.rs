@@ -19,6 +19,15 @@ fn test_transform_path_style_localhost() {
 }
 
 #[test]
+fn test_transform_path_style_named_stack_browser_port() {
+    let input = "http://localstack:4566/doc-storage/key?x-id=PutObject";
+    let expected = "http://localhost:25006/doc-storage/key?x-id=PutObject";
+
+    let result = transform_local_url_with_browser_base(input, Some("http://localhost:25006"));
+    assert_eq!(result, expected);
+}
+
+#[test]
 fn test_transform_presigned_url_with_query_params_localstack() {
     let input = "http://static-file-storage.localstack:4566/file/a31e9af3-dd26-4531-b367-bfbbbac706cc?x-id=PutObject&X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=ANOTREAL%2F20260203%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20260203T184319Z&X-Amz-Expires=120&X-Amz-SignedHeaders=content-type%3Bhost&X-Amz-Signature=deed6b123a18335b61567eaf8ddb7ea6e00bf264cfd80cb0f4031860235dc077";
 
