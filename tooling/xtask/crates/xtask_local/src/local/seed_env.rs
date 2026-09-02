@@ -58,7 +58,7 @@ fn values(instance: &Instance) -> Vec<(&'static str, String)> {
     let postgres = instance.port(Port::Postgres);
     let localstack = instance.port(Port::LocalStack);
     let fusionauth = instance.port(Port::FusionAuth);
-    let frontend = instance.port(Port::Frontend);
+    let frontend = frontend_port(instance, super::stack::frontend_is_static(instance));
     let (sync_service_url, lexical_service_url) = if instance.is_default() {
         (
             "http://localhost:8787".to_string(),
@@ -86,4 +86,12 @@ fn values(instance: &Instance) -> Vec<(&'static str, String)> {
         ("SYNC_SERVICE_URL", sync_service_url),
         ("LEXICAL_SERVICE_URL", lexical_service_url),
     ]
+}
+
+fn frontend_port(instance: &Instance, static_frontend: bool) -> u16 {
+    instance.port(if static_frontend {
+        Port::Proxy
+    } else {
+        Port::Frontend
+    })
 }

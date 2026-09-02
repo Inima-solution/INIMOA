@@ -70,3 +70,14 @@ fn overrides_are_preserved_via_shell_default_expansion() {
         assert!(line.contains(":-"), "line must preserve overrides: {line}");
     }
 }
+
+#[test]
+fn static_frontend_persona_links_use_the_proxy_port() {
+    let instance = Instance::derive(Some("agent-a"), Some(24000)).unwrap();
+
+    assert_eq!(
+        frontend_port(&instance, false),
+        instance.port(Port::Frontend)
+    );
+    assert_eq!(frontend_port(&instance, true), instance.port(Port::Proxy));
+}

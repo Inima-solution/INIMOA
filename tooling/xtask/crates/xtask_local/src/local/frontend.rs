@@ -50,12 +50,25 @@ pub fn static_dir(instance: &Instance) -> std::path::PathBuf {
 /// paths such as passwordless auto-login (`just run_local` uses `vite serve`,
 /// where DEV is already true). Headless `stack up` sets the same origin env.
 pub fn build_static(stage: &Stage, instance: &Instance, mode: Mode) -> Result<()> {
-    let dist = {
-        let mut cmd = Command::new("bun");
+    // CI and cross-host recovery may build the bundle in an isolated Linux
+    // workspace (for example from the fixed-output Nix node_modules package)
+    // and hand the verified result to the running stack. This avoids ever
+    // executing platform-specific node_modules copied from another host.
+    let dist = if let Some(prebuilt) = std::env::var_os("MACRO_FRONTEND_DIST_DIR") {
+        let path = std::path::PathBuf::from(prebuilt);
+        stage.note(&format!(
+            "Using prebuilt frontend bundle from {}",
+            path.display()
+        ));
+        path
+    } else {
+        // Use the repository's build recipe instead of invoking Vite directly.
+        // Besides the optimized development bundle it builds both gitignored
+        // WASM packages and packages the cache-WASM sidecar into dist; omitting
+        // those steps leaves the normalized cache silently network-only.
+        let mut cmd = Command::new("just");
         cmd.current_dir(app_dir())
-            .args(["run", "--bun", "build"])
-            .env("MODE", "development")
-            .env("NODE_ENV", "production")
+            .arg("build-dev")
             .env("VITE_LOCAL_SERVERS", "ALL")
             .env("VITE_LOCAL_BACKEND_ORIGIN", "same-origin");
         if mode.spec().runs_local_infra {
