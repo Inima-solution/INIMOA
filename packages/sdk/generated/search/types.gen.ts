@@ -1518,6 +1518,7 @@ export type PropertyFilter = {
      * When None, matches across all entity types.
      */
     entity_type?: string | null;
+    number_range?: null | PropertyNumberRangeFilter;
     /**
      * Select option UUIDs to match. Multiple values are OR'd together.
      */
@@ -1526,6 +1527,39 @@ export type PropertyFilter = {
      * The UUID of the property definition to filter on.
      */
     property_definition_id: string;
+};
+
+/**
+ * A compact range for matching Number property values. Bounds are validated
+ * at the public API boundary to be finite IEEE-754 values.
+ */
+export type PropertyNumberRange = {
+    /**
+     * Match values strictly greater than this finite number.
+     */
+    gt?: number | null;
+    /**
+     * Match values greater than or equal to this finite number.
+     */
+    gte?: number | null;
+    /**
+     * Match values strictly less than this finite number.
+     */
+    lt?: number | null;
+    /**
+     * Match values less than or equal to this finite number.
+     */
+    lte?: number | null;
+};
+
+/**
+ * A Number-property range together with whether matching Task values are excluded.
+ */
+export type PropertyNumberRangeFilter = PropertyNumberRange & {
+    /**
+     * Exclude Tasks whose Number property matches these bounds.
+     */
+    exclude?: boolean;
 };
 
 /**
