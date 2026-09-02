@@ -13,10 +13,11 @@ test.describe
     // before the first project screen becomes interactive.
     test.describe.configure({ timeout: 300_000 });
 
-    test('creates, renames, verifies access, restores, and permanently deletes one project', async ({
+    test('creates, moves content, verifies access, restores, and permanently deletes one project', async ({
       page,
     }) => {
       const renamedName = uniqueE2EText('local lifecycle renamed');
+      const moveTargetName = uniqueE2EText('local lifecycle move target');
       let projectId: string | undefined;
       let cleanupComplete = false;
       const ownerToken = tokenFor();
@@ -67,6 +68,36 @@ test.describe
           page.getByText(renamedName, { exact: true }).first()
         ).toBeVisible();
 
+        const moveTargetResponsePromise = page.waitForResponse(
+          (response) =>
+            response.request().method() === 'POST' &&
+            new URL(response.url()).pathname.endsWith('/dss/projects')
+        );
+        await page.getByRole('button', { name: 'Create', exact: true }).click();
+        await page
+          .getByRole('menuitem', { name: 'Folder', exact: true })
+          .click();
+        const moveTargetResponse = await moveTargetResponsePromise;
+        expect(moveTargetResponse.status()).toBe(200);
+        const moveTargetId = projectIdFrom(await moveTargetResponse.json());
+        await expect(page).toHaveURL(new RegExp(moveTargetId));
+        await page.locator('[data-split-container]').first().click();
+        await page.keyboard.press('r');
+        const moveTargetRenameDialog = page
+          .getByRole('dialog')
+          .filter({ hasText: 'Rename' });
+        const moveTargetRenameInput =
+          moveTargetRenameDialog.getByPlaceholder('Enter new text...');
+        await expect(moveTargetRenameInput).toBeVisible();
+        await moveTargetRenameInput.fill(moveTargetName);
+        await moveTargetRenameDialog
+          .getByRole('button', { name: 'Rename', exact: true })
+          .click();
+        await expect(
+          page.getByText(moveTargetName, { exact: true }).first()
+        ).toBeVisible();
+
+        await gotoApp(page, `/project/${id}`);
         const noteResponsePromise = page.waitForResponse(
           (response) =>
             response.request().method() === 'POST' &&
@@ -80,6 +111,38 @@ test.describe
         expect(noteResponse.status()).toBe(200);
         const noteId = documentIdFrom(await noteResponse.json());
         await expect(page).toHaveURL(new RegExp(noteId));
+
+        const noteTitle = page.getByText('New Note', { exact: true }).first();
+        await expect(noteTitle).toBeVisible();
+        await noteTitle.click({ button: 'right' });
+        await page.getByRole('menuitem', { name: /^Move to Folder/ }).click();
+        const folderSearch = page.getByPlaceholder('Search folders...');
+        await expect(folderSearch).toBeVisible();
+        await folderSearch.fill(moveTargetName);
+        await page.getByText(moveTargetName, { exact: true }).first().click();
+        const moveResponsePromise = page.waitForResponse(
+          (response) =>
+            response.request().method() === 'PATCH' &&
+            new URL(response.url()).pathname.endsWith(
+              `/dss/documents/${noteId}`
+            )
+        );
+        await page
+          .getByRole('button', { name: 'Move', exact: true })
+          .last()
+          .click();
+        expect((await moveResponsePromise).status()).toBe(200);
+        await expect(
+          page.getByText('Moved to folder', { exact: true })
+        ).toBeVisible();
+        await gotoApp(page, `/project/${moveTargetId}`);
+        await expect(
+          page
+            .locator('[data-split-container]')
+            .first()
+            .getByText('New Note', { exact: true })
+            .first()
+        ).toBeVisible();
 
         await gotoApp(page, `/project/${id}`);
         const shareButton = page
