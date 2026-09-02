@@ -1,11 +1,36 @@
 use super::*;
-use macro_event_broker::{Event, MacroEventCollection};
+use entity_access::domain::{
+    models::EntityType as AccessEntityType, service::EntityAccessServiceImpl,
+};
+use entity_access::outbound::PgAccessRepository;
+use macro_event_broker::{
+    Event, EventBrokerError, MacroEvent, MacroEventBroker, MacroEventCollection,
+};
 use macro_user_id::cowlike::CowLike;
+use macro_user_id::user_id::MacroUserIdStr;
+use models_properties::EntityType;
+use models_properties::api::requests::SetPropertyValue;
+use notification::domain::models::UserNotificationRow;
+use notification::domain::models::email_notification_digest::{
+    BulkDigestStateMachine, StateMachineDecisionA,
+};
+use notification::domain::models::queue_message::{QueueMessage, RawQueueMessage};
+use notification::domain::ports::NotificationQueue;
+use notification::domain::service::NotificationIngressService;
+use notification::outbound::repository::DbNotificationRepository;
 use properties::domain::events::{
     PropertyTopicEvent, TaskReadyMetadata as SourceTaskReadyMetadata,
 };
+use properties::domain::model::TaskAssignedNotification;
+use properties::domain::service::PropertiesService;
+use properties::{
+    EditReceipt, NotificationService, PermissionService, PropertiesPgRepo, PropertiesServiceImpl,
+    ViewReceipt, canonical_entity_type,
+};
+use rootcause::Report;
+use serde::Serialize;
 use sqlx::{PgPool, Postgres};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use system_properties::{StatusOption, SystemPropertyKey};
 use uuid::Uuid;
 
@@ -35,6 +60,122 @@ impl TaskReadyIngress for FakeIngress {
     async fn enqueue(&self, request: TaskReadyRequest) -> anyhow::Result<()> {
         self.0.lock().unwrap().push(serde_json::to_value(request)?);
         Ok(())
+    }
+}
+
+#[derive(Clone, Default)]
+struct RecordingPropertyBroker(Arc<Mutex<Vec<(String, Vec<u8>)>>>);
+
+impl RecordingPropertyBroker {
+    fn ready_events(&self) -> Vec<PropertyMacroEvent> {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .filter_map(|(key, payload)| PropertyMacroEvent::decode(key.clone(), payload).ok())
+            .filter(|event| matches!(event.event().event, PropertyTopicEvent::TaskReady(_)))
+            .collect()
+    }
+}
+
+impl MacroEventBroker for RecordingPropertyBroker {
+    fn send_event<E: MacroEvent + ?Sized>(
+        &self,
+        event: &E,
+    ) -> Result<tokio::task::JoinHandle<Result<(), EventBrokerError>>, EventBrokerError> {
+        self.0
+            .lock()
+            .unwrap()
+            .push((event.key().to_string(), serde_json::to_vec(event.event())?));
+        Ok(tokio::spawn(async { Ok(()) }))
+    }
+}
+
+struct UnusedPermissionService;
+
+impl PermissionService for UnusedPermissionService {
+    type Err = anyhow::Error;
+
+    async fn mint_view_receipt<'a>(
+        &self,
+        _user_id: Option<&'a MacroUserIdStr<'a>>,
+        _entity_id: &str,
+        _entity_type: AccessEntityType,
+    ) -> Result<ViewReceipt, Self::Err> {
+        anyhow::bail!("unused permission adapter")
+    }
+
+    async fn mint_edit_receipt<'a>(
+        &self,
+        _user_id: &MacroUserIdStr<'a>,
+        _entity_id: &str,
+        _entity_type: AccessEntityType,
+    ) -> Result<EditReceipt, Self::Err> {
+        anyhow::bail!("unused permission adapter")
+    }
+
+    async fn grant_permissions_to_task<'a>(
+        &self,
+        _user_ids: &[MacroUserIdStr<'a>],
+        _task_id: &str,
+    ) -> Result<(), Self::Err> {
+        anyhow::bail!("unused permission adapter")
+    }
+}
+
+struct UnusedNotificationService;
+
+impl NotificationService for UnusedNotificationService {
+    type Err = anyhow::Error;
+
+    async fn send_task_assigned<'a>(
+        &self,
+        _notification: TaskAssignedNotification<'a>,
+    ) -> Result<(), Self::Err> {
+        anyhow::bail!("unused notification adapter")
+    }
+}
+
+#[derive(Clone, Default)]
+struct RecordingNotificationQueue(Arc<Mutex<Vec<serde_json::Value>>>);
+
+impl RecordingNotificationQueue {
+    fn published(&self) -> Vec<serde_json::Value> {
+        self.0.lock().unwrap().clone()
+    }
+}
+
+impl NotificationQueue for RecordingNotificationQueue {
+    async fn publish<'a, T: Serialize + Send + Sync, U: Serialize + Send + Sync>(
+        &self,
+        messages: Vec<QueueMessage<'a, T, U>>,
+    ) -> Result<(), Report> {
+        self.0.lock().unwrap().extend(
+            messages
+                .into_iter()
+                .map(serde_json::to_value)
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        Ok(())
+    }
+
+    async fn receive_messages(&self) -> Result<Vec<RawQueueMessage>, Report> {
+        Ok(Vec::new())
+    }
+
+    async fn delete_message(&self, _receipt_handle: &str) -> Result<(), Report> {
+        Ok(())
+    }
+}
+
+struct NoopDigestStateMachine;
+
+impl BulkDigestStateMachine for NoopDigestStateMachine {
+    async fn ingest<T: Serialize + Send + Sync + 'static>(
+        &self,
+        _notif: UserNotificationRow<Arc<T>>,
+    ) -> Result<StateMachineDecisionA, Report> {
+        Err(rootcause::report!("digest delivery is outside this test"))
     }
 }
 fn snapshot(
@@ -204,6 +345,142 @@ async fn migrated_ready_snapshot_filters_access_and_suppresses_stale_event(
         "stale event {stale_event_id} must be suppressed"
     );
     assert_eq!(ingress.0.lock().unwrap().len(), 1);
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(
+        path = "../../../../../crates/properties/fixtures",
+        scripts("task_dependencies_seed")
+    )
+)]
+async fn final_predecessor_completion_persists_one_permitted_notification(
+    pool: sqlx::Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let predecessor_id = Uuid::from_u128(0x411);
+    let task_id = Uuid::from_u128(0x412);
+    let permitted_user = "macro|permitted@example.com";
+    let denied_user = "macro|denied@example.com";
+    let type_disabled_user = "macro|type-disabled@example.com";
+
+    live_task(&pool, predecessor_id, "Final predecessor").await?;
+    live_task(&pool, task_id, "Ready after final predecessor").await?;
+    task_status(&pool, predecessor_id, StatusOption::NotStarted).await?;
+    task_status(&pool, task_id, StatusOption::NotStarted).await?;
+    task_property(
+        &pool,
+        task_id,
+        SystemPropertyKey::DEPENDS_ON_UUID,
+        serde_json::json!({"type":"EntityReference","value":[{
+            "entity_id": predecessor_id,
+            "entity_type":"TASK",
+            "specific_message_id": null
+        }]}),
+    )
+    .await?;
+    task_property(
+        &pool,
+        task_id,
+        SystemPropertyKey::ASSIGNEES_UUID,
+        serde_json::json!({"type":"EntityReference","value":[
+            {"entity_id": permitted_user, "entity_type":"USER", "specific_message_id": null},
+            {"entity_id": denied_user, "entity_type":"USER", "specific_message_id": null},
+            {"entity_id": type_disabled_user, "entity_type":"USER", "specific_message_id": null}
+        ]}),
+    )
+    .await?;
+    sqlx::query(
+        "INSERT INTO user_notification_type_preference (user_id, notification_event_type) VALUES ($1, 'task_ready')",
+    )
+    .bind(type_disabled_user)
+    .execute(&pool)
+    .await?;
+    sqlx::query(
+        "INSERT INTO entity_access (entity_id, entity_type, source_id, source_type, access_level) VALUES ($1, 'document', $2, 'user', 'view'), ($1, 'document', $3, 'user', 'view')",
+    )
+    .bind(task_id)
+    .bind(permitted_user)
+    .bind(type_disabled_user)
+    .execute(&pool)
+    .await?;
+
+    let property_broker = RecordingPropertyBroker::default();
+    let properties = PropertiesServiceImpl::new(
+        PropertiesPgRepo::new(pool.clone()),
+        None::<UnusedPermissionService>,
+        None::<UnusedNotificationService>,
+    )
+    .with_event_broker(property_broker.clone());
+    let predecessor_receipt = EditReceipt::dangerously_assert_internal_user(
+        &predecessor_id.to_string(),
+        canonical_entity_type(EntityType::Task),
+    );
+    let completed = Some(SetPropertyValue::SelectOption {
+        option_id: StatusOption::COMPLETED_UUID,
+    });
+    properties
+        .set_entity_property(
+            &predecessor_receipt,
+            SystemPropertyKey::STATUS_UUID,
+            completed.clone(),
+        )
+        .await?;
+    properties
+        .set_entity_property(
+            &predecessor_receipt,
+            SystemPropertyKey::STATUS_UUID,
+            completed,
+        )
+        .await?;
+
+    let ready_events = property_broker.ready_events();
+    assert_eq!(
+        ready_events.len(),
+        1,
+        "the completed retry must not publish another readiness signal"
+    );
+    let ready_event = &ready_events[0];
+    assert_eq!(ready_event.key(), task_id.to_string());
+    let event_id = ready_event.event().event_id;
+
+    let queue = RecordingNotificationQueue::default();
+    let ingress = NotificationIngressService::new(
+        DbNotificationRepository::new(pool.clone()),
+        queue.clone(),
+        NoopDigestStateMachine,
+    );
+    let materializer = TaskReadyNotificationMaterializer::new(
+        pool.clone(),
+        EntityAccessServiceImpl::new(PgAccessRepository::new(pool.clone())),
+        ingress,
+    );
+
+    for _ in 0..2 {
+        assert_eq!(
+            materializer.materialize(ready_event).await?,
+            MaterializeOutcome::Enqueued
+        );
+    }
+
+    let notification_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM notification WHERE id = $1")
+            .bind(event_id)
+            .fetch_one(&pool)
+            .await?;
+    assert_eq!(notification_count, 1);
+    let recipients: Vec<String> = sqlx::query_scalar(
+        "SELECT user_id FROM user_notification WHERE notification_id = $1 ORDER BY user_id",
+    )
+    .bind(event_id)
+    .fetch_all(&pool)
+    .await?;
+    assert_eq!(recipients, vec![permitted_user.to_string()]);
+    assert_eq!(
+        queue.published().len(),
+        1,
+        "idempotent replay must not enqueue a duplicate delivery"
+    );
     Ok(())
 }
 

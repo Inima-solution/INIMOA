@@ -288,25 +288,25 @@ async fn test_copy_task_properties_with_existing_properties(
     repo.copy_task_properties(from_task_id, to_task_id).await?;
 
     // Destination should have 14 properties:
-    // - 4 copied (Status, Priority, Custom Notes, Custom Tags)
-    // - 10 null system properties backfilled
+    // - 3 copied (Priority, Custom Notes, Custom Tags)
+    // - 11 null system properties backfilled, including Status
     let count = count_task_properties(&pool, to_task_id).await;
     assert_eq!(
         count, 14,
-        "Should have 14 properties (4 copied + 10 backfilled)"
+        "Should have 14 properties (3 copied + 11 backfilled)"
     );
 
-    // Check that status was copied with correct SelectOption value
+    // A copied task starts from the canonical unset/Not Started state instead
+    // of bypassing the guarded Status mutation path.
     let properties = get_task_property_values(&pool, to_task_id).await;
 
     let status_prop = properties
         .iter()
         .find(|(id, _)| *id == SystemPropertyKey::Status.uuid());
     assert!(status_prop.is_some(), "Status property should exist");
-    assert_eq!(
-        status_prop.unwrap().1.as_ref().unwrap(),
-        &serde_json::json!({"type": "SelectOption", "value": ["00000001-0000-0000-0002-000000000002"]}), // In Progress
-        "Status value should be copied"
+    assert!(
+        status_prop.unwrap().1.is_none(),
+        "Status value should reset"
     );
 
     let priority_prop = properties
@@ -370,13 +370,30 @@ async fn test_copy_task_properties_copies_custom_properties(
     migrator = "MACRO_DB_MIGRATIONS",
     fixtures(path = "../../../fixtures", scripts("system_properties"))
 )]
-async fn test_copy_task_properties_overwrites_existing(pool: Pool<Postgres>) -> anyhow::Result<()> {
+async fn test_copy_task_properties_preserves_guarded_existing_status(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
     let repo = PgSystemPropertiesRepository::new(pool.clone());
 
     let from_task_id = "source-task-overwrite"; // Status = Completed
     let to_task_id = "dest-task-existing"; // Status = Not Started
 
-    // Copy should overwrite destination value
+    let retained_dependency = serde_json::json!({
+        "type": "EntityReference",
+        "value": [{"entity_id": "unfinished-predecessor", "entity_type": "TASK"}]
+    });
+    sqlx::query(
+        "INSERT INTO entity_properties (id, entity_id, entity_type, property_definition_id, values) VALUES ($1, $2, 'TASK', $3, $4)",
+    )
+    .bind(Uuid::new_v4())
+    .bind(to_task_id)
+    .bind(SystemPropertyKey::DependsOn.uuid())
+    .bind(retained_dependency.clone())
+    .execute(&pool)
+    .await?;
+
+    // Copy must not write Completed around the common TASKDEPS guard. The
+    // destination keeps both its prior status and dependency graph.
     repo.copy_task_properties(from_task_id, to_task_id).await?;
 
     let properties = get_task_property_values(&pool, to_task_id).await;
@@ -386,8 +403,16 @@ async fn test_copy_task_properties_overwrites_existing(pool: Pool<Postgres>) -> 
 
     assert_eq!(
         status_prop.unwrap().1.as_ref().unwrap(),
-        &serde_json::json!({"type": "SelectOption", "value": ["00000001-0000-0000-0002-000000000004"]}), // Completed (from source)
-        "Destination value should be overwritten with source value"
+        &serde_json::json!({"type": "SelectOption", "value": ["00000001-0000-0000-0002-000000000001"]}), // Not Started (destination)
+        "Guarded destination Status must not be overwritten"
+    );
+    assert_eq!(
+        properties
+            .iter()
+            .find(|(id, _)| *id == SystemPropertyKey::DependsOn.uuid())
+            .expect("Depends On remains attached")
+            .1,
+        Some(retained_dependency)
     );
 
     Ok(())
@@ -630,7 +655,8 @@ async fn test_copy_task_properties_does_not_copy_hierarchy_or_depends_on(
             .find(|(id, _)| *id == SystemPropertyKey::Status.uuid())
             .unwrap()
             .1,
-        Some(status_value)
+        None,
+        "Copied task Status must start unset instead of bypassing the guard"
     );
     assert_eq!(count_task_properties(&pool, absent_destination).await, 12);
     assert_eq!(count_task_properties(&pool, existing_destination).await, 12);

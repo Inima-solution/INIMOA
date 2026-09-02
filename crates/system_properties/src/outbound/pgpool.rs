@@ -167,6 +167,7 @@ impl SystemPropertiesRepository for PgSystemPropertiesRepository {
             "#,
             from_task_id,
             &[
+                SystemPropertyKey::Status.uuid(),
                 SystemPropertyKey::ParentTask.uuid(),
                 SystemPropertyKey::Subtasks.uuid(),
                 SystemPropertyKey::DependsOn.uuid(),
