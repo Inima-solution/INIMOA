@@ -56,6 +56,7 @@ import {
   taskCustomPropertiesQueryArgs,
   toggleTaskCustomPropertyValue,
 } from './task-custom-property-filter';
+import { indexAvailableTaskEntities } from './task-entity-index';
 import {
   buildContactLabel,
   VIEW_FILTER_CATEGORIES,
@@ -187,11 +188,9 @@ export function useFilterRefinements() {
     'chat',
     'task'
   ).items;
-  const taskEntityById = createMemo(() => {
-    const byId = new Map<string, QuickAccessItem>();
-    for (const item of taskEntityItems()) byId.set(item.id, item);
-    return byId;
-  });
+  const taskEntityById = createMemo(() =>
+    indexAvailableTaskEntities(taskEntityItems?.())
+  );
   const getTaskEntityById = (id: string) => taskEntityById().get(id);
 
   const getPresetContext = (): PresetContext => ({
