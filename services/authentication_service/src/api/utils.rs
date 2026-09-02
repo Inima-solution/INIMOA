@@ -7,6 +7,9 @@ use macro_env_var::maybe_env_vars;
 use rand::{Rng, seq::SliceRandom};
 use url::Url;
 
+#[cfg(test)]
+mod test;
+
 maybe_env_vars! {
     struct FrontendPort;
 }
@@ -60,59 +63,36 @@ pub fn default_redirect_url() -> Url {
     }
 }
 
-fn domain<'a>() -> Option<&'a str> {
-    match Environment::new_or_prod() {
-        Environment::Local => None,
-        Environment::Production | Environment::Develop => Some("macro.com"),
-    }
-}
-
-fn same_site() -> SameSite {
-    match Environment::new_or_prod() {
-        Environment::Production => SameSite::Strict,
-        Environment::Local | Environment::Develop => SameSite::None,
-    }
-}
-
 pub fn create_access_token_cookie(token: &str) -> Cookie<'static> {
-    let same_site = same_site();
-    let domain = domain();
-    let access_token_cookie_name = match Environment::new_or_prod() {
-        Environment::Production => MACRO_ACCESS_TOKEN_COOKIE.to_string(),
-        Environment::Develop => format!("dev-{MACRO_ACCESS_TOKEN_COOKIE}"),
-        Environment::Local => format!("local-{MACRO_ACCESS_TOKEN_COOKIE}"),
-    };
-
-    let mut cookie = Cookie::new(
-        access_token_cookie_name,
-        token.to_owned(), // Convert the borrowed str to an owned String
-    );
-    cookie.set_secure(true);
-    cookie.set_http_only(true);
-    cookie.set_same_site(same_site);
-    if let Some(domain) = domain {
-        cookie.set_domain(domain);
-    }
-    cookie.set_path("/");
-    cookie.set_expires(Some(
-        time::OffsetDateTime::now_utc() + time::Duration::days(365),
-    ));
-    cookie
+    create_token_cookie(Environment::new_or_prod(), MACRO_ACCESS_TOKEN_COOKIE, token)
 }
 
 pub fn create_refresh_token_cookie(token: &str) -> Cookie<'static> {
-    let same_site = same_site();
-    let domain = domain();
-    let refresh_token_cookie_name = match Environment::new_or_prod() {
-        Environment::Production => MACRO_REFRESH_TOKEN_COOKIE.to_string(),
-        Environment::Develop => format!("dev-{MACRO_REFRESH_TOKEN_COOKIE}"),
-        Environment::Local => format!("local-{MACRO_REFRESH_TOKEN_COOKIE}"),
+    create_token_cookie(
+        Environment::new_or_prod(),
+        MACRO_REFRESH_TOKEN_COOKIE,
+        token,
+    )
+}
+
+fn create_token_cookie(environment: Environment, base_name: &str, token: &str) -> Cookie<'static> {
+    let (name, domain, same_site, secure) = match environment {
+        Environment::Local => (format!("local-{base_name}"), None, SameSite::Lax, false),
+        Environment::Develop => (
+            format!("dev-{base_name}"),
+            Some("macro.com"),
+            SameSite::None,
+            true,
+        ),
+        Environment::Production => (
+            base_name.to_string(),
+            Some("macro.com"),
+            SameSite::Strict,
+            true,
+        ),
     };
-    let mut cookie = Cookie::new(
-        refresh_token_cookie_name,
-        token.to_owned(), // Convert the borrowed str to an owned String
-    );
-    cookie.set_secure(true);
+    let mut cookie = Cookie::new(name, token.to_owned());
+    cookie.set_secure(secure);
     cookie.set_http_only(true);
     cookie.set_same_site(same_site);
     if let Some(domain) = domain {
