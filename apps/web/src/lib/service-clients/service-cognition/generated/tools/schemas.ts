@@ -313,6 +313,7 @@ export const SearchToolResponse = z.object({
                         z.literal('task'),
                         z.literal('snippet'),
                         z.literal('skill'),
+                        z.literal('decision'),
                       ];
                       const errors = schemas.reduce<z.ZodError[]>(
                         (errors, schema) =>
@@ -3824,6 +3825,7 @@ export const ReadMetadataResponse = z.object({
             z.literal('task'),
             z.literal('snippet'),
             z.literal('skill'),
+            z.literal('decision'),
           ];
           const errors = schemas.reduce<z.ZodError[]>(
             (errors, schema) =>
@@ -4190,6 +4192,64 @@ export const SetEntityProperty = z.object({
 export const SetEntityPropertyResponse = z.object({
   success: z.boolean(),
   message: z.string(),
+  taskDependencyReadiness: z
+    .union([
+      z.object({
+        taskId: z.string().uuid(),
+        readiness: z.any().superRefine((x, ctx) => {
+          const schemas = [z.literal('ready'), z.literal('blocked')];
+          const errors = schemas.reduce<z.ZodError[]>(
+            (errors, schema) =>
+              ((result) => (result.error ? [...errors, result.error] : errors))(
+                schema.safeParse(x)
+              ),
+            []
+          );
+          if (schemas.length - errors.length !== 1) {
+            ctx.addIssue({
+              path: ctx.path,
+              code: 'invalid_union',
+              unionErrors: errors,
+              message: 'Invalid input: Should pass single schema',
+            });
+          }
+        }),
+        dependsOnTaskIds: z.array(z.string().uuid()),
+        blockingTaskIds: z.array(z.string().uuid()),
+        hasUnavailableDependencies: z.boolean(),
+      }),
+      z.null(),
+    ])
+    .optional(),
+  taskSubtaskCompletionReadiness: z
+    .union([
+      z.object({
+        taskId: z.string().uuid(),
+        readiness: z.any().superRefine((x, ctx) => {
+          const schemas = [z.literal('ready'), z.literal('blocked')];
+          const errors = schemas.reduce<z.ZodError[]>(
+            (errors, schema) =>
+              ((result) => (result.error ? [...errors, result.error] : errors))(
+                schema.safeParse(x)
+              ),
+            []
+          );
+          if (schemas.length - errors.length !== 1) {
+            ctx.addIssue({
+              path: ctx.path,
+              code: 'invalid_union',
+              unionErrors: errors,
+              message: 'Invalid input: Should pass single schema',
+            });
+          }
+        }),
+        subtaskIds: z.array(z.string().uuid()),
+        blockingSubtaskIds: z.array(z.string().uuid()),
+        hasUnavailableSubtasks: z.boolean(),
+      }),
+      z.null(),
+    ])
+    .optional(),
 });
 
 export const SetSenderPolicy = z.object({

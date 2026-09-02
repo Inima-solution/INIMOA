@@ -122,7 +122,7 @@ export type TaggedSearchResult1 =
  * The document sub type enum represents all values of document sub types.
  * These values should match the `document_sub_type_value` table in macrodb.
  */
-export type DocumentSubType = 'task' | 'snippet' | 'skill';
+export type DocumentSubType = 'task' | 'snippet' | 'skill' | 'decision';
 /**
  * Viewer-relative attendance status for a call record.
  * Serializes as `ATTENDED`, `MISSED`, or `UNATTENDED`.
@@ -752,6 +752,13 @@ export type ToolEntityType =
   | 'call'
   | 'user'
   | 'company';
+/**
+ * Computed direct-dependency readiness for one task.
+ *
+ * This is a read model only. Its value is intentionally never stored as a
+ * property or status option.
+ */
+export type TaskReadiness = 'ready' | 'blocked';
 /**
  * Where future mail from this sender lands: `signal`, `noise`, or `block`.
  */
@@ -5033,6 +5040,47 @@ export interface ToolEntityRef {
 export interface SetEntityPropertyResponse {
   success: boolean;
   message: string;
+  taskDependencyReadiness?: TaskDependencyReadiness | null;
+  taskSubtaskCompletionReadiness?: TaskSubtaskCompletionReadiness | null;
+}
+/**
+ * Computed direct task-dependency state for one requested task.
+ *
+ * IDs of unavailable dependencies are deliberately omitted so this model can
+ * be exposed by a later scoped API without leaking cross-project or deleted
+ * task identifiers.
+ */
+export interface TaskDependencyReadiness {
+  /**
+   * The scoped, live source task identifier.
+   */
+  taskId: string;
+  readiness: TaskReadiness;
+  /**
+   * Direct live same-project task dependencies, in stored reference order.
+   */
+  dependsOnTaskIds: string[];
+  /**
+   * Available direct dependencies whose Status is not exactly Completed.
+   */
+  blockingTaskIds: string[];
+  /**
+   * Whether at least one stored dependency was malformed or unavailable.
+   */
+  hasUnavailableDependencies: boolean;
+}
+/**
+ * Computed direct-subtask completion state for one parent task.
+ *
+ * This is a transition-time snapshot only. It is deliberately not a
+ * persistent invariant and contains no task names or counts.
+ */
+export interface TaskSubtaskCompletionReadiness {
+  taskId: string;
+  readiness: TaskReadiness;
+  subtaskIds: string[];
+  blockingSubtaskIds: string[];
+  hasUnavailableSubtasks: boolean;
 }
 /**
  * Set where future mail from a sender lands in one of the user's inboxes. This is the same control a human has in the inbox menus: Sender → Signal, Sender → Noise, and Block Sender.
