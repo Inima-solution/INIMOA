@@ -1084,7 +1084,7 @@ async fn overview_is_scoped_and_counts_only_live_direct_canonical_children(
         .await?;
     }
     sqlx::query(
-        "UPDATE project_operations SET status = 'active', priority = 'high', lead_user_id = $1, start_date = DATE '2026-08-01', target_date = DATE '2026-08-31', policy = '{\"source\":\"overview-test\"}'::jsonb, created_at = TIMESTAMPTZ '2026-08-01 01:00:00Z', updated_at = TIMESTAMPTZ '2026-08-02 01:00:00Z' WHERE project_id = $2",
+        "UPDATE project_operations SET status = 'active', priority = 'high', lead_user_id = $1, start_date = DATE '2026-08-01', target_date = DATE '2026-08-31', objective = 'Deliver the overview', next_action = 'Review the checkpoint', policy = '{\"source\":\"overview-test\"}'::jsonb, created_at = TIMESTAMPTZ '2026-08-01 01:00:00Z', updated_at = TIMESTAMPTZ '2026-08-02 01:00:00Z' WHERE project_id = $2",
     )
         .bind("macro|viewer@test.com")
         .bind(project_id)
@@ -1110,6 +1110,14 @@ async fn overview_is_scoped_and_counts_only_live_direct_canonical_children(
     assert_eq!(
         overview.operations.target_date.unwrap().to_string(),
         "2026-08-31"
+    );
+    assert_eq!(
+        overview.operations.objective.as_deref(),
+        Some("Deliver the overview")
+    );
+    assert_eq!(
+        overview.operations.next_action.as_deref(),
+        Some("Review the checkpoint")
     );
     assert_eq!(
         overview.operations.policy,
@@ -1204,6 +1212,8 @@ async fn operations_update_is_team_scoped_audited_and_noop_is_not_audited(
                     lead_user_id: None,
                     start_date: current.start_date,
                     target_date: current.target_date,
+                    objective: current.objective.clone(),
+                    next_action: current.next_action.clone(),
                     policy: current.policy.clone(),
                     expected_updated_at: current.updated_at,
                 },
@@ -1239,6 +1249,8 @@ async fn operations_update_is_team_scoped_audited_and_noop_is_not_audited(
                 lead_user_id: None,
                 start_date: None,
                 target_date: None,
+                objective: Some("Ship a trustworthy project overview".to_owned()),
+                next_action: Some("Review the first operational checkpoint".to_owned()),
                 policy: None,
                 expected_updated_at: current.updated_at,
             },
@@ -1267,10 +1279,26 @@ async fn operations_update_is_team_scoped_audited_and_noop_is_not_audited(
     assert_eq!(metadata["to_status"], "active");
     assert_eq!(
         metadata["changed_fields"],
-        serde_json::json!(["status", "priority", "lead_user_id"])
+        serde_json::json!([
+            "status",
+            "priority",
+            "lead_user_id",
+            "objective",
+            "next_action"
+        ])
     );
     assert!(metadata.get("lead_user_id").is_none());
+    assert!(metadata.get("objective").is_none());
+    assert!(metadata.get("next_action").is_none());
     let after = repo.get_project_operations(ROOT_ID).await?.unwrap();
+    assert_eq!(
+        after.objective.as_deref(),
+        Some("Ship a trustworthy project overview")
+    );
+    assert_eq!(
+        after.next_action.as_deref(),
+        Some("Review the first operational checkpoint")
+    );
     let noop = UpdateProjectOperationsCommand {
         team_id,
         actor_user_id: MacroUserIdStr::parse_from_str("macro|owner@test.com")?.into_owned(),
@@ -1284,6 +1312,8 @@ async fn operations_update_is_team_scoped_audited_and_noop_is_not_audited(
                 lead_user_id: after.lead_user_id.clone(),
                 start_date: after.start_date,
                 target_date: after.target_date,
+                objective: after.objective.clone(),
+                next_action: after.next_action.clone(),
                 policy: after.policy.clone(),
                 expected_updated_at: chrono::Utc::now(),
             },
@@ -1333,6 +1363,8 @@ async fn operations_rejects_invalid_stale_and_departed_lead_without_audit_or_par
                 lead_user_id: lead,
                 start_date: None,
                 target_date: None,
+                objective: None,
+                next_action: None,
                 policy: None,
                 expected_updated_at: expected,
             },
@@ -1373,6 +1405,8 @@ async fn operations_rejects_invalid_stale_and_departed_lead_without_audit_or_par
             lead_user_id: None,
             start_date: Some(chrono::NaiveDate::from_ymd_opt(2026, 2, 2).unwrap()),
             target_date: Some(chrono::NaiveDate::from_ymd_opt(2026, 2, 1).unwrap()),
+            objective: None,
+            next_action: None,
             policy: None,
             expected_updated_at: before.updated_at,
         },
@@ -1382,6 +1416,8 @@ async fn operations_rejects_invalid_stale_and_departed_lead_without_audit_or_par
             lead_user_id: None,
             start_date: None,
             target_date: None,
+            objective: None,
+            next_action: None,
             policy: Some(serde_json::json!([])),
             expected_updated_at: before.updated_at,
         },
@@ -1391,7 +1427,31 @@ async fn operations_rejects_invalid_stale_and_departed_lead_without_audit_or_par
             lead_user_id: None,
             start_date: None,
             target_date: None,
+            objective: None,
+            next_action: None,
             policy: Some(serde_json::json!({"value": "x".repeat(4096)})),
+            expected_updated_at: before.updated_at,
+        },
+        ReplaceProjectOperationsArgs {
+            status: ProjectOperationalStatus::Planned,
+            priority: before.priority,
+            lead_user_id: None,
+            start_date: None,
+            target_date: None,
+            objective: Some(" \n".to_owned()),
+            next_action: None,
+            policy: None,
+            expected_updated_at: before.updated_at,
+        },
+        ReplaceProjectOperationsArgs {
+            status: ProjectOperationalStatus::Planned,
+            priority: before.priority,
+            lead_user_id: None,
+            start_date: None,
+            target_date: None,
+            objective: None,
+            next_action: Some("é".repeat(513)),
+            policy: None,
             expected_updated_at: before.updated_at,
         },
     ] {
@@ -1456,6 +1516,8 @@ async fn operations_without_an_active_owner_team_are_not_scoped_or_mutable(
                     lead_user_id: None,
                     start_date: before.start_date,
                     target_date: before.target_date,
+                    objective: before.objective.clone(),
+                    next_action: before.next_action.clone(),
                     policy: before.policy.clone(),
                     expected_updated_at: before.updated_at,
                 },
@@ -1510,6 +1572,8 @@ async fn operations_audit_failure_rolls_back_updated_row(
                     lead_user_id: None,
                     start_date: None,
                     target_date: None,
+                    objective: None,
+                    next_action: None,
                     policy: None,
                     expected_updated_at: before.updated_at,
                 },
@@ -1554,6 +1618,8 @@ async fn operations_concurrent_replacements_have_one_winner_and_idempotent_retry
                 lead_user_id: None,
                 start_date: None,
                 target_date: None,
+                objective: None,
+                next_action: None,
                 policy: None,
                 expected_updated_at: before.updated_at,
             },
@@ -1594,6 +1660,8 @@ async fn operations_concurrent_replacements_have_one_winner_and_idempotent_retry
                 lead_user_id: None,
                 start_date: current.start_date,
                 target_date: current.target_date,
+                objective: current.objective.clone(),
+                next_action: current.next_action.clone(),
                 policy: current.policy.clone(),
                 expected_updated_at: before.updated_at,
             },
@@ -1656,6 +1724,11 @@ async fn project_operations_backfill_and_insert_trigger_provision_defaults(
     ))
     .execute(&pool)
     .await?;
+    sqlx::raw_sql(include_str!(
+        "../../../../macro_db_client/migrations/20260903030000_project_operations_narrative.up.sql"
+    ))
+    .execute(&pool)
+    .await?;
 
     let repo = PgProjectRepo::new(pool.clone());
     let backfilled = repo
@@ -1667,6 +1740,8 @@ async fn project_operations_backfill_and_insert_trigger_provision_defaults(
     assert!(backfilled.lead_user_id.is_none());
     assert!(backfilled.start_date.is_none());
     assert!(backfilled.target_date.is_none());
+    assert!(backfilled.objective.is_none());
+    assert!(backfilled.next_action.is_none());
     assert!(backfilled.completed_at.is_none());
     assert!(backfilled.policy.is_none());
 
@@ -1691,6 +1766,8 @@ async fn project_operations_backfill_and_insert_trigger_provision_defaults(
     assert!(operations.lead_user_id.is_none());
     assert!(operations.start_date.is_none());
     assert!(operations.target_date.is_none());
+    assert!(operations.objective.is_none());
+    assert!(operations.next_action.is_none());
     assert!(operations.completed_at.is_none());
     assert!(operations.policy.is_none());
     Ok(())
@@ -1707,6 +1784,12 @@ async fn project_operations_database_constraints_reject_invalid_values_and_null_
         "UPDATE project_operations SET status = 'unknown' WHERE project_id = $1",
         "UPDATE project_operations SET priority = 'rush' WHERE project_id = $1",
         "UPDATE project_operations SET start_date = DATE '2026-02-02', target_date = DATE '2026-02-01' WHERE project_id = $1",
+        "UPDATE project_operations SET objective = '  ' WHERE project_id = $1",
+        "UPDATE project_operations SET objective = U&'\\00A0\\2003' WHERE project_id = $1",
+        "UPDATE project_operations SET objective = repeat('é', 1025) WHERE project_id = $1",
+        "UPDATE project_operations SET next_action = E'\\n\\t' WHERE project_id = $1",
+        "UPDATE project_operations SET next_action = U&'\\0085\\3000' WHERE project_id = $1",
+        "UPDATE project_operations SET next_action = repeat('é', 513) WHERE project_id = $1",
         "UPDATE project_operations SET policy = '[]'::jsonb WHERE project_id = $1",
         "UPDATE project_operations SET policy = jsonb_build_object('value', repeat('x', 4096)) WHERE project_id = $1",
         "UPDATE project_operations SET lead_user_id = 'macro|missing@test.com' WHERE project_id = $1",

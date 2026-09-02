@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        UPDATE project_operations\n        SET status = $2, priority = $3, lead_user_id = $4, start_date = $5, target_date = $6,\n            completed_at = $7, policy = $8, updated_at = $9\n        WHERE project_id = $1\n        RETURNING project_id, status, priority, lead_user_id, start_date, target_date,\n                  completed_at, created_at, updated_at, policy\n        ",
+  "query": "\n        SELECT\n            operations.project_id,\n            operations.status,\n            operations.priority,\n            operations.lead_user_id,\n            operations.start_date,\n            operations.target_date,\n            operations.objective,\n            operations.next_action,\n            operations.completed_at,\n            operations.created_at,\n            operations.updated_at,\n            operations.policy\n        FROM project_operations operations\n        JOIN \"Project\" project ON project.id = operations.project_id\n        WHERE operations.project_id = $1\n          AND project.\"deletedAt\" IS NULL\n        ",
   "describe": {
     "columns": [
       {
@@ -35,36 +35,38 @@
       },
       {
         "ordinal": 6,
+        "name": "objective",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "next_action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
         "name": "completed_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 7,
+        "ordinal": 9,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 8,
+        "ordinal": 10,
         "name": "updated_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 9,
+        "ordinal": 11,
         "name": "policy",
         "type_info": "Jsonb"
       }
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Text",
-        "Text",
-        "Text",
-        "Date",
-        "Date",
-        "Timestamptz",
-        "Jsonb",
-        "Timestamptz"
+        "Text"
       ]
     },
     "nullable": [
@@ -75,10 +77,12 @@
       true,
       true,
       true,
+      true,
+      true,
       false,
       false,
       true
     ]
   },
-  "hash": "871d4d6abf4ab3ff5ceac6638c5c593b59c5d64e89d3672a1f590242a2c712b6"
+  "hash": "06c74fa17badeb1588cee58072d1c0000d23d8652e9b37fe61ccf5c9a4d64a0c"
 }

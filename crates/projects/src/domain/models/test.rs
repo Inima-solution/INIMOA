@@ -62,6 +62,8 @@ fn operations(
         lead_user_id: None,
         start_date: None,
         target_date: None,
+        objective: None,
+        next_action: None,
         completed_at,
         created_at: timestamp("2026-08-28T00:00:00Z"),
         updated_at: timestamp("2026-08-28T01:00:00Z"),
@@ -76,6 +78,8 @@ fn replacement(status: ProjectOperationalStatus) -> ReplaceProjectOperationsArgs
         lead_user_id: None,
         start_date: None,
         target_date: None,
+        objective: None,
+        next_action: None,
         policy: None,
         expected_updated_at: timestamp("2026-08-28T01:00:00Z"),
     }
@@ -238,7 +242,7 @@ fn operational_transition_matrix_is_closed_and_allows_same_state_metadata_edits(
 }
 
 #[test]
-fn replacement_enforces_date_and_object_policy_bounds() {
+fn replacement_enforces_date_narrative_and_object_policy_bounds() {
     let mut request = replacement(ProjectOperationalStatus::Planned);
     request.start_date = Some(NaiveDate::from_ymd_opt(2026, 8, 29).unwrap());
     request.target_date = Some(NaiveDate::from_ymd_opt(2026, 8, 28).unwrap());
@@ -248,6 +252,42 @@ fn replacement_enforces_date_and_object_policy_bounds() {
     );
     request.start_date = None;
     request.target_date = None;
+    request.objective = Some("  \n\t".to_owned());
+    assert_eq!(
+        request.validate(),
+        Err(ProjectOperationsValidationError::ObjectiveBlank)
+    );
+    request.objective = Some("\u{00a0}\u{2003}".to_owned());
+    assert_eq!(
+        request.validate(),
+        Err(ProjectOperationsValidationError::ObjectiveBlank)
+    );
+    request.objective = Some("é".repeat(1024));
+    assert!(request.validate().is_ok());
+    request.objective = Some("é".repeat(1025));
+    assert_eq!(
+        request.validate(),
+        Err(ProjectOperationsValidationError::ObjectiveTooLarge)
+    );
+    request.objective = None;
+    request.next_action = Some(" \r\n".to_owned());
+    assert_eq!(
+        request.validate(),
+        Err(ProjectOperationsValidationError::NextActionBlank)
+    );
+    request.next_action = Some("\u{0085}\u{3000}".to_owned());
+    assert_eq!(
+        request.validate(),
+        Err(ProjectOperationsValidationError::NextActionBlank)
+    );
+    request.next_action = Some("é".repeat(512));
+    assert!(request.validate().is_ok());
+    request.next_action = Some("é".repeat(513));
+    assert_eq!(
+        request.validate(),
+        Err(ProjectOperationsValidationError::NextActionTooLarge)
+    );
+    request.next_action = None;
     request.policy = Some(json!(["not-object"]));
     assert_eq!(
         request.validate(),
@@ -258,6 +298,31 @@ fn replacement_enforces_date_and_object_policy_bounds() {
         request.validate(),
         Err(ProjectOperationsValidationError::PolicyTooLarge)
     );
+}
+
+#[test]
+fn operations_narrative_is_explicit_in_json_schema_and_change_tracking() {
+    let mut current = operations(ProjectOperationalStatus::Active, None);
+    current.objective = Some("Current outcome".to_owned());
+    current.next_action = Some("Current action".to_owned());
+    let value = serde_json::to_value(&current).unwrap();
+    assert_eq!(value["objective"], "Current outcome");
+    assert_eq!(value["nextAction"], "Current action");
+
+    let schema = serde_json::to_value(ProjectOperations::schema()).unwrap();
+    let properties = schema["properties"].as_object().unwrap();
+    assert!(properties.contains_key("objective"));
+    assert!(properties.contains_key("nextAction"));
+
+    let mut desired = replacement(ProjectOperationalStatus::Active);
+    desired.objective = Some("Desired outcome".to_owned());
+    desired.next_action = Some("Desired action".to_owned());
+    let resolved = desired
+        .resolve(&current, timestamp("2026-08-28T02:00:00Z"))
+        .unwrap();
+    assert_eq!(resolved.objective.as_deref(), Some("Desired outcome"));
+    assert_eq!(resolved.next_action.as_deref(), Some("Desired action"));
+    assert_eq!(resolved.changed_fields, ["objective", "next_action"]);
 }
 
 #[test]

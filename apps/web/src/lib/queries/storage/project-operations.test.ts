@@ -200,12 +200,14 @@ describe('project operations queries', () => {
     };
     const aKey = entityKeys.projectOperations(projectA.projectId).queryKey;
     const bKey = entityKeys.projectOperations(projectB.projectId).queryKey;
-    const overviewAKey = entityKeys.projectOverview(
-      projectA.projectId
-    ).queryKey;
-    const overviewBKey = entityKeys.projectOverview(
-      projectB.projectId
-    ).queryKey;
+    const overviewAKey = [
+      ...entityKeys.projectOverview(projectA.projectId).queryKey,
+      '2026-09-03',
+    ] as const;
+    const overviewBKey = [
+      ...entityKeys.projectOverview(projectB.projectId).queryKey,
+      '2026-09-03',
+    ] as const;
     queryClient.setQueryData(aKey, projectA);
     queryClient.setQueryData(bKey, projectB);
     queryClient.setQueryData(overviewAKey, projectOverviewA);
@@ -246,12 +248,14 @@ describe('project operations queries', () => {
   it('leaves operations and overview caches plus invalidation state unchanged on failure', async () => {
     const aKey = entityKeys.projectOperations(projectA.projectId).queryKey;
     const bKey = entityKeys.projectOperations(projectB.projectId).queryKey;
-    const overviewAKey = entityKeys.projectOverview(
-      projectA.projectId
-    ).queryKey;
-    const overviewBKey = entityKeys.projectOverview(
-      projectB.projectId
-    ).queryKey;
+    const overviewAKey = [
+      ...entityKeys.projectOverview(projectA.projectId).queryKey,
+      '2026-09-03',
+    ] as const;
+    const overviewBKey = [
+      ...entityKeys.projectOverview(projectB.projectId).queryKey,
+      '2026-09-03',
+    ] as const;
     queryClient.setQueryData(aKey, projectA);
     queryClient.setQueryData(bKey, projectB);
     queryClient.setQueryData(overviewAKey, projectOverviewA);

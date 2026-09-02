@@ -8,6 +8,8 @@
 import type { ProjectOperationalStatus } from './projectOperationalStatus';
 import type { ProjectOperationsCompletedAt } from './projectOperationsCompletedAt';
 import type { ProjectOperationsLeadUserId } from './projectOperationsLeadUserId';
+import type { ProjectOperationsNextAction } from './projectOperationsNextAction';
+import type { ProjectOperationsObjective } from './projectOperationsObjective';
 import type { ProjectOperationsPolicy } from './projectOperationsPolicy';
 import type { ProjectOperationsStartDate } from './projectOperationsStartDate';
 import type { ProjectOperationsTargetDate } from './projectOperationsTargetDate';
@@ -24,6 +26,10 @@ export interface ProjectOperations {
   /** When the operational record was created. */
   createdAt: string;
   leadUserId?: ProjectOperationsLeadUserId;
+  /** Optional human-authored next action; never inferred from task data. */
+  nextAction?: ProjectOperationsNextAction;
+  /** Optional human-authored operational objective. */
+  objective?: ProjectOperationsObjective;
   /** Optional bounded object-shaped operational policy. */
   policy?: ProjectOperationsPolicy;
   /** Relative operational urgency. */

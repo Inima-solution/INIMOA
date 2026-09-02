@@ -205,7 +205,9 @@ fn project_operations_audit_metadata_is_closed_canonical_and_target_bound() {
         ProjectOperationsAuditStatus::Completed,
         [
             ProjectOperationsChangedField::TargetDate,
+            ProjectOperationsChangedField::NextAction,
             ProjectOperationsChangedField::Status,
+            ProjectOperationsChangedField::Objective,
             ProjectOperationsChangedField::CompletedAt,
         ],
     )
@@ -217,10 +219,12 @@ fn project_operations_audit_metadata_is_closed_canonical_and_target_bound() {
         json!({
             "from_status": "active",
             "to_status": "completed",
-            "changed_fields": ["status", "target_date", "completed_at"]
+            "changed_fields": ["status", "target_date", "objective", "next_action", "completed_at"]
         })
     );
     assert!(action.metadata().get("lead_user_id").is_none());
+    assert!(action.metadata().get("objective").is_none());
+    assert!(action.metadata().get("next_action").is_none());
     assert!(matches!(
         ProjectOperationsUpdatedMetadata::new(
             ProjectOperationsAuditStatus::Active,

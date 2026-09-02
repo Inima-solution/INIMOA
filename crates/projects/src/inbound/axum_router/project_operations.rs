@@ -42,6 +42,10 @@ pub struct ReplaceProjectOperationsRequest {
     pub start_date: Option<NaiveDate>,
     /// Optional planned target date.
     pub target_date: Option<NaiveDate>,
+    /// Optional concise statement of the project's intended outcome.
+    pub objective: Option<String>,
+    /// Optional concise description of the next concrete action.
+    pub next_action: Option<String>,
     /// Optional bounded object-shaped operational policy.
     #[schema(value_type = Option<Object>)]
     pub policy: Option<serde_json::Value>,
@@ -57,6 +61,8 @@ impl From<ReplaceProjectOperationsRequest> for ReplaceProjectOperationsArgs {
             lead_user_id: request.lead_user_id,
             start_date: request.start_date,
             target_date: request.target_date,
+            objective: request.objective,
+            next_action: request.next_action,
             policy: request.policy,
             expected_updated_at: request.expected_updated_at,
         }

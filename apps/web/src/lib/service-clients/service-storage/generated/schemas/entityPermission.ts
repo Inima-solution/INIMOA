@@ -6,6 +6,7 @@
  */
 import type { EntityPermissionOneOf } from './entityPermissionOneOf';
 import type { EntityPermissionOneOfFive } from './entityPermissionOneOfFive';
+import type { EntityPermissionOneOfNine } from './entityPermissionOneOfNine';
 import type { EntityPermissionOneOfSeven } from './entityPermissionOneOfSeven';
 import type { EntityPermissionOneOfThree } from './entityPermissionOneOfThree';
 
@@ -19,4 +20,5 @@ export type EntityPermission =
   | EntityPermissionOneOf
   | EntityPermissionOneOfThree
   | EntityPermissionOneOfFive
-  | EntityPermissionOneOfSeven;
+  | EntityPermissionOneOfSeven
+  | EntityPermissionOneOfNine;

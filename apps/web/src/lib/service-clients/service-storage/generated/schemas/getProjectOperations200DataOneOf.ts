@@ -6,6 +6,8 @@
  */
 import type { GetProjectOperations200DataOneOfCompletedAt } from './getProjectOperations200DataOneOfCompletedAt';
 import type { GetProjectOperations200DataOneOfLeadUserId } from './getProjectOperations200DataOneOfLeadUserId';
+import type { GetProjectOperations200DataOneOfNextAction } from './getProjectOperations200DataOneOfNextAction';
+import type { GetProjectOperations200DataOneOfObjective } from './getProjectOperations200DataOneOfObjective';
 import type { GetProjectOperations200DataOneOfPolicy } from './getProjectOperations200DataOneOfPolicy';
 import type { GetProjectOperations200DataOneOfStartDate } from './getProjectOperations200DataOneOfStartDate';
 import type { GetProjectOperations200DataOneOfTargetDate } from './getProjectOperations200DataOneOfTargetDate';
@@ -23,6 +25,10 @@ export type GetProjectOperations200DataOneOf = {
   /** When the operational record was created. */
   createdAt: string;
   leadUserId?: GetProjectOperations200DataOneOfLeadUserId;
+  /** Optional human-authored next action; never inferred from task data. */
+  nextAction?: GetProjectOperations200DataOneOfNextAction;
+  /** Optional human-authored operational objective. */
+  objective?: GetProjectOperations200DataOneOfObjective;
   /** Optional bounded object-shaped operational policy. */
   policy?: GetProjectOperations200DataOneOfPolicy;
   /** Relative operational urgency. */

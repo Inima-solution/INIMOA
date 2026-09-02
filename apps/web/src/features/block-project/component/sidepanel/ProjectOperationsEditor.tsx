@@ -26,6 +26,8 @@ const priorities: { value: ProjectPriority; label: string }[] = [
 ];
 
 const dateOrderError = 'Start date must be on or before target date.';
+const objectiveError = 'Objective must be 2,048 bytes or fewer.';
+const nextActionError = 'Next action must be 1,024 bytes or fewer.';
 
 type FormValues = {
   status: ProjectOperationalStatus;
@@ -33,6 +35,8 @@ type FormValues = {
   leadUserId: string | null;
   startDate: string;
   targetDate: string;
+  objective: string;
+  nextAction: string;
 };
 
 function valuesFrom(operations: ProjectOperations): FormValues {
@@ -42,7 +46,13 @@ function valuesFrom(operations: ProjectOperations): FormValues {
     leadUserId: operations.leadUserId ?? null,
     startDate: operations.startDate ?? '',
     targetDate: operations.targetDate ?? '',
+    objective: operations.objective ?? '',
+    nextAction: operations.nextAction ?? '',
   };
+}
+
+function utf8Length(value: string) {
+  return new TextEncoder().encode(value).length;
 }
 
 export function ProjectOperationsEditor(props: {
@@ -81,12 +91,22 @@ export function ProjectOperationsEditor(props: {
     if (isPending()) return;
 
     const current = values();
+    const objective = current.objective.trim();
+    const nextAction = current.nextAction.trim();
     if (
       current.startDate &&
       current.targetDate &&
       current.startDate > current.targetDate
     ) {
       setError(dateOrderError);
+      return;
+    }
+    if (utf8Length(objective) > 2048) {
+      setError(objectiveError);
+      return;
+    }
+    if (utf8Length(nextAction) > 1024) {
+      setError(nextActionError);
       return;
     }
 
@@ -103,6 +123,8 @@ export function ProjectOperationsEditor(props: {
             : (operations.leadUserId ?? null),
           startDate: current.startDate || null,
           targetDate: current.targetDate || null,
+          objective: objective || null,
+          nextAction: nextAction || null,
           policy: operations.policy,
         },
       });
@@ -242,6 +264,30 @@ export function ProjectOperationsEditor(props: {
                 />
               </Field>
             </div>
+            <Field label="Objective" for="project-operation-objective">
+              <textarea
+                id="project-operation-objective"
+                class="settings-input min-h-20 w-full resize-y"
+                disabled={isPending()}
+                value={values().objective}
+                aria-invalid={error() === objectiveError}
+                onInput={(event) =>
+                  update('objective', event.currentTarget.value)
+                }
+              />
+            </Field>
+            <Field label="Next action" for="project-operation-next-action">
+              <textarea
+                id="project-operation-next-action"
+                class="settings-input min-h-16 w-full resize-y"
+                disabled={isPending()}
+                value={values().nextAction}
+                aria-invalid={error() === nextActionError}
+                onInput={(event) =>
+                  update('nextAction', event.currentTarget.value)
+                }
+              />
+            </Field>
             <Show when={error()}>
               {(message) => (
                 <p

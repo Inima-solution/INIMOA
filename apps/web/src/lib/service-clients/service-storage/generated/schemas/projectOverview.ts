@@ -20,11 +20,11 @@ export interface ProjectOverview {
   immediateChildren: ProjectOverviewImmediateChildren;
   /** The canonical project operational metadata. */
   operations: ProjectOperations;
-  /** Bounded progress totals for the live direct tasks of one project. */
+  /** Bounded aggregate progress for live direct tasks only. */
   progress: ProjectTaskProgress;
   /** The canonical project row. */
   project: ProjectOverviewProjectOneOf;
-  /** Bounded risk totals for the live direct tasks of one project. */
+  /** Bounded aggregate risk for live direct tasks only. */
   risk: ProjectTaskRisk;
   /** The validated caller access level for this project. */
   userAccessLevel: AccessLevel;

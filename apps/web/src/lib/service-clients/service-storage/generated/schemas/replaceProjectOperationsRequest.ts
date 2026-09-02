@@ -8,6 +8,8 @@
 import type { ProjectOperationalStatus } from './projectOperationalStatus';
 import type { ProjectPriority } from './projectPriority';
 import type { ReplaceProjectOperationsRequestLeadUserId } from './replaceProjectOperationsRequestLeadUserId';
+import type { ReplaceProjectOperationsRequestNextAction } from './replaceProjectOperationsRequestNextAction';
+import type { ReplaceProjectOperationsRequestObjective } from './replaceProjectOperationsRequestObjective';
 import type { ReplaceProjectOperationsRequestPolicy } from './replaceProjectOperationsRequestPolicy';
 import type { ReplaceProjectOperationsRequestStartDate } from './replaceProjectOperationsRequestStartDate';
 import type { ReplaceProjectOperationsRequestTargetDate } from './replaceProjectOperationsRequestTargetDate';
@@ -22,6 +24,10 @@ export interface ReplaceProjectOperationsRequest {
   /** Operational record version observed before this full replacement. */
   expectedUpdatedAt: string;
   leadUserId?: ReplaceProjectOperationsRequestLeadUserId;
+  /** Optional concise description of the next concrete action. */
+  nextAction?: ReplaceProjectOperationsRequestNextAction;
+  /** Optional concise statement of the project's intended outcome. */
+  objective?: ReplaceProjectOperationsRequestObjective;
   /** Optional bounded object-shaped operational policy. */
   policy?: ReplaceProjectOperationsRequestPolicy;
   /** Requested relative urgency. */

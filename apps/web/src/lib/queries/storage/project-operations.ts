@@ -8,6 +8,7 @@ import type {
 import { useMutation, useQuery } from '@tanstack/solid-query';
 import type { Accessor } from 'solid-js';
 import { entityKeys } from './keys';
+import { invalidateProjectOverviews } from './project-overview';
 
 type ReplaceProjectOperationsInput = {
   projectId: string;
@@ -51,10 +52,7 @@ export function useReplaceProjectOperationsMutation() {
         entityKeys.projectOperations(projectId).queryKey,
         operations
       );
-      queryClient.invalidateQueries({
-        queryKey: entityKeys.projectOverview(projectId).queryKey,
-        exact: true,
-      });
+      void invalidateProjectOverviews(projectId);
     },
   }));
 }

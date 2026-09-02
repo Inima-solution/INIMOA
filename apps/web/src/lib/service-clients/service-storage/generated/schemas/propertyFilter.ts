@@ -4,22 +4,29 @@
  * document_storage_service
  * OpenAPI spec version: 0.1.0
  */
+import type { PropertyFilterBooleanValue } from './propertyFilterBooleanValue';
+import type { PropertyFilterDateRange } from './propertyFilterDateRange';
 import type { PropertyFilterEntityType } from './propertyFilterEntityType';
+import type { PropertyFilterNumberRange } from './propertyFilterNumberRange';
 
 /**
  * A single property-based filter condition.
 
 Each filter targets a specific property definition on entities of a given type,
-matching against select option UUIDs or entity reference IDs.
+matching against select option UUIDs, entity reference IDs, or a boolean value.
 Multiple values within a single filter are OR'd together.
 Multiple filters are AND'd together.
  */
 export interface PropertyFilter {
+  /** Boolean value to match. None does not filter on a boolean value. */
+  boolean_value?: PropertyFilterBooleanValue;
+  date_range?: PropertyFilterDateRange;
   /** Entity reference IDs to match. Multiple values are OR'd together. */
   entity_ids?: string[];
   /** The entity type for the property lookup (e.g., "TASK", "DOCUMENT", "PROJECT").
 When None, matches across all entity types. */
   entity_type?: PropertyFilterEntityType;
+  number_range?: PropertyFilterNumberRange;
   /** Select option UUIDs to match. Multiple values are OR'd together. */
   option_ids?: string[];
   /** The UUID of the property definition to filter on. */

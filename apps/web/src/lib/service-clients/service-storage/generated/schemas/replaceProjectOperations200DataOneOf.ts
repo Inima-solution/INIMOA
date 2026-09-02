@@ -9,6 +9,8 @@ import type { ProjectOperationalStatus } from './projectOperationalStatus';
 import type { ProjectPriority } from './projectPriority';
 import type { ReplaceProjectOperations200DataOneOfCompletedAt } from './replaceProjectOperations200DataOneOfCompletedAt';
 import type { ReplaceProjectOperations200DataOneOfLeadUserId } from './replaceProjectOperations200DataOneOfLeadUserId';
+import type { ReplaceProjectOperations200DataOneOfNextAction } from './replaceProjectOperations200DataOneOfNextAction';
+import type { ReplaceProjectOperations200DataOneOfObjective } from './replaceProjectOperations200DataOneOfObjective';
 import type { ReplaceProjectOperations200DataOneOfPolicy } from './replaceProjectOperations200DataOneOfPolicy';
 import type { ReplaceProjectOperations200DataOneOfStartDate } from './replaceProjectOperations200DataOneOfStartDate';
 import type { ReplaceProjectOperations200DataOneOfTargetDate } from './replaceProjectOperations200DataOneOfTargetDate';
@@ -24,6 +26,10 @@ export type ReplaceProjectOperations200DataOneOf = {
   /** When the operational record was created. */
   createdAt: string;
   leadUserId?: ReplaceProjectOperations200DataOneOfLeadUserId;
+  /** Optional human-authored next action; never inferred from task data. */
+  nextAction?: ReplaceProjectOperations200DataOneOfNextAction;
+  /** Optional human-authored operational objective. */
+  objective?: ReplaceProjectOperations200DataOneOfObjective;
   /** Optional bounded object-shaped operational policy. */
   policy?: ReplaceProjectOperations200DataOneOfPolicy;
   /** Relative operational urgency. */

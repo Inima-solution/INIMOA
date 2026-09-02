@@ -12,6 +12,11 @@ use uuid::Uuid;
 #[cfg(test)]
 mod test;
 
+/// Maximum UTF-8 storage size for a project objective.
+pub const PROJECT_OBJECTIVE_MAX_BYTES: usize = 2048;
+/// Maximum UTF-8 storage size for a project's explicit next action.
+pub const PROJECT_NEXT_ACTION_MAX_BYTES: usize = 1024;
+
 /// The operational lifecycle state stored for a project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[cfg_attr(feature = "axum", derive(utoipa::ToSchema))]
@@ -138,6 +143,10 @@ pub struct ProjectOperations {
     pub start_date: Option<NaiveDate>,
     /// Optional planned target date.
     pub target_date: Option<NaiveDate>,
+    /// Optional human-authored operational objective.
+    pub objective: Option<String>,
+    /// Optional human-authored next action; never inferred from task data.
+    pub next_action: Option<String>,
     /// When work was completed, if recorded.
     pub completed_at: Option<DateTime<Utc>>,
     /// When the operational record was created.
@@ -317,6 +326,10 @@ pub struct ReplaceProjectOperationsArgs {
     pub start_date: Option<NaiveDate>,
     /// Requested planned target date.
     pub target_date: Option<NaiveDate>,
+    /// Requested human-authored objective, or `None` to clear it.
+    pub objective: Option<String>,
+    /// Requested human-authored next action, or `None` to clear it.
+    pub next_action: Option<String>,
     /// Requested object-shaped operational policy.
     pub policy: Option<serde_json::Value>,
     /// Version observed by the caller for optimistic replacement.
@@ -337,6 +350,18 @@ pub enum ProjectOperationsValidationError {
     /// A target date preceded its start date.
     #[error("start_date must be on or before target_date")]
     DateOrder,
+    /// Objective was present but contained only whitespace.
+    #[error("objective cannot be blank")]
+    ObjectiveBlank,
+    /// Objective exceeded its UTF-8 storage bound.
+    #[error("objective exceeds 2048 bytes")]
+    ObjectiveTooLarge,
+    /// Next action was present but contained only whitespace.
+    #[error("next_action cannot be blank")]
+    NextActionBlank,
+    /// Next action exceeded its UTF-8 storage bound.
+    #[error("next_action exceeds 1024 bytes")]
+    NextActionTooLarge,
     /// Policy must be a JSON object when present.
     #[error("policy must be a JSON object")]
     PolicyNotObject,
@@ -355,6 +380,18 @@ impl ReplaceProjectOperationsArgs {
         {
             return Err(ProjectOperationsValidationError::DateOrder);
         }
+        validate_narrative_field(
+            self.objective.as_deref(),
+            PROJECT_OBJECTIVE_MAX_BYTES,
+            ProjectOperationsValidationError::ObjectiveBlank,
+            ProjectOperationsValidationError::ObjectiveTooLarge,
+        )?;
+        validate_narrative_field(
+            self.next_action.as_deref(),
+            PROJECT_NEXT_ACTION_MAX_BYTES,
+            ProjectOperationsValidationError::NextActionBlank,
+            ProjectOperationsValidationError::NextActionTooLarge,
+        )?;
         if let Some(policy) = &self.policy {
             if !policy.is_object() {
                 return Err(ProjectOperationsValidationError::PolicyNotObject);
@@ -409,6 +446,12 @@ impl ReplaceProjectOperationsArgs {
         if current.target_date != self.target_date {
             changed_fields.push("target_date");
         }
+        if current.objective != self.objective {
+            changed_fields.push("objective");
+        }
+        if current.next_action != self.next_action {
+            changed_fields.push("next_action");
+        }
         if current.policy != self.policy {
             changed_fields.push("policy");
         }
@@ -422,6 +465,8 @@ impl ReplaceProjectOperationsArgs {
             lead_user_id: self.lead_user_id.clone(),
             start_date: self.start_date,
             target_date: self.target_date,
+            objective: self.objective.clone(),
+            next_action: self.next_action.clone(),
             policy: self.policy.clone(),
             completed_at,
             changed_fields,
@@ -442,12 +487,34 @@ pub struct ResolvedProjectOperationsUpdate {
     pub start_date: Option<NaiveDate>,
     /// Persisted target date.
     pub target_date: Option<NaiveDate>,
+    /// Persisted objective.
+    pub objective: Option<String>,
+    /// Persisted next action.
+    pub next_action: Option<String>,
     /// Persisted object policy.
     pub policy: Option<serde_json::Value>,
     /// Server-owned completion stamp.
     pub completed_at: Option<DateTime<Utc>>,
     /// Deterministically ordered mutable fields that changed.
     pub changed_fields: Vec<&'static str>,
+}
+
+fn validate_narrative_field(
+    value: Option<&str>,
+    max_bytes: usize,
+    blank: ProjectOperationsValidationError,
+    too_large: ProjectOperationsValidationError,
+) -> Result<(), ProjectOperationsValidationError> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value.trim().is_empty() {
+        return Err(blank);
+    }
+    if value.len() > max_bytes {
+        return Err(too_large);
+    }
+    Ok(())
 }
 
 /// Caller-supplied portion of one operational replacement.
