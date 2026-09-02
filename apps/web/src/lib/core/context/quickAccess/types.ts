@@ -4,6 +4,7 @@ import type {
   ChannelEntity,
   ChatEntity,
   CrmCompanyEntity,
+  DecisionEntity,
   DocumentEntity,
   EmailEntity,
   EntityData,
@@ -26,6 +27,7 @@ export type Bucket =
   | 'task'
   | 'snippet'
   | 'skill'
+  | 'decision'
   | 'note'
   | 'chat'
   | 'project'
@@ -42,6 +44,7 @@ const ALL_BUCKETS: Bucket[] = [
   'task',
   'snippet',
   'skill',
+  'decision',
   'note',
   'chat',
   'project',
@@ -60,6 +63,7 @@ export const BUCKET_COMBINATIONS: Record<BucketCombination, Bucket[]> = {
     'task',
     'snippet',
     'skill',
+    'decision',
     'chat',
     'project',
   ],
@@ -126,6 +130,7 @@ export type BucketItemMap = {
   task: EntityItem<TaskEntity>;
   snippet: EntityItem<SnippetEntity>;
   skill: EntityItem<SkillEntity>;
+  decision: EntityItem<DecisionEntity>;
   note: EntityItem<DocumentEntity>;
   chat: EntityItem<ChatEntity>;
   project: EntityItem<ProjectEntity>;

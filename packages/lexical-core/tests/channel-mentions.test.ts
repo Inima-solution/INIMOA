@@ -17,6 +17,16 @@ describe('extractChannelMentionsFromMarkdown', () => {
     ]);
   });
 
+  it('keeps a Decision mention on the generic document wire contract', () => {
+    const markdown =
+      'decision: ' +
+      '<m-document-mention>{"documentId":"decision-1","blockName":"md","documentName":"Adopt event sourcing","blockParams":{}}</m-document-mention>';
+
+    expect(extractChannelMentionsFromMarkdown(markdown)).toEqual([
+      { entityType: 'document', entityId: 'decision-1' },
+    ]);
+  });
+
   it('maps block names to entity types', () => {
     const cases: [string, string][] = [
       ['md', 'document'],

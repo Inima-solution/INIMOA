@@ -40,6 +40,7 @@ impl SearchProfile {
                 "task",
                 "snippet",
                 "skill",
+                "decision",
                 "note",
                 "chat",
                 "project",
@@ -219,6 +220,7 @@ fn document_bucket(record: &Record) -> &'static str {
         Some(name) if name.contains("Task") => "task",
         Some(name) if name.contains("Snippet") => "snippet",
         Some(name) if name.contains("Skill") => "skill",
+        Some(name) if name.contains("Decision") => "decision",
         _ if string_field(record, "fileType")
             .is_some_and(|value| value.eq_ignore_ascii_case("md")) =>
         {

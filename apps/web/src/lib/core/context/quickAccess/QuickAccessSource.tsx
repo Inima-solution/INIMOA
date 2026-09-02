@@ -107,6 +107,7 @@ function historyItemToEntity(item: HistoryItem): QuickAccessEntity {
         type: 'document',
         fileType,
         subType: item.subType,
+        projectId: item.projectId ?? undefined,
       } as QuickAccessEntity;
     }
 
@@ -162,6 +163,7 @@ function getBucketForHistoryItem(item: HistoryItem): EntityBucket {
       if (item.subType?.type === 'task') return 'task';
       if (item.subType?.type === 'snippet') return 'snippet';
       if (item.subType?.type === 'skill') return 'skill';
+      if (item.subType?.type === 'decision') return 'decision';
       if (item.fileType === 'md') return 'note';
       return 'document';
     }
@@ -776,6 +778,7 @@ export function createQuickAccessValue(): QuickAccessContextValue {
         indices.get('task') ?? [],
         indices.get('snippet') ?? [],
         indices.get('skill') ?? [],
+        indices.get('decision') ?? [],
         indices.get('chat') ?? [],
         indices.get('project') ?? [],
       ]),

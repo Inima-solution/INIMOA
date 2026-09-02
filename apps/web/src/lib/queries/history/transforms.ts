@@ -27,6 +27,7 @@ export function transformHistoryItem(item: Item): HistoryItem {
         type: 'document',
         fileType: item.fileType,
         subType: item.subType,
+        projectId: item.projectId,
         ownerId: item.owner,
       };
 

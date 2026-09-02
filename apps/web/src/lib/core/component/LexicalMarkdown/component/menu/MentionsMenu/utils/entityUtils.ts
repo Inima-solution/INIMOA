@@ -10,6 +10,8 @@ import type { MentionItem } from '../../../../utils/mentionsUtils';
 export function getBlockNameFromEntity(
   item: EntityItem
 ): BlockName | BlockAlias {
+  // Decisions use the ordinary collaborative markdown mention format. The
+  // subtype remains available in entity metadata for rendering and filtering.
   return match(item.bucket)
     .with('channel', () => 'channel' as const)
     .with('dm', () => 'channel' as const)
@@ -19,6 +21,7 @@ export function getBlockNameFromEntity(
     .with('task', () => 'task' as const)
     .with('snippet', () => 'snippet' as const)
     .with('skill', () => 'skill' as const)
+    .with('decision', () => 'md' as const)
     .with('note', () => 'md' as const)
     .with('crm_company', () => 'company' as const)
     .otherwise(() => {

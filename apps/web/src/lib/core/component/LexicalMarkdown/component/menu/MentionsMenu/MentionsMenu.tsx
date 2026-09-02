@@ -113,7 +113,15 @@ function MentionsMenuInner(props: MentionsMenuProps) {
   const customDocs = props.entities
     ? useEntityMentionFromList({
         items: props.entities,
-        buckets: ['note', 'task', 'snippet', 'document', 'project', 'chat'],
+        buckets: [
+          'note',
+          'task',
+          'snippet',
+          'decision',
+          'document',
+          'project',
+          'chat',
+        ],
         searchTerm,
       })
     : undefined;
@@ -138,7 +146,15 @@ function MentionsMenuInner(props: MentionsMenuProps) {
   const docsMention =
     customDocs ??
     useEntityMention({
-      buckets: ['note', 'task', 'snippet', 'document', 'project', 'chat'],
+      buckets: [
+        'note',
+        'task',
+        'snippet',
+        'decision',
+        'document',
+        'project',
+        'chat',
+      ],
       searchTerm: activeSearchTerm,
     });
   const docs = docsMention.entities;

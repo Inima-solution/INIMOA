@@ -23,8 +23,15 @@ import type { IUser } from '@core/user';
 import type { CombinedEntity } from './entityUtils';
 import {
   createEntitySearchConfig,
+  entityTypeToBuckets,
   sortEntitiesWithSelfFirst,
 } from './entityUtils';
+
+describe('entityTypeToBuckets', () => {
+  it('includes Decisions in generic document property references', () => {
+    expect(entityTypeToBuckets('DOCUMENT')).toContain('decision');
+  });
+});
 
 describe('createEntitySearchConfig', () => {
   it('should return correct search config with same weights as MentionsMenu', () => {

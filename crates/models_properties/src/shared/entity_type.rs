@@ -77,3 +77,16 @@ impl From<DocumentSubType> for EntityType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn decision_uses_the_generic_document_property_reference_type() {
+        assert_eq!(
+            EntityType::from(DocumentSubType::Decision),
+            EntityType::Document
+        );
+    }
+}
