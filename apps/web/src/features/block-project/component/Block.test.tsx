@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
     | undefined,
   dependencyProviderTaskIds: [] as string[][],
   dependencyProviderCount: 0,
+  progressProviderTaskIds: [] as string[][],
+  progressProviderCount: 0,
   decisionListProps: undefined as
     | { projectId: string; scopeId: string }
     | undefined,
@@ -260,7 +262,15 @@ vi.mock('@entity/types/entity', () => ({
     entity.type === 'document' && entity.subType?.type === 'task',
 }));
 vi.mock('@property/task-subtask-progress', () => ({
-  TaskSubtaskProgressProvider: (props: ParentProps) => props.children,
+  TaskSubtaskProgressProvider: (
+    props: ParentProps<{
+      taskIds: Accessor<readonly string[]>;
+    }>
+  ) => {
+    mocks.progressProviderCount += 1;
+    mocks.progressProviderTaskIds.push([...props.taskIds()]);
+    return props.children;
+  },
 }));
 vi.mock('@property/editor/hooks/useAllProperties', () => ({
   useAllProperties: () => () => mocks.statusProperties,
@@ -360,6 +370,8 @@ beforeEach(() => {
   mocks.blockEntityResolver = undefined;
   mocks.dependencyProviderCount = 0;
   mocks.dependencyProviderTaskIds = [];
+  mocks.progressProviderCount = 0;
+  mocks.progressProviderTaskIds = [];
   mocks.decisionListProps = undefined;
   mocks.reportQuery = undefined;
   mocks.boardProps = undefined;
@@ -913,13 +925,18 @@ describe('project task dependency relation batching', () => {
     ).toBeTruthy();
   });
 
-  it('preserves the shared Task filter control and source across ordinary List, Board, and List', () => {
+  it('preserves one task source, progress provider, and filter across List, Board, Timeline, and List', () => {
     mocks.searchText = 'follow up';
     mocks.source = [
       { id: 'matching-task-b', subType: { type: 'task' }, type: 'document' },
       { id: 'non-task-result', subType: null, type: 'document' },
       { id: 'matching-task-a', subType: { type: 'task' }, type: 'document' },
     ];
+    mocks.rows = [mocks.source[0], mocks.source[2]].map((original) => ({
+      getIsGrouped: () => false,
+      getIsLoadMore: () => false,
+      original,
+    }));
 
     render(() => <Block />);
 
@@ -928,6 +945,10 @@ describe('project task dependency relation batching', () => {
     );
     expect(filterControl).toBeTruthy();
     expect(mocks.soupViewProviderCount).toBe(1);
+    expect(mocks.progressProviderCount).toBe(1);
+    expect(mocks.progressProviderTaskIds).toEqual([
+      ['matching-task-b', 'matching-task-a'],
+    ]);
 
     mocks.topBarProps?.onChange('board');
 
@@ -939,6 +960,20 @@ describe('project task dependency relation batching', () => {
       document.querySelector('[data-testid="project-milestone-filter"]')
     ).toBe(filterControl);
     expect(mocks.soupViewProviderCount).toBe(1);
+    expect(mocks.progressProviderCount).toBe(1);
+    expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
+
+    mocks.topBarProps?.onChange('timeline');
+
+    expect(mocks.timelineProps).toMatchObject({
+      searching: true,
+      tasks: [{ id: 'matching-task-b' }, { id: 'matching-task-a' }],
+    });
+    expect(
+      document.querySelector('[data-testid="project-milestone-filter"]')
+    ).toBe(filterControl);
+    expect(mocks.soupViewProviderCount).toBe(1);
+    expect(mocks.progressProviderCount).toBe(1);
     expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
 
     mocks.topBarProps?.onChange('list');
@@ -950,6 +985,10 @@ describe('project task dependency relation batching', () => {
       document.querySelector('[data-testid="project-milestone-filter"]')
     ).toBe(filterControl);
     expect(mocks.soupViewProviderCount).toBe(1);
+    expect(mocks.progressProviderCount).toBe(1);
+    expect(mocks.progressProviderTaskIds).toEqual([
+      ['matching-task-b', 'matching-task-a'],
+    ]);
     expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
   });
 
