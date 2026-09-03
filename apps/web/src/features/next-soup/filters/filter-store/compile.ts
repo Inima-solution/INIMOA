@@ -11,6 +11,30 @@ import type {
   QueryState,
 } from './types';
 
+const isValidNumberRange = (range: {
+  gt?: number;
+  gte?: number;
+  lt?: number;
+  lte?: number;
+}) => {
+  const lower = range.gt ?? range.gte;
+  const upper = range.lt ?? range.lte;
+  if (
+    !Object.values(range).every(
+      (value) => value === undefined || Number.isFinite(value)
+    ) ||
+    (range.gt !== undefined && range.gte !== undefined) ||
+    (range.lt !== undefined && range.lte !== undefined) ||
+    (lower === undefined && upper === undefined)
+  ) {
+    return false;
+  }
+  if (lower === undefined || upper === undefined) return true;
+  if (lower < upper) return true;
+  // Equal bounds only describe a non-empty singleton when both are inclusive.
+  return lower === upper && range.gte !== undefined && range.lte !== undefined;
+};
+
 const NIL_UUID = '00000000-0000-0000-0000-000000000000';
 
 type BackendAst =
@@ -184,6 +208,17 @@ const propertyToAst = (p: PropertyFilter): BackendAst => {
     return { l: { pd: p.propertyId, v: { b: p.value } } };
   }
 
+  if (p.type === 'number') {
+    // Persisted invalid ranges must never broaden a query. A contradictory
+    // finite range is valid backend syntax and matches no Number value.
+    const isValid = isValidNumberRange(p.range);
+    const range = isValid ? p.range : { gt: 0, lte: 0 };
+    const literal: BackendAst = {
+      l: { pd: p.propertyId, et: 'TASK', v: { nr: range } },
+    };
+    return isValid && p.exclude ? AST.not(literal) : literal;
+  }
+
   const { exclude, ...range } = resolveDueDateBucket(p.value);
   const literal: BackendAst = {
     l: { pd: p.propertyId, et: 'TASK', v: { dr: range } },
@@ -192,7 +227,11 @@ const propertyToAst = (p: PropertyFilter): BackendAst => {
 };
 
 const propertyEquals = (a: PropertyFilter, b: PropertyFilter): boolean =>
-  a.propertyId === b.propertyId && a.type === b.type && a.value === b.value;
+  a.propertyId === b.propertyId &&
+  a.type === b.type &&
+  'value' in a &&
+  'value' in b &&
+  a.value === b.value;
 
 export const normalizeDocumentWhere = (
   documentWhere: Query['documentWhere']
@@ -389,14 +428,23 @@ export function compileToAst(state: QueryState): TargetAstMap {
     const excludeVals = excludeByPropId.get(propId);
 
     const includeDateVals = includeVals?.filter((p) => p.type === 'date') ?? [];
+    const includeNumberVals =
+      includeVals?.filter((p) => p.type === 'number') ?? [];
     const includeKeywordVals =
-      includeVals?.filter((p) => p.type !== 'date') ?? [];
+      includeVals?.filter((p) => p.type !== 'date' && p.type !== 'number') ??
+      [];
     const excludeDateVals = excludeVals?.filter((p) => p.type === 'date') ?? [];
+    const excludeNumberVals =
+      excludeVals?.filter((p) => p.type === 'number') ?? [];
     const excludeKeywordVals =
-      excludeVals?.filter((p) => p.type !== 'date') ?? [];
+      excludeVals?.filter((p) => p.type !== 'date' && p.type !== 'number') ??
+      [];
 
     for (const dateFilter of includeDateVals) {
       byTarget.propf.push(propertyToAst(dateFilter));
+    }
+    for (const numberFilter of includeNumberVals) {
+      byTarget.propf.push(propertyToAst(numberFilter));
     }
     if (includeKeywordVals.length) {
       byTarget.propf.push(AST.or(includeKeywordVals.map(propertyToAst)));
@@ -406,6 +454,19 @@ export function compileToAst(state: QueryState): TargetAstMap {
       for (const dateFilter of excludeDateVals) {
         byTarget.propf.push(AST.not(propertyToAst(dateFilter)));
       }
+    }
+    for (const numberFilter of excludeNumberVals) {
+      const ast = propertyToAst(numberFilter);
+      // Preserve the outer QueryState exclusion for valid state, including
+      // cancellation of an inner exclude flag. Invalid persisted state must
+      // stay impossible instead of becoming match-all.
+      byTarget.propf.push(
+        !isValidNumberRange(numberFilter.range)
+          ? ast
+          : numberFilter.exclude
+            ? propertyToAst({ ...numberFilter, exclude: undefined })
+            : AST.not(ast)
+      );
     }
 
     if (excludeKeywordVals.length) {

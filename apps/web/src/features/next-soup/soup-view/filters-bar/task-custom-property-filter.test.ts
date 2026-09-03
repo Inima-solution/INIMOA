@@ -3,12 +3,15 @@ import type { PropertyDefinitionResponse } from '@service-properties/generated/s
 import { describe, expect, it } from 'vitest';
 import {
   isUnavailableTaskCustomProperty,
+  numberRangeForProperty,
   removeUnavailableTaskCustomProperties,
   replaceTaskCustomPropertyValues,
+  replaceTaskNumberRange,
   selectedTaskCustomPropertyValues,
   taskCustomProperties,
   taskCustomPropertiesQueryArgs,
   toggleTaskCustomPropertyValue,
+  validateNumberRange,
 } from './task-custom-property-filter';
 
 const definition = (
@@ -90,6 +93,12 @@ describe('task custom property filter state', () => {
           { id: 'true', label: 'True', value: true },
           { id: 'false', label: 'False', value: false },
         ],
+      },
+      {
+        id: 'number',
+        label: 'number',
+        type: 'number',
+        options: [],
       },
       {
         id: 'date',
@@ -256,7 +265,7 @@ describe('task custom property filter state', () => {
   });
 
   it('keeps booleans and dates single-select while select values retain OR semantics', () => {
-    const [, boolean, date] = properties();
+    const [, boolean, , date] = properties();
     const [select] = properties();
     expect(toggleTaskCustomPropertyValue(['true'], boolean!, 'false')).toEqual([
       'false',
@@ -287,6 +296,55 @@ describe('task custom property filter state', () => {
         ['no-due', 'today']
       )
     ).toEqual([{ propertyId: 'date', type: 'date', value: 'no-due' }]);
+  });
+
+  it('validates and replaces only finite Number ranges without exposing malformed state', () => {
+    const number = properties().find((property) => property.type === 'number')!;
+    expect(validateNumberRange({ gte: 2, lt: 4 })).toBeUndefined();
+    expect(validateNumberRange({ gt: 4, lte: 4 })).toMatch(/Equal bounds/);
+    expect(validateNumberRange({})).toMatch(/lower or upper/);
+    expect(
+      replaceTaskNumberRange(
+        [{ propertyId: 'keep', type: 'select', value: 'x' }],
+        number,
+        { gte: 2, lt: 4 },
+        true
+      )
+    ).toEqual([
+      { propertyId: 'keep', type: 'select', value: 'x' },
+      {
+        propertyId: 'number',
+        type: 'number',
+        range: { gte: 2, lt: 4 },
+        exclude: true,
+      },
+    ]);
+    expect(
+      numberRangeForProperty(
+        [{ propertyId: 'number', type: 'number', range: {} }],
+        number
+      )
+    ).toBeUndefined();
+    const existing = [
+      {
+        propertyId: 'number',
+        type: 'number' as const,
+        range: { gte: 2 },
+      },
+    ];
+    expect(replaceTaskNumberRange(existing, number, {})).toEqual(existing);
+    expect(
+      replaceTaskNumberRange(existing, number, {
+        gte: Number.POSITIVE_INFINITY,
+      })
+    ).toEqual(existing);
+    expect(
+      replaceTaskNumberRange(
+        [{ propertyId: 'keep', type: 'select', value: 'x' }, ...existing],
+        number,
+        undefined
+      )
+    ).toEqual([{ propertyId: 'keep', type: 'select', value: 'x' }]);
   });
 
   it('keeps unknown or removed values fail-closed without exposing IDs', () => {

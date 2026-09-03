@@ -107,6 +107,7 @@ function historyItemToEntity(item: HistoryItem): QuickAccessEntity {
         type: 'document',
         fileType,
         subType: item.subType,
+        projectId: item.projectId ?? undefined,
       } as QuickAccessEntity;
     }
 
@@ -162,6 +163,7 @@ function getBucketForHistoryItem(item: HistoryItem): EntityBucket {
       if (item.subType?.type === 'task') return 'task';
       if (item.subType?.type === 'snippet') return 'snippet';
       if (item.subType?.type === 'skill') return 'skill';
+      if (item.subType?.type === 'decision') return 'decision';
       if (item.fileType === 'md') return 'note';
       return 'document';
     }
@@ -366,7 +368,7 @@ export function createQuickAccessValue(): QuickAccessContextValue {
   });
 
   const historyEntries = createLazyMemo(() => {
-    const viewedAtMap = soupViewedAtMap();
+    const viewedAtMap = soupViewedAtMap() ?? new Map<string, string>();
     const seenIds = new Set<string>();
     const allEntries: IndexEntry[] = [];
 
@@ -425,7 +427,7 @@ export function createQuickAccessValue(): QuickAccessContextValue {
   });
 
   const channelEntries = createLazyMemo(() => {
-    const viewedAtMap = soupViewedAtMap();
+    const viewedAtMap = soupViewedAtMap() ?? new Map<string, string>();
     const allEntries: IndexEntry[] = [];
 
     // The GraphQL cache is authoritative while enabled. Otherwise preserve the
@@ -509,7 +511,7 @@ export function createQuickAccessValue(): QuickAccessContextValue {
   });
 
   const crmCompanyEntries = createLazyMemo(() => {
-    const viewedAtMap = soupViewedAtMap();
+    const viewedAtMap = soupViewedAtMap() ?? new Map<string, string>();
     const allEntries: IndexEntry[] = [];
     const hidden = hiddenIds();
 
@@ -572,8 +574,8 @@ export function createQuickAccessValue(): QuickAccessContextValue {
   });
 
   const snippetEntries = createLazyMemo(() => {
-    const viewedAtMap = soupViewedAtMap();
-    const seenIds = new Set(historyEntries().ids);
+    const viewedAtMap = soupViewedAtMap() ?? new Map<string, string>();
+    const seenIds = new Set(historyEntries()?.ids ?? []);
     const allEntries: IndexEntry[] = [];
     const hidden = hiddenIds();
 
@@ -639,8 +641,8 @@ export function createQuickAccessValue(): QuickAccessContextValue {
   });
 
   const skillEntries = createLazyMemo(() => {
-    const viewedAtMap = soupViewedAtMap();
-    const seenIds = new Set(historyEntries().ids);
+    const viewedAtMap = soupViewedAtMap() ?? new Map<string, string>();
+    const seenIds = new Set(historyEntries()?.ids ?? []);
     const allEntries: IndexEntry[] = [];
     const hidden = hiddenIds();
 
@@ -702,12 +704,12 @@ export function createQuickAccessValue(): QuickAccessContextValue {
 
   const processedData = createLazyMemo(() => {
     const allEntries = mergeMultipleSortedIndices([
-      historyEntries().entries,
-      channelEntries(),
-      contactEntries(),
-      crmCompanyEntries(),
-      snippetEntries(),
-      skillEntries(),
+      historyEntries()?.entries ?? [],
+      channelEntries() ?? [],
+      contactEntries() ?? [],
+      crmCompanyEntries() ?? [],
+      snippetEntries() ?? [],
+      skillEntries() ?? [],
     ]);
     const seenIds = new Set(allEntries.map((entry) => entry.id));
 
@@ -749,7 +751,7 @@ export function createQuickAccessValue(): QuickAccessContextValue {
   // Pre-compute individual bucket index lists (each already sorted)
   const bucketIndices = createLazyMemo<Map<Bucket, IndexEntry[]>>(() => {
     const map = new Map<Bucket, IndexEntry[]>();
-    for (const entry of processedData()) {
+    for (const entry of processedData() ?? []) {
       const list = map.get(entry.bucket);
       if (list) {
         list.push(entry);
@@ -763,9 +765,9 @@ export function createQuickAccessValue(): QuickAccessContextValue {
   const preBakedIndices = createLazyMemo<
     Record<BucketCombination, IndexEntry[]>
   >(() => {
-    const indices = bucketIndices();
+    const indices = bucketIndices() ?? new Map<Bucket, IndexEntry[]>();
     return {
-      all: processedData(),
+      all: processedData() ?? [],
       channels: mergeMultipleSortedIndices([
         indices.get('dm') ?? [],
         indices.get('channel') ?? [],
@@ -776,6 +778,7 @@ export function createQuickAccessValue(): QuickAccessContextValue {
         indices.get('task') ?? [],
         indices.get('snippet') ?? [],
         indices.get('skill') ?? [],
+        indices.get('decision') ?? [],
         indices.get('chat') ?? [],
         indices.get('project') ?? [],
       ]),
@@ -785,6 +788,7 @@ export function createQuickAccessValue(): QuickAccessContextValue {
   // helper to get a pre-baked index list if the bucket combination matches
   const getPreBakedIndices = (buckets: Bucket[]): IndexEntry[] | undefined => {
     const baked = preBakedIndices();
+    if (!baked) return undefined;
     const bucketSet = new Set(buckets);
 
     for (const [name, combo] of Object.entries(BUCKET_COMBINATIONS)) {
@@ -817,10 +821,10 @@ export function createQuickAccessValue(): QuickAccessContextValue {
       let indices: IndexEntry[];
 
       if (buckets.length === 0) {
-        indices = preBakedIndices().all;
+        indices = preBakedIndices()?.all ?? [];
       } else if (buckets.length === 1) {
         // Single bucket = return pre-computed bucket list
-        indices = bucketIndices().get(buckets[0]) ?? [];
+        indices = bucketIndices()?.get(buckets[0]) ?? [];
       } else {
         // Check for pre-baked combination
         const preBaked = getPreBakedIndices(buckets);
@@ -828,7 +832,7 @@ export function createQuickAccessValue(): QuickAccessContextValue {
           indices = preBaked;
         } else {
           // Fallback: merge-sort the requested bucket index lists
-          const allIndices = bucketIndices();
+          const allIndices = bucketIndices() ?? new Map<Bucket, IndexEntry[]>();
           const indicesToMerge = buckets
             .map((b) => allIndices.get(b) ?? [])
             .filter((arr) => arr.length > 0);
@@ -939,7 +943,7 @@ export function createQuickAccessValue(): QuickAccessContextValue {
     }
 
     const list = createLazyMemo(() => {
-      const base = baseList();
+      const base = baseList() ?? [];
       if (!options) return base;
       const local = searchQuickAccessItems(base, options.searchTerm?.() ?? '');
       const projected = projectedItems();
@@ -959,7 +963,7 @@ export function createQuickAccessValue(): QuickAccessContextValue {
     });
     return {
       items: list,
-      totalCount: () => list().length,
+      totalCount: () => list()?.length ?? 0,
       hasMore: () => false,
       isLoading: () => false,
       isLoadingMore: () => false,

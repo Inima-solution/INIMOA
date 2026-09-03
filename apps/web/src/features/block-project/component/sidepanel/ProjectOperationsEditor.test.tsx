@@ -63,6 +63,8 @@ const operations: ProjectOperations = {
   leadUserId: 'macro|lead@example.com',
   startDate: '2026-01-02',
   targetDate: '2026-02-03',
+  objective: 'Deliver a trustworthy project overview',
+  nextAction: 'Review the first operational checkpoint',
   policy: { keep: ['every', 'byte'] },
 };
 
@@ -119,6 +121,12 @@ describe('ProjectOperationsEditor', () => {
       'high'
     );
     expect(view.getByText('Lead Name')).toBeTruthy();
+    expect(
+      (view.getByLabelText('Objective') as HTMLTextAreaElement).value
+    ).toBe(operations.objective);
+    expect(
+      (view.getByLabelText('Next action') as HTMLTextAreaElement).value
+    ).toBe(operations.nextAction);
     expect(view.container.textContent).not.toContain('macro|lead@example.com');
   });
 
@@ -138,6 +146,12 @@ describe('ProjectOperationsEditor', () => {
     fireEvent.input(view.getByLabelText('Target date'), {
       target: { value: '2026-03-04' },
     });
+    fireEvent.input(view.getByLabelText('Objective'), {
+      target: { value: '  Ship the overview  ' },
+    });
+    fireEvent.input(view.getByLabelText('Next action'), {
+      target: { value: '  Review the checkpoint  ' },
+    });
     fireEvent.submit(
       view.getByRole('button', { name: 'Save' }).closest('form')!
     );
@@ -151,6 +165,8 @@ describe('ProjectOperationsEditor', () => {
         leadUserId: null,
         startDate: null,
         targetDate: '2026-03-04',
+        objective: 'Ship the overview',
+        nextAction: 'Review the checkpoint',
         policy: operations.policy,
       },
     });
@@ -183,6 +199,63 @@ describe('ProjectOperationsEditor', () => {
       'project-operation-date-order-error'
     );
     expect(mocks.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('enforces UTF-8 byte bounds before making a request', () => {
+    const view = renderEditor();
+    fireEvent.input(view.getByLabelText('Objective'), {
+      target: { value: 'é'.repeat(1025) },
+    });
+    fireEvent.submit(
+      view.getByRole('button', { name: 'Save' }).closest('form')!
+    );
+    expect(view.getByRole('alert').textContent).toBe(
+      'Objective must be 2,048 bytes or fewer.'
+    );
+    expect(view.getByLabelText('Objective').getAttribute('aria-invalid')).toBe(
+      'true'
+    );
+    expect(mocks.mutateAsync).not.toHaveBeenCalled();
+  });
+
+  it('normalizes both narratives before applying their UTF-8 byte bounds', async () => {
+    mocks.mutateAsync.mockResolvedValue(undefined);
+    const view = renderEditor();
+    const objective = 'é'.repeat(1024);
+    const nextAction = 'é'.repeat(512);
+    fireEvent.input(view.getByLabelText('Objective'), {
+      target: { value: ` ${objective} ` },
+    });
+    fireEvent.input(view.getByLabelText('Next action'), {
+      target: { value: ` ${nextAction} ` },
+    });
+    fireEvent.submit(
+      view.getByRole('button', { name: 'Save' }).closest('form')!
+    );
+    await waitFor(() => expect(mocks.mutateAsync).toHaveBeenCalledOnce());
+    expect(mocks.mutateAsync.mock.calls[0][0].request.objective).toBe(
+      objective
+    );
+    expect(mocks.mutateAsync.mock.calls[0][0].request.nextAction).toBe(
+      nextAction
+    );
+  });
+
+  it('normalizes oversized whitespace-only narratives to explicit null clears', async () => {
+    mocks.mutateAsync.mockResolvedValue(undefined);
+    const view = renderEditor();
+    fireEvent.input(view.getByLabelText('Objective'), {
+      target: { value: ' '.repeat(2049) },
+    });
+    fireEvent.input(view.getByLabelText('Next action'), {
+      target: { value: '\u{3000}'.repeat(1025) },
+    });
+    fireEvent.submit(
+      view.getByRole('button', { name: 'Save' }).closest('form')!
+    );
+    await waitFor(() => expect(mocks.mutateAsync).toHaveBeenCalledOnce());
+    expect(mocks.mutateAsync.mock.calls[0][0].request.objective).toBeNull();
+    expect(mocks.mutateAsync.mock.calls[0][0].request.nextAction).toBeNull();
   });
 
   it('keeps the current lead when the team roster is unavailable', async () => {
@@ -268,6 +341,8 @@ describe('ProjectOperationsEditor', () => {
       'Lead',
       'Start date',
       'Target date',
+      'Objective',
+      'Next action',
     ]) {
       expect((view.getByLabelText(label) as HTMLInputElement).disabled).toBe(
         true

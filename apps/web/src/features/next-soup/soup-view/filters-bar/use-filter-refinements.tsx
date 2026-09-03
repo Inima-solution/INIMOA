@@ -50,12 +50,15 @@ import type { SearchableOption } from './searchable-multi-select';
 import { useTagFilter } from './tag-filter';
 import {
   isUnavailableTaskCustomProperty,
+  numberRangeForProperty,
   replaceTaskCustomPropertyValues,
+  replaceTaskNumberRange,
   selectedTaskCustomPropertyValues,
   taskCustomProperties,
   taskCustomPropertiesQueryArgs,
   toggleTaskCustomPropertyValue,
 } from './task-custom-property-filter';
+import { indexAvailableTaskEntities } from './task-entity-index';
 import {
   buildContactLabel,
   VIEW_FILTER_CATEGORIES,
@@ -65,6 +68,19 @@ type TaskEntityFilterPartition = {
   values: FilterValue[];
   unavailable: boolean;
 };
+
+export function formatTaskNumberRangeFilter(
+  filter: Extract<PropertyFilter, { type: 'number' }>
+): string {
+  const range = filter.range;
+  const parts = [
+    range.gt !== undefined ? `> ${range.gt}` : undefined,
+    range.gte !== undefined ? `≥ ${range.gte}` : undefined,
+    range.lt !== undefined ? `< ${range.lt}` : undefined,
+    range.lte !== undefined ? `≤ ${range.lte}` : undefined,
+  ].filter((part): part is string => part !== undefined);
+  return `${filter.exclude ? 'Excluding ' : ''}${parts.join(' and ')}`;
+}
 
 /**
  * Resolves only against the existing bounded quick-access cache. Any cache
@@ -187,11 +203,9 @@ export function useFilterRefinements() {
     'chat',
     'task'
   ).items;
-  const taskEntityById = createMemo(() => {
-    const byId = new Map<string, QuickAccessItem>();
-    for (const item of taskEntityItems()) byId.set(item.id, item);
-    return byId;
-  });
+  const taskEntityById = createMemo(() =>
+    indexAvailableTaskEntities(taskEntityItems?.())
+  );
   const getTaskEntityById = (id: string) => taskEntityById().get(id);
 
   const getPresetContext = (): PresetContext => ({
@@ -1011,6 +1025,35 @@ export function useFilterRefinements() {
       const currentProperties = () => filterData().include.properties ?? [];
       for (const property of taskCustomPropertiesList()) {
         const key = `custom-property:${property.id}`;
+        if (property.type === 'number') {
+          const rangeFilter = () =>
+            numberRangeForProperty(currentProperties(), property);
+          if (!rangeFilter()) continue;
+          seenKeys.add(key);
+          filters.push(
+            getOrCreateConsolidatedChip(key, () => ({
+              key,
+              categoryLabel: property.label,
+              values: () => [
+                {
+                  id: 'range',
+                  label: formatTaskNumberRangeFilter(rangeFilter()!),
+                },
+              ],
+              onRemoveAll: () =>
+                queryFilters.set({
+                  include: {
+                    properties: replaceTaskNumberRange(
+                      currentProperties(),
+                      property,
+                      undefined
+                    ),
+                  },
+                }),
+            }))
+          );
+          continue;
+        }
         const selected = () =>
           selectedTaskCustomPropertyValues(currentProperties(), property);
         if (selected().length === 0) continue;

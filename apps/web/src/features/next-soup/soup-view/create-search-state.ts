@@ -44,7 +44,7 @@ function isSingleQuotedTerm(query: string): boolean {
 // are grouped by property id: multiple values on one property are OR'd (a task
 // matches any of them), and different properties are AND'd. Select options go to
 // option_ids, entity refs to entity_ids, Boolean values to boolean_value, and
-// dates to TASK-only date ranges.
+// dates and Number ranges to TASK-only ranges.
 
 export function includePropertiesToFilters(
   properties: QueryState['include']['properties']
@@ -73,7 +73,50 @@ export function includePropertiesToFilters(
       );
     }
 
-    const keywordFilters = group.filter((p) => p.type !== 'date');
+    const numberFilters = group.filter(
+      (p): p is Extract<(typeof group)[number], { type: 'number' }> =>
+        p.type === 'number'
+    );
+    for (const numberFilter of numberFilters) {
+      const range = numberFilter.range;
+      const lower = range.gt ?? range.gte;
+      const upper = range.lt ?? range.lte;
+      const valid =
+        Object.values(range).every(
+          (value) => value === undefined || Number.isFinite(value)
+        ) &&
+        !(range.gt !== undefined && range.gte !== undefined) &&
+        !(range.lt !== undefined && range.lte !== undefined) &&
+        (lower !== undefined || upper !== undefined) &&
+        (lower === undefined ||
+          upper === undefined ||
+          lower < upper ||
+          (lower === upper &&
+            range.gte !== undefined &&
+            range.lte !== undefined));
+      if (!valid) {
+        // Do not silently drop malformed persisted state: an impossible
+        // finite range preserves fail-closed behavior for search as Soup does.
+        result.push({
+          property_definition_id: propertyId,
+          entity_type: 'TASK',
+          number_range: { gt: 0, lte: 0 },
+        });
+      } else {
+        result.push({
+          property_definition_id: propertyId,
+          entity_type: 'TASK',
+          number_range: {
+            ...range,
+            ...(numberFilter.exclude ? { exclude: true } : {}),
+          },
+        });
+      }
+    }
+
+    const keywordFilters = group.filter(
+      (p) => p.type !== 'date' && p.type !== 'number'
+    );
     if (keywordFilters.length === 0) continue;
 
     const filter: PropertyFilter = { property_definition_id: propertyId };

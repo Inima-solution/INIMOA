@@ -103,6 +103,8 @@ const populatedOverview: GetProjectOverview200DataOneOf = {
     leadUserId: 'macro|lead@example.com',
     startDate: '2026-01-02',
     targetDate: '2026-02-03',
+    objective: 'Deliver a trustworthy project overview',
+    nextAction: 'Review the first operational checkpoint',
     completedAt: '2026-02-04T15:04:00.000Z',
     policy: { hidden: true },
     createdAt: '2026-01-01T00:00:00.000Z',
@@ -117,6 +119,7 @@ const populatedOverview: GetProjectOverview200DataOneOf = {
   },
   progress: {
     completedTasks: 2,
+    wipTasks: 1,
     hasUnavailableStatuses: false,
     includedTasks: 3,
   },
@@ -126,9 +129,11 @@ const populatedOverview: GetProjectOverview200DataOneOf = {
     userId: 'macro|lead@example.com',
   },
   risk: {
+    atRiskMilestones: 1,
     approachingTarget: true,
     blockedTasks: 1,
     hasUnavailableRiskData: false,
+    openMilestones: 2,
     overdueTasks: 2,
     unassignedTasks: 3,
   },
@@ -173,9 +178,17 @@ describe('ProjectOverviewSection', () => {
     expect(view.getByText('Active')).toBeTruthy();
     expect(view.getByText('Urgent')).toBeTruthy();
     expect(view.getByText('Lead Display')).toBeTruthy();
+    expect(
+      view.getByText('Deliver a trustworthy project overview')
+    ).toBeTruthy();
+    expect(
+      view.getByText('Review the first operational checkpoint')
+    ).toBeTruthy();
     expect(view.getByText(formatDateOnly('2026-01-02'))).toBeTruthy();
     expect(view.getByText(formatDateOnly('2026-02-03'))).toBeTruthy();
-    expect(view.getByText('Feb 4, 2026, 3:04 PM')).toBeTruthy();
+    expect(
+      view.container.querySelector('[data-row="Completed"]')?.textContent
+    ).toContain('Feb 4, 2026, 3:04 PM');
     expect(
       view.container.querySelector('[data-row="Child projects"]')?.textContent
     ).toContain('2');
@@ -205,7 +218,9 @@ describe('ProjectOverviewSection', () => {
     expect(
       view.container.querySelector('[data-row="Target risk"]')?.textContent
     ).toContain('Within 7 days');
-    expect(view.container.textContent).not.toMatch(/objective|next action/i);
+    expect(
+      view.container.querySelector('[data-row="Recent change"]')?.textContent
+    ).toContain('Feb 4, 2026, 3:04 PM');
     expect(view.container.querySelector('.tabular-nums')?.textContent).toBe(
       '2'
     );
@@ -221,6 +236,8 @@ describe('ProjectOverviewSection', () => {
         leadUserId: null,
         startDate: null,
         targetDate: null,
+        objective: null,
+        nextAction: null,
         completedAt: null,
       },
       immediateChildren: {
@@ -231,13 +248,16 @@ describe('ProjectOverviewSection', () => {
       },
       progress: {
         completedTasks: 0,
+        wipTasks: 0,
         hasUnavailableStatuses: false,
         includedTasks: 0,
       },
       risk: {
+        atRiskMilestones: 0,
         approachingTarget: false,
         blockedTasks: 0,
         hasUnavailableRiskData: false,
+        openMilestones: 0,
         overdueTasks: 0,
         unassignedTasks: 0,
       },
@@ -247,7 +267,7 @@ describe('ProjectOverviewSection', () => {
     expect(
       view.container.querySelector('[data-row="Lead"]')?.textContent
     ).toContain('Unassigned');
-    expect(view.getAllByText('Not set')).toHaveLength(2);
+    expect(view.getAllByText('Not set')).toHaveLength(4);
     for (const label of ['Child projects', 'Tasks', 'Files', 'Chats']) {
       expect(
         view.container.querySelector(`[data-row="${label}"]`)?.textContent
@@ -287,9 +307,11 @@ describe('ProjectOverviewSection', () => {
     mocks.query = readyQuery({
       ...populatedOverview,
       risk: {
+        atRiskMilestones: 0,
         approachingTarget: false,
         blockedTasks: 0,
         hasUnavailableRiskData: false,
+        openMilestones: 0,
         overdueTasks: 2,
         unassignedTasks: 0,
       },

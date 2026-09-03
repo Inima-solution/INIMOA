@@ -304,6 +304,12 @@ export const ENTITY_ICON_CONFIGS: Record<EntityWithValidIcon, IconConfig> = {
     background: 'bg-chat/20',
     prettyName: 'Skill',
   },
+  decision: {
+    icon: FileMd,
+    foreground: 'text-note',
+    background: 'bg-note/20',
+    prettyName: 'Decision',
+  },
   automation: {
     icon: WideAutomation,
     foreground: 'text-chat',
@@ -393,6 +399,7 @@ const WIDE_ICONS: Record<
   task: WideTask,
   snippet: WideSnippet,
   skill: SkillIcon,
+  decision: WideFileMd,
   automation: WideAutomation,
   crm_company: AnimatedCompanyIcon,
   company: AnimatedCompanyIcon,

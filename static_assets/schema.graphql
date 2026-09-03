@@ -1346,6 +1346,16 @@ type GraphqlDatePropertyValue {
 }
 
 """
+Represents a Decision subtype without duplicating its system properties.
+"""
+type GraphqlDecisionSubType {
+	"""
+	This object has no fields yet, but GraphQL objects require one.
+	"""
+	nothing: Boolean!
+}
+
+"""
 The two operands of a recursive `DocumentFilterExpr` binary expression.
 """
 input GraphqlDocumentBinaryExpr {
@@ -1509,6 +1519,10 @@ enum GraphqlDocumentSubType {
 	The skill option.
 	"""
 	SKILL
+	"""
+	The Decision document option.
+	"""
+	DECISION
 }
 
 """
@@ -4305,7 +4319,7 @@ type GraphqlSoupDocument implements GraphqlSoupEntity {
 """
 GraphQL representation of the soup document sub type.
 """
-union GraphqlSoupDocumentSubType = GraphqlTaskSubType | GraphqlSnippetSubType | GraphqlSkillSubType
+union GraphqlSoupDocumentSubType = GraphqlTaskSubType | GraphqlSnippetSubType | GraphqlSkillSubType | GraphqlDecisionSubType
 
 """
 GraphQL representation of the soup email attachment.

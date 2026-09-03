@@ -129,6 +129,7 @@ enum RepoDocumentSubtype {
     MarkdownTask,
     MarkdownSnippet,
     MarkdownSkill,
+    MarkdownDecision,
 }
 
 impl RepoDocumentSubtype {
@@ -140,6 +141,9 @@ impl RepoDocumentSubtype {
                 Some(document_sub_type::DocumentSubType::Snippet)
             }
             RepoDocumentSubtype::MarkdownSkill => Some(document_sub_type::DocumentSubType::Skill),
+            RepoDocumentSubtype::MarkdownDecision => {
+                Some(document_sub_type::DocumentSubType::Decision)
+            }
         }
     }
 }
@@ -166,6 +170,9 @@ pub enum MarkdownSubtype {
     /// A skill document — markdown instructions that AI reads and follows when
     /// the skill is referenced in an AI input.
     Skill,
+    /// A project decision record. Its body uses the ordinary collaborative
+    /// markdown lifecycle while Decision metadata lives in system properties.
+    Decision,
 }
 
 impl MarkdownSubtype {
@@ -335,6 +342,11 @@ impl NewPlainTextDocumentBuilder<FileType, String> {
                     ));
                 }
                 MarkdownSubtype::Note => {}
+                MarkdownSubtype::Decision => {
+                    return Err(DocumentError::BadRequest(
+                        "decisions must be markdown documents".to_string(),
+                    ));
+                }
             }
             PlainTextDocumentKind::Text(NonMarkdownFileType::new(self.file_type)?)
         };
@@ -538,8 +550,16 @@ where
             markdown,
             subtype,
         } = document;
+        if matches!(subtype, MarkdownSubtype::Decision) && metadata.project_id.is_none() {
+            return Err(DocumentError::BadRequest(
+                "decisions must belong to a project".to_string(),
+            ));
+        }
         let task = match &subtype {
-            MarkdownSubtype::Note | MarkdownSubtype::Snippet | MarkdownSubtype::Skill => None,
+            MarkdownSubtype::Note
+            | MarkdownSubtype::Snippet
+            | MarkdownSubtype::Skill
+            | MarkdownSubtype::Decision => None,
             MarkdownSubtype::Task {
                 property_values,
                 share_with_team,
@@ -565,6 +585,7 @@ where
                     MarkdownSubtype::Task { .. } => RepoDocumentSubtype::MarkdownTask,
                     MarkdownSubtype::Snippet => RepoDocumentSubtype::MarkdownSnippet,
                     MarkdownSubtype::Skill => RepoDocumentSubtype::MarkdownSkill,
+                    MarkdownSubtype::Decision => RepoDocumentSubtype::MarkdownDecision,
                 },
                 team_id,
             },
@@ -611,6 +632,15 @@ where
                     DocumentContent::ready(DocumentContentLocation::SyncService),
                 )
                 .await?;
+
+            // Keep Decision property attachment as the final fallible step.
+            // entity_properties has no Document FK cascade, so this ordering
+            // prevents a later initialization failure from leaving orphans.
+            if matches!(subtype, MarkdownSubtype::Decision) {
+                self.document_service
+                    .attach_decision_properties(&document_id)
+                    .await?;
+            }
 
             Ok(initial_snapshot)
         }
@@ -732,13 +762,146 @@ fn file_shas(file_content: &[u8]) -> FileShas {
 #[cfg(test)]
 mod tests {
     use super::{
-        MarkdownSubtype, NewDocumentMetadata, NewPlainTextDocument, RepoDocumentKind,
-        RepoDocumentSubtype, file_shas,
+        DocumentCreator, MarkdownSubtype, NewDocumentMetadata, NewMarkdownTextDocument,
+        NewPlainTextDocument, RepoDocumentKind, RepoDocumentSubtype, file_shas,
     };
-    use crate::domain::models::ImportEmailAttachmentRepoArgs;
+    use crate::domain::content::DocumentContent;
+    use crate::domain::models::{
+        CreateDocumentRepoArgs, CreateTaskRequest, DocumentError, ImportEmailAttachmentRepoArgs,
+    };
+    use crate::domain::ports::create::{
+        DocumentBytesUpload, DocumentBytesUploadPort, DocumentCreationService,
+    };
+    use crate::domain::ports::markdown::MarkdownInitializationPort;
+    use crate::domain::response::{
+        CreateDocumentResponseData, DocumentResponse, DocumentResponseMetadataWithContent,
+    };
     use activity::{Actor, Attribution};
     use macro_user_id::user_id::MacroUserIdStr;
     use model::document::FileType;
+    use model::document::response::DocumentResponseMetadata;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct FailingDecisionCreationService {
+        create_calls: Arc<AtomicUsize>,
+        attached: Arc<Mutex<Vec<String>>>,
+        cleaned: Arc<Mutex<Vec<String>>>,
+        fail_attach: bool,
+    }
+
+    impl DocumentCreationService for FailingDecisionCreationService {
+        async fn create_document(
+            &self,
+            user_id: MacroUserIdStr<'static>,
+            _args: CreateDocumentRepoArgs,
+            _job_id: Option<String>,
+        ) -> Result<CreateDocumentResponseData, DocumentError> {
+            self.create_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(CreateDocumentResponseData {
+                document_response: DocumentResponse {
+                    document_metadata: DocumentResponseMetadataWithContent::new(
+                        DocumentResponseMetadata {
+                            document_id: "decision-doc".to_string(),
+                            document_version_id: 1,
+                            owner: user_id,
+                            document_name: "Decision".to_string(),
+                            file_type: Some("md".to_string()),
+                            sha: None,
+                            branched_from_id: None,
+                            branched_from_version_id: None,
+                            document_family_id: None,
+                            document_bom: None,
+                            modification_data: None,
+                            created_at: None,
+                            updated_at: None,
+                            sub_type: Some(document_sub_type::DocumentSubType::Decision),
+                        },
+                        DocumentContent::pending(),
+                    ),
+                    presigned_url: None,
+                },
+                content_type: "text/markdown".to_string(),
+                file_type: Some("md".to_string()),
+            })
+        }
+
+        async fn handle_task_properties(
+            &self,
+            _user_id: MacroUserIdStr<'static>,
+            _document_id: &str,
+            _request: &CreateTaskRequest,
+        ) -> Result<(), DocumentError> {
+            unreachable!("Decision creation must not use task properties")
+        }
+
+        async fn attach_decision_properties(&self, document_id: &str) -> Result<(), DocumentError> {
+            self.attached.lock().unwrap().push(document_id.to_string());
+            if self.fail_attach {
+                Err(DocumentError::Internal(anyhow::anyhow!(
+                    "simulated Decision property failure"
+                )))
+            } else {
+                Ok(())
+            }
+        }
+
+        async fn mark_document_uploaded(&self, _document_id: &str) -> Result<(), DocumentError> {
+            Ok(())
+        }
+
+        async fn set_document_content(
+            &self,
+            _document_id: &str,
+            _content: DocumentContent,
+        ) -> Result<(), DocumentError> {
+            Ok(())
+        }
+
+        async fn cleanup_created_document(&self, document_id: &str) {
+            self.cleaned.lock().unwrap().push(document_id.to_string());
+        }
+    }
+
+    #[derive(Clone, Default)]
+    struct RecordingMarkdownInitializer(Arc<AtomicUsize>);
+
+    impl MarkdownInitializationPort for RecordingMarkdownInitializer {
+        async fn initialize_existing_markdown(
+            &self,
+            _document_id: &str,
+            _markdown: &str,
+        ) -> Result<Vec<u8>, DocumentError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(Vec::new())
+        }
+    }
+
+    struct FailingMarkdownInitializer;
+
+    impl MarkdownInitializationPort for FailingMarkdownInitializer {
+        async fn initialize_existing_markdown(
+            &self,
+            _document_id: &str,
+            _markdown: &str,
+        ) -> Result<Vec<u8>, DocumentError> {
+            Err(DocumentError::Internal(anyhow::anyhow!(
+                "simulated markdown initialization failure"
+            )))
+        }
+    }
+
+    struct UnusedBytesUploader;
+
+    impl DocumentBytesUploadPort for UnusedBytesUploader {
+        async fn upload_document_bytes(
+            &self,
+            _upload: DocumentBytesUpload,
+        ) -> Result<(), DocumentError> {
+            unreachable!("Decision creation must not upload object-storage bytes")
+        }
+    }
 
     fn metadata() -> NewDocumentMetadata {
         NewDocumentMetadata::new("test")
@@ -817,6 +980,99 @@ mod tests {
             .task_flag(true, None)
             .build()
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn decision_requires_project_before_creating_a_document_row() {
+        let service = FailingDecisionCreationService::default();
+        let creator = DocumentCreator::new(
+            service.clone(),
+            RecordingMarkdownInitializer::default(),
+            UnusedBytesUploader,
+        );
+
+        let result = creator
+            .create_markdown_text(
+                owner(),
+                NewMarkdownTextDocument {
+                    metadata: metadata(),
+                    markdown: "# Decision".to_string(),
+                    subtype: MarkdownSubtype::Decision,
+                },
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(DocumentError::BadRequest(message))
+                if message == "decisions must belong to a project"
+        ));
+        assert_eq!(service.create_calls.load(Ordering::SeqCst), 0);
+        assert!(service.cleaned.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn decision_property_failure_cleans_up_after_finalization() {
+        let service = FailingDecisionCreationService {
+            fail_attach: true,
+            ..Default::default()
+        };
+        let markdown_initializer = RecordingMarkdownInitializer::default();
+        let creator = DocumentCreator::new(
+            service.clone(),
+            markdown_initializer.clone(),
+            UnusedBytesUploader,
+        );
+
+        let result = creator
+            .create_markdown_text(
+                owner(),
+                NewMarkdownTextDocument {
+                    metadata: NewDocumentMetadata::builder("Decision")
+                        .project_id(uuid::Uuid::new_v4())
+                        .build(),
+                    markdown: "# Decision".to_string(),
+                    subtype: MarkdownSubtype::Decision,
+                },
+            )
+            .await;
+
+        assert!(matches!(result, Err(DocumentError::Internal(_))));
+        assert_eq!(service.create_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            service.attached.lock().unwrap().as_slice(),
+            ["decision-doc"]
+        );
+        assert_eq!(service.cleaned.lock().unwrap().as_slice(), ["decision-doc"]);
+        assert_eq!(markdown_initializer.0.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn markdown_failure_cleans_up_before_decision_properties_are_attached() {
+        let service = FailingDecisionCreationService::default();
+        let creator = DocumentCreator::new(
+            service.clone(),
+            FailingMarkdownInitializer,
+            UnusedBytesUploader,
+        );
+
+        let result = creator
+            .create_markdown_text(
+                owner(),
+                NewMarkdownTextDocument {
+                    metadata: NewDocumentMetadata::builder("Decision")
+                        .project_id(uuid::Uuid::new_v4())
+                        .build(),
+                    markdown: "# Decision".to_string(),
+                    subtype: MarkdownSubtype::Decision,
+                },
+            )
+            .await;
+
+        assert!(matches!(result, Err(DocumentError::Internal(_))));
+        assert_eq!(service.create_calls.load(Ordering::SeqCst), 1);
+        assert!(service.attached.lock().unwrap().is_empty());
+        assert_eq!(service.cleaned.lock().unwrap().as_slice(), ["decision-doc"]);
     }
 
     #[test]

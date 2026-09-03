@@ -8,6 +8,7 @@ version = "0.1.0"
 anyhow = { workspace = true }
 aws-sdk-s3 = { workspace = true }
 base64 = { workspace = true }
+bot_id = { path = "../../crates/bot_id" }
 channels = { path = "../../crates/channels", default-features = false, features = ["outbound"] }
 chrono = { workspace = true }
 clap = { workspace = true }
@@ -33,6 +34,7 @@ model-entity = { path = "../../crates/model-entity" }
 models_email = { path = "../../crates/models_email" }
 models_permissions = { path = "../../crates/models_permissions" }
 models_properties = { path = "../../crates/models_properties" }
+models_team = { path = "../../crates/models_team" }
 rand = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }

@@ -54,6 +54,29 @@ fn projection_removes_deleted_and_handles_subtype_refs() {
 }
 
 #[test]
+fn decision_documents_have_a_dedicated_quick_access_bucket() {
+    let mut record = string_record(&[
+        ("__typename", "GraphqlSoupDocument"),
+        ("documentName", "Adopt event sourcing"),
+        ("fileType", "md"),
+    ]);
+    record.fields.insert(
+        "subType".into(),
+        CacheValue::Ref(EntityKey::entity("GraphqlDecisionSubType", &["decision-1"])),
+    );
+
+    let document = project_search_documents(
+        &EntityKey::entity("GraphqlSoupDocument", &["decision-1"]),
+        &record,
+    )
+    .pop()
+    .expect("Decision should be projected into Quick Access");
+
+    assert_eq!(document.bucket, "decision");
+    assert!(SearchProfile::QuickAccessV1.buckets().contains(&"decision"));
+}
+
+#[test]
 fn rfc3339_timestamps_use_validated_dates_offsets_and_fractional_seconds() {
     assert_eq!(
         parse_rfc3339_millis("2025-01-02T05:34:05.123456+02:30"),

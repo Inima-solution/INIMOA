@@ -754,6 +754,16 @@ impl<
         <Self as DocumentService>::handle_task_properties(self, user_id, document_id, request).await
     }
 
+    async fn attach_decision_properties(&self, document_id: &str) -> Result<(), DocumentError> {
+        self.task_properties_service
+            .attach_decision_properties(vec![document_id.to_owned()])
+            .await
+            .map_err(|error| {
+                tracing::error!(?error, %document_id, "failed to attach Decision properties");
+                DocumentError::Internal(error)
+            })
+    }
+
     #[tracing::instrument(err, skip(self))]
     async fn mark_document_uploaded(&self, document_id: &str) -> Result<(), DocumentError> {
         self.repo
@@ -1317,6 +1327,29 @@ impl<
             });
         }
 
+        if document_context.sub_type == Some(DocumentSubType::Decision) {
+            if document_context.file_type.as_deref() != Some("md")
+                || document_context
+                    .project_id
+                    .as_deref()
+                    .is_none_or(str::is_empty)
+            {
+                return Err(DocumentError::BadRequest(
+                    "Decision documents must be project-scoped markdown".to_string(),
+                ));
+            }
+            if args.project_id.as_deref() == Some("") {
+                return Err(DocumentError::BadRequest(
+                    "Decision documents cannot be removed from their project".to_string(),
+                ));
+            }
+            if args.file_type.is_some() {
+                return Err(DocumentError::BadRequest(
+                    "Decision documents must remain markdown".to_string(),
+                ));
+            }
+        }
+
         // Check owner-only restrictions for authenticated users
         if let entity_access::domain::models::EntityPermission::AccessLevel { access_level } =
             entity_access_receipt.entity_permission()
@@ -1500,6 +1533,15 @@ impl<
                 .map_err(|e| DocumentError::Internal(e.into()))?
         };
 
+        if original_metadata.sub_type == Some(DocumentSubType::Decision)
+            && (original_metadata.file_type.as_deref() != Some("md")
+                || document_context.file_type.as_deref() != Some("md"))
+        {
+            return Err(DocumentError::BadRequest(
+                "Decision documents must remain markdown".to_string(),
+            ));
+        }
+
         // Check project ownership - only copy project_id if the user owns the project
         if let Some(project_id) = &original_metadata.project_id {
             match self.repo.get_project_owner(project_id).await {
@@ -1514,6 +1556,14 @@ impl<
                     return Err(DocumentError::Internal(e.into()));
                 }
             }
+        }
+
+        if original_metadata.sub_type == Some(DocumentSubType::Decision)
+            && original_metadata.project_id.is_none()
+        {
+            return Err(DocumentError::BadRequest(
+                "a Decision copy must remain in its project".to_string(),
+            ));
         }
 
         let file_type: Option<FileType> = document_context
@@ -1571,153 +1621,176 @@ impl<
 
         let new_document_id = new_metadata.document_id.clone();
 
-        // File-type-specific S3 operations
-        let copy_result = match file_type {
-            Some(FileType::Docx) => {
-                // Copy the converted PDF version
-                let url_encoded_owner = urlencoding::encode(original_metadata.owner.as_ref());
-                let source_key = build_docx_to_pdf_converted_document_key(
-                    &url_encoded_owner,
-                    &original_metadata.document_id,
-                );
-                let dest_key =
-                    build_docx_to_pdf_converted_document_key(user_id.as_ref(), &new_document_id);
-                self.upload_url_service
-                    .copy_object(&source_key, &dest_key)
-                    .await
-            }
-            Some(FileType::Md) => {
-                // Copy via sync service
-                if let Err(e) = self
-                    .sync_service_client
-                    .copy_document(
+        // Once the database row exists, every fallible finalization step shares
+        // one cleanup boundary. This prevents incomplete subtype rows from
+        // surviving failures that occur before their required properties copy.
+        let finalization = async {
+            // File-type-specific S3 operations
+            let copy_result = match file_type {
+                Some(FileType::Docx) => {
+                    // Copy the converted PDF version
+                    let url_encoded_owner = urlencoding::encode(original_metadata.owner.as_ref());
+                    let source_key = build_docx_to_pdf_converted_document_key(
+                        &url_encoded_owner,
                         &original_metadata.document_id,
+                    );
+                    let dest_key = build_docx_to_pdf_converted_document_key(
+                        user_id.as_ref(),
                         &new_document_id,
-                        sync_version_id,
-                    )
-                    .await
-                {
-                    tracing::error!(error=?e, "unable to copy document through sync service");
-                    self.cleanup_document(&new_document_id).await;
-                    return Err(DocumentError::Internal(e));
+                    );
+                    self.upload_url_service
+                        .copy_object(&source_key, &dest_key)
+                        .await
                 }
+                Some(FileType::Md) => {
+                    // Copy via sync service
+                    self.sync_service_client
+                        .copy_document(
+                            &original_metadata.document_id,
+                            &new_document_id,
+                            sync_version_id,
+                        )
+                        .await
+                        .map_err(|error| {
+                            tracing::error!(error=?error, "unable to copy document through sync service");
+                            DocumentError::Internal(error)
+                        })?;
 
-                // Also copy S3 file
-                let source_version_id = self
-                    .repo
-                    .get_latest_document_version_id(&original_metadata.document_id)
-                    .await
-                    .map_err(|e| DocumentError::Internal(e.into()))?
-                    .0;
-
-                let source_key = build_cloud_storage_bucket_document_key(
-                    original_metadata.owner.as_ref(),
-                    &original_metadata.document_id,
-                    source_version_id,
-                );
-                let dest_key = build_cloud_storage_bucket_document_key(
-                    user_id.as_ref(),
-                    &new_document_id,
-                    new_metadata.document_version_id,
-                );
-                // Best effort S3 copy for live collab
-                let _ = self
-                    .upload_url_service
-                    .copy_object(&source_key, &dest_key)
-                    .await
-                    .inspect_err(|e| {
-                        tracing::error!(error=?e, "unable to copy live collab document");
-                    });
-                Ok(())
-            }
-            _ => {
-                // Copy PDF parts if applicable
-                if file_type == Some(FileType::Pdf)
-                    && let Err(e) = self
+                    // Also copy S3 file
+                    let source_version_id = self
                         .repo
-                        .copy_pdf_parts(&new_document_id, &original_metadata.document_id)
-                        .await
-                {
-                    tracing::error!(error=?e, "unable to copy pdf parts");
-                    self.cleanup_document(&new_document_id).await;
-                    return Err(DocumentError::Internal(e.into()));
-                }
-
-                // Get source version id
-                let source_version_id = if file_type.is_none_or(|f| f.is_static()) {
-                    self.repo
-                        .get_document_version_id(&original_metadata.document_id)
-                        .await
-                        .map_err(|e| DocumentError::Internal(e.into()))?
-                        .0
-                } else {
-                    self.repo
                         .get_latest_document_version_id(&original_metadata.document_id)
                         .await
-                        .map_err(|e| DocumentError::Internal(e.into()))?
-                        .0
-                };
+                        .map_err(|error| DocumentError::Internal(error.into()))?
+                        .0;
 
-                let source_key = build_cloud_storage_bucket_document_key(
-                    original_metadata.owner.as_ref(),
-                    &original_metadata.document_id,
-                    source_version_id,
-                );
-                let dest_key = build_cloud_storage_bucket_document_key(
-                    user_id.as_ref(),
-                    &new_document_id,
-                    new_metadata.document_version_id,
-                );
-                self.upload_url_service
-                    .copy_object(&source_key, &dest_key)
-                    .await
-            }
-        };
+                    let source_key = build_cloud_storage_bucket_document_key(
+                        original_metadata.owner.as_ref(),
+                        &original_metadata.document_id,
+                        source_version_id,
+                    );
+                    let dest_key = build_cloud_storage_bucket_document_key(
+                        user_id.as_ref(),
+                        &new_document_id,
+                        new_metadata.document_version_id,
+                    );
+                    // Best effort S3 copy for live collab
+                    let _ = self
+                        .upload_url_service
+                        .copy_object(&source_key, &dest_key)
+                        .await
+                        .inspect_err(|error| {
+                            tracing::error!(error=?error, "unable to copy live collab document");
+                        });
+                    Ok(())
+                }
+                _ => {
+                    // Copy PDF parts if applicable
+                    if file_type == Some(FileType::Pdf) {
+                        self.repo
+                            .copy_pdf_parts(&new_document_id, &original_metadata.document_id)
+                            .await
+                            .map_err(|error| {
+                                tracing::error!(error=?error, "unable to copy pdf parts");
+                                DocumentError::Internal(error.into())
+                            })?;
+                    }
 
-        if let Err(e) = copy_result {
-            tracing::error!(error=?e, "unable to copy document files");
-            self.cleanup_document(&new_document_id).await;
-            return Err(DocumentError::Internal(e));
-        }
+                    // Get source version id
+                    let source_version_id = if file_type.is_none_or(|f| f.is_static()) {
+                        self.repo
+                            .get_document_version_id(&original_metadata.document_id)
+                            .await
+                            .map_err(|error| DocumentError::Internal(error.into()))?
+                            .0
+                    } else {
+                        self.repo
+                            .get_latest_document_version_id(&original_metadata.document_id)
+                            .await
+                            .map_err(|error| DocumentError::Internal(error.into()))?
+                            .0
+                    };
 
-        // Copy task properties if the original document is a task
-        if original_metadata.sub_type == Some(document_sub_type::DocumentSubType::Task)
-            && let Err(e) = self
-                .task_properties_service
-                .copy_task_properties(&original_metadata.document_id, &new_document_id)
-                .await
-        {
-            tracing::error!(error=?e, document_id=?new_document_id, "failed to copy task properties");
-            self.cleanup_document(&new_document_id).await;
-            return Err(DocumentError::Internal(e));
-        }
+                    let source_key = build_cloud_storage_bucket_document_key(
+                        original_metadata.owner.as_ref(),
+                        &original_metadata.document_id,
+                        source_version_id,
+                    );
+                    let dest_key = build_cloud_storage_bucket_document_key(
+                        user_id.as_ref(),
+                        &new_document_id,
+                        new_metadata.document_version_id,
+                    );
+                    self.upload_url_service
+                        .copy_object(&source_key, &dest_key)
+                        .await
+                }
+            };
 
-        let content = ready_content_for_file_type(file_type);
-        if let Err(e) = self
-            .repo
-            .set_document_content(&new_document_id, content.clone())
-            .await
-        {
-            tracing::error!(error=?e, document_id=?new_document_id, "failed to mark copied document content ready");
-            self.cleanup_document(&new_document_id).await;
-            return Err(DocumentError::Internal(e.into()));
-        }
-
-        if let Some(project_id) = &new_metadata.project_id {
-            let _ = self.repo.update_project_modified(project_id).await.inspect_err(
-                |e| tracing::error!(error=?e, project_id=?project_id, "unable to update project modified date"),
-            );
-        }
-
-        let document_response_metadata =
-            DocumentResponseMetadata::from_document_metadata(&new_metadata).map_err(|e| {
-                tracing::error!(error=?e, "unable to convert document metadata");
-                DocumentError::Internal(anyhow!("unable to convert document metadata"))
+            copy_result.map_err(|error| {
+                tracing::error!(error=?error, "unable to copy document files");
+                DocumentError::Internal(error)
             })?;
 
-        let team_task_metadata = self
-            .team_task_metadata_for_document(&new_document_id)
-            .await?;
+            // Copy subtype-specific properties through bounded allowlists.
+            if original_metadata.sub_type == Some(document_sub_type::DocumentSubType::Task) {
+                self.task_properties_service
+                    .copy_task_properties(&original_metadata.document_id, &new_document_id)
+                    .await
+                    .map_err(|error| {
+                        tracing::error!(error=?error, document_id=?new_document_id, "failed to copy task properties");
+                        DocumentError::Internal(error)
+                    })?;
+            }
+
+            let content = ready_content_for_file_type(file_type);
+            self.repo
+                .set_document_content(&new_document_id, content.clone())
+                .await
+                .map_err(|error| {
+                    tracing::error!(error=?error, document_id=?new_document_id, "failed to mark copied document content ready");
+                    DocumentError::Internal(error.into())
+                })?;
+
+            if let Some(project_id) = &new_metadata.project_id {
+                let _ = self.repo.update_project_modified(project_id).await.inspect_err(
+                    |error| tracing::error!(error=?error, project_id=?project_id, "unable to update project modified date"),
+                );
+            }
+
+            let document_response_metadata =
+                DocumentResponseMetadata::from_document_metadata(&new_metadata).map_err(|error| {
+                    tracing::error!(error=?error, "unable to convert document metadata");
+                    DocumentError::Internal(anyhow!("unable to convert document metadata"))
+                })?;
+
+            let team_task_metadata = self
+                .team_task_metadata_for_document(&new_document_id)
+                .await?;
+
+            // Decision property rows have no Document FK cascade. Copy them
+            // only after all other fallible finalization work succeeds.
+            if original_metadata.sub_type == Some(document_sub_type::DocumentSubType::Decision) {
+                self.task_properties_service
+                    .copy_decision_properties(&original_metadata.document_id, &new_document_id)
+                    .await
+                    .map_err(|error| {
+                        tracing::error!(error=?error, document_id=?new_document_id, "failed to copy Decision properties");
+                        DocumentError::Internal(error)
+                    })?;
+            }
+
+            Ok::<_, DocumentError>((content, document_response_metadata, team_task_metadata))
+        }
+        .await;
+
+        let (content, document_response_metadata, team_task_metadata) = match finalization {
+            Ok(finalized) => finalized,
+            Err(error) => {
+                self.cleanup_document(&new_document_id).await;
+                return Err(error);
+            }
+        };
 
         self.publish_document_event(&DocumentMacroEvent::copied(
             new_document_id.clone(),

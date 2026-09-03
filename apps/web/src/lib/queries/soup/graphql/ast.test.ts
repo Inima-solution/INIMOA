@@ -188,6 +188,18 @@ describe('makeGraphqlSoupInput', () => {
     });
   });
 
+  it('maps the Decision document subtype into the GraphQL enum', () => {
+    const input = makeInput({ include: { subType: ['decision'] } });
+
+    expect(input).toMatchObject({
+      initial: {
+        filters: {
+          documentFilter: { literal: { subType: 'DECISION' } },
+        },
+      },
+    });
+  });
+
   it('maps channel thread participant filters', () => {
     const input = makeGraphqlSoupInput({
       params: { limit: 100, sort_method: 'updated_at' },

@@ -28,4 +28,11 @@ pub trait SystemPropertiesRepository: Clone + Send + Sync + 'static {
         from_task_id: &str,
         to_task_id: &str,
     ) -> impl Future<Output = Result<(), SystemPropertyError>> + Send;
+
+    /// Copy only the built-in Decision properties between Decision documents.
+    fn copy_decision_properties(
+        &self,
+        from_document_id: &str,
+        to_document_id: &str,
+    ) -> impl Future<Output = Result<(), SystemPropertyError>> + Send;
 }

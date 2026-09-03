@@ -156,10 +156,10 @@ export type ChatEntity = EntityBase & {
   properties?: SoupProperty[];
 };
 
-/** Named sub types - 'task', 'snippet' and 'skill' */
-export type NamedSubType = 'task' | 'snippet' | 'skill';
+/** Named markdown document subtypes. */
+export type NamedSubType = 'task' | 'snippet' | 'skill' | 'decision';
 
-/** SubType for documents - tasks, snippets and skills */
+/** Subtype for documents. */
 export type SubType = {
   type: NamedSubType;
   is_completed?: boolean;
@@ -192,6 +192,13 @@ export type SkillEntity = EntityBase & {
   fileType: 'md';
   subType: { type: 'skill' };
   projectId?: string;
+};
+
+export type DecisionEntity = EntityBase & {
+  type: 'document';
+  fileType: 'md';
+  subType: { type: 'decision' };
+  projectId: string;
 };
 
 export type MarkdownEntity = EntityBase & {
@@ -447,6 +454,17 @@ export const isSkillEntity = (entity: EntityData): entity is SkillEntity => {
   );
 };
 
+export const isDecisionEntity = (
+  entity: EntityData
+): entity is DecisionEntity => {
+  return (
+    entity.type === 'document' &&
+    entity.fileType === 'md' &&
+    entity.subType?.type === 'decision' &&
+    typeof entity.projectId === 'string'
+  );
+};
+
 export const isGithubPrEntity = (
   entity: EntityData
 ): entity is GithubPullRequestEntity => {
@@ -551,13 +569,19 @@ const _isPureDocumentEntity = (
     entity.type === 'document' &&
     entity.subType?.type !== 'task' &&
     entity.subType?.type !== 'snippet' &&
-    entity.subType?.type !== 'skill'
+    entity.subType?.type !== 'skill' &&
+    entity.subType?.type !== 'decision'
   );
 };
 
 export type EntityType = EntityData['type'];
 
-export type ExpandedEntityType = EntityType | 'task' | 'snippet' | 'skill';
+export type ExpandedEntityType =
+  | EntityType
+  | 'task'
+  | 'snippet'
+  | 'skill'
+  | 'decision';
 
 export type EntityWithProperties<T extends EntityData> = T & {
   properties?: SoupProperty[];

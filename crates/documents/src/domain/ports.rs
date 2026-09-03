@@ -337,6 +337,12 @@ pub trait TaskPropertiesPort: Send + Sync + 'static {
         entity_ids: Vec<String>,
     ) -> impl Future<Output = anyhow::Result<()>> + Send;
 
+    /// Attach the Decision-only built-in properties to Decision documents.
+    fn attach_decision_properties(
+        &self,
+        entity_ids: Vec<String>,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+
     /// Updates the tasks status
     fn update_task_status(
         &self,
@@ -351,6 +357,13 @@ pub trait TaskPropertiesPort: Send + Sync + 'static {
         entity_id: &str,
         property_definition_id: uuid::Uuid,
         value: Option<models_properties::api::requests::SetPropertyValue>,
+    ) -> impl Future<Output = anyhow::Result<()>> + Send;
+
+    /// Copy only Decision built-ins between Decision documents.
+    fn copy_decision_properties(
+        &self,
+        from_document_id: &str,
+        to_document_id: &str,
     ) -> impl Future<Output = anyhow::Result<()>> + Send;
 
     /// Copy all task property values from one task to another.

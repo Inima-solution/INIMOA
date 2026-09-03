@@ -60,6 +60,83 @@ describe('defineQueryFilters', () => {
 });
 
 describe('compileToAst', () => {
+  it('compiles finite Number ranges as separate TASK-only nr predicates', () => {
+    const ast = compileToAst({
+      include: {
+        properties: [
+          { propertyId: 'estimate', type: 'number', range: { gte: 2, lt: 5 } },
+          {
+            propertyId: 'estimate',
+            type: 'number',
+            range: { gt: 8 },
+            exclude: true,
+          },
+          { propertyId: 'status', type: 'select', value: 'option-1' },
+        ],
+      },
+      exclude: {},
+    });
+    expect(ast.propf).toEqual({
+      '&': [
+        { l: { pd: 'estimate', et: 'TASK', v: { nr: { gte: 2, lt: 5 } } } },
+        {
+          '&': [
+            {
+              '!': { l: { pd: 'estimate', et: 'TASK', v: { nr: { gt: 8 } } } },
+            },
+            { l: { pd: 'status', v: { so: 'option-1' } } },
+          ],
+        },
+      ],
+    });
+  });
+
+  it('fails closed for malformed persisted Number ranges', () => {
+    const ast = compileToAst({
+      include: {
+        properties: [
+          {
+            propertyId: 'estimate',
+            type: 'number',
+            range: {},
+            exclude: true,
+          },
+        ],
+      },
+      exclude: {},
+    });
+    expect(JSON.stringify(ast.propf)).toContain('"gt":0');
+    expect(JSON.stringify(ast.propf)).toContain('"lte":0');
+    expect(JSON.stringify(ast.propf)).not.toContain('"!"');
+  });
+
+  it('preserves outer exclusion but never negates malformed Number ranges', () => {
+    const ast = compileToAst({
+      include: {},
+      exclude: {
+        properties: [
+          {
+            propertyId: 'estimate',
+            type: 'number',
+            range: { gte: 2 },
+            exclude: true,
+          },
+          {
+            propertyId: 'invalid',
+            type: 'number',
+            range: {},
+            exclude: true,
+          },
+        ],
+      },
+    });
+    expect(ast.propf).toEqual({
+      '&': [
+        { l: { pd: 'estimate', et: 'TASK', v: { nr: { gte: 2 } } } },
+        { l: { pd: 'invalid', et: 'TASK', v: { nr: { gt: 0, lte: 0 } } } },
+      ],
+    });
+  });
   it('NIL-excludes calendar events from query states that predate the target', () => {
     const ast = compileToAst(
       queryStateFrom({ include: { threadId: ['thread-1'] } })

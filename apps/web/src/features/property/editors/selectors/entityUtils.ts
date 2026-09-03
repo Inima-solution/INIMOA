@@ -37,11 +37,11 @@ export type EntityTypeItemMap = {
 /**
  * Maps EntityType to quickAccess buckets
  */
-function entityTypeToBuckets(entityType: EntityType): readonly Bucket[] {
+export function entityTypeToBuckets(entityType: EntityType): readonly Bucket[] {
   const buckets = match(entityType)
     .with('USER', () => ['person'] as const)
     .with('CHANNEL', () => ['channel', 'dm'] as const)
-    .with('DOCUMENT', () => ['document', 'note'] as const)
+    .with('DOCUMENT', () => ['document', 'note', 'decision'] as const)
     .with('PROJECT', () => ['project'] as const)
     .with('CHAT', () => ['chat'] as const)
     .with('TASK', () => ['task'] as const)

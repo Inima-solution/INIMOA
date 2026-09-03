@@ -5874,6 +5874,73 @@
         }
       }
     },
+    "/documents/create_decision": {
+      "post": {
+        "tags": ["document"],
+        "summary": "Create a project-scoped Decision backed by collaborative markdown.",
+        "operationId": "create_decision_handler",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDecisionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Response for creating a Decision document.",
+                  "required": ["documentId"],
+                  "properties": {
+                    "documentId": {
+                      "type": "string",
+                      "description": "The document ID of the created Decision."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/documents/create_markdown": {
       "post": {
         "tags": ["document"],
@@ -10058,6 +10125,240 @@
         }
       }
     },
+    "/properties/task-dependency-relations": {
+      "post": {
+        "tags": ["properties"],
+        "operationId": "getTaskDependencyRelations",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskDependencyRelationsBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "description": "Caller-scoped direct dependency relations for one task.\n\nThis read model deliberately exposes identifiers only after the domain has\napplied an individual document-view check for each related task.",
+                    "required": [
+                      "taskId",
+                      "readiness",
+                      "dependsOnTaskIds",
+                      "blockingTaskIds",
+                      "hasUnavailableDependencies",
+                      "successorTaskIds",
+                      "hasUnavailableSuccessors"
+                    ],
+                    "properties": {
+                      "blockingTaskIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      },
+                      "dependsOnTaskIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      },
+                      "hasUnavailableDependencies": {
+                        "type": "boolean"
+                      },
+                      "hasUnavailableSuccessors": {
+                        "type": "boolean"
+                      },
+                      "readiness": {
+                        "$ref": "#/components/schemas/TaskReadiness"
+                      },
+                      "successorTaskIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "format": "uuid"
+                        }
+                      },
+                      "taskId": {
+                        "type": "string",
+                        "format": "uuid"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDependencyRelationsErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDependencyRelationsErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDependencyRelationsErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDependencyRelationsErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskDependencyRelationsErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/properties/task-subtask-progress": {
+      "post": {
+        "tags": ["properties"],
+        "operationId": "getTaskSubtaskProgress",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TaskSubtaskProgressBatchRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "description": "Computed direct-subtask progress for one task. This read model never\nexposes child identities.",
+                    "required": [
+                      "taskId",
+                      "completedSubtasks",
+                      "totalSubtasks",
+                      "hasUnavailableSubtasks"
+                    ],
+                    "properties": {
+                      "completedSubtasks": {
+                        "type": "integer",
+                        "format": "int32",
+                        "minimum": 0
+                      },
+                      "hasUnavailableSubtasks": {
+                        "type": "boolean"
+                      },
+                      "taskId": {
+                        "type": "string",
+                        "format": "uuid"
+                      },
+                      "totalSubtasks": {
+                        "type": "integer",
+                        "format": "int32",
+                        "minimum": 0
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSubtaskProgressErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSubtaskProgressErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSubtaskProgressErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSubtaskProgressErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskSubtaskProgressErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/recents/deleted": {
       "get": {
         "tags": ["recents"],
@@ -11089,182 +11390,6 @@
         }
       }
     },
-    "/v2/projects/{id}/overview": {
-      "get": {
-        "tags": ["project"],
-        "summary": "Read the canonical, bounded overview for one project.",
-        "operationId": "get_project_overview",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "description": "ID of the project",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "asOfDate",
-            "in": "query",
-            "description": "Calendar date in YYYY-MM-DD format",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": ["error", "data"],
-                  "properties": {
-                    "data": {
-                      "oneOf": [
-                        {
-                          "type": "object",
-                          "description": "The bounded, canonical overview for one project.",
-                          "required": [
-                            "project",
-                            "userAccessLevel",
-                            "operations",
-                            "immediateChildren",
-                            "progress",
-                            "risk"
-                          ],
-                          "properties": {
-                            "immediateChildren": {
-                              "$ref": "#/components/schemas/ProjectOverviewImmediateChildren",
-                              "description": "Exact counts of live, direct children only."
-                            },
-                            "operations": {
-                              "$ref": "#/components/schemas/ProjectOperations",
-                              "description": "The canonical project operational metadata."
-                            },
-                            "progress": {
-                              "$ref": "#/components/schemas/ProjectTaskProgress",
-                              "description": "Bounded aggregate progress for live direct tasks only."
-                            },
-                            "project": {
-                              "oneOf": [
-                                {
-                                  "type": "object",
-                                  "required": ["id", "name", "userId"],
-                                  "properties": {
-                                    "createdAt": {
-                                      "type": ["string", "null"],
-                                      "format": "date-time",
-                                      "description": "The time the project was created"
-                                    },
-                                    "deletedAt": {
-                                      "type": ["string", "null"],
-                                      "format": "date-time"
-                                    },
-                                    "id": {
-                                      "type": "string",
-                                      "description": "The id of the project"
-                                    },
-                                    "name": {
-                                      "type": "string",
-                                      "description": "The name of the project"
-                                    },
-                                    "parentId": {
-                                      "type": ["string", "null"],
-                                      "description": "The parent project id"
-                                    },
-                                    "updatedAt": {
-                                      "type": ["string", "null"],
-                                      "format": "date-time",
-                                      "description": "The time the project was updated"
-                                    },
-                                    "userId": {
-                                      "type": "string",
-                                      "description": "The user id of who created the project"
-                                    }
-                                  }
-                                }
-                              ],
-                              "description": "The canonical project row."
-                            },
-                            "risk": {
-                              "$ref": "#/components/schemas/ProjectTaskRisk",
-                              "description": "Bounded aggregate risk for live direct tasks only."
-                            },
-                            "userAccessLevel": {
-                              "$ref": "#/components/schemas/AccessLevel",
-                              "description": "The validated caller access level for this project."
-                            }
-                          }
-                        }
-                      ],
-                      "description": "Data to be returned"
-                    },
-                    "error": {
-                      "type": "boolean",
-                      "description": "Indicates if an error occurred"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GenericErrorResponse"
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GenericErrorResponse"
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GenericErrorResponse"
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GenericErrorResponse"
-                }
-              }
-            }
-          },
-          "500": {
-            "description": "",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/GenericErrorResponse"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/v2/projects/{id}/operations": {
       "get": {
         "tags": ["project"],
@@ -11323,6 +11448,14 @@
                                   "description": "Optional operational lead."
                                 }
                               ]
+                            },
+                            "nextAction": {
+                              "type": ["string", "null"],
+                              "description": "Optional human-authored next action; never inferred from task data."
+                            },
+                            "objective": {
+                              "type": ["string", "null"],
+                              "description": "Optional human-authored operational objective."
                             },
                             "policy": {
                               "type": ["object", "null"],
@@ -11479,6 +11612,14 @@
                                 }
                               ]
                             },
+                            "nextAction": {
+                              "type": ["string", "null"],
+                              "description": "Optional human-authored next action; never inferred from task data."
+                            },
+                            "objective": {
+                              "type": ["string", "null"],
+                              "description": "Optional human-authored operational objective."
+                            },
                             "policy": {
                               "type": ["object", "null"],
                               "description": "Optional bounded object-shaped operational policy."
@@ -11565,6 +11706,182 @@
             }
           },
           "409": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/v2/projects/{id}/overview": {
+      "get": {
+        "tags": ["project"],
+        "summary": "Read the canonical, bounded overview for one project.",
+        "operationId": "get_project_overview",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "ID of the project",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "asOfDate",
+            "in": "query",
+            "description": "Calendar date in YYYY-MM-DD format",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["error", "data"],
+                  "properties": {
+                    "data": {
+                      "oneOf": [
+                        {
+                          "type": "object",
+                          "description": "The bounded, canonical overview for one project.",
+                          "required": [
+                            "project",
+                            "userAccessLevel",
+                            "operations",
+                            "immediateChildren",
+                            "progress",
+                            "risk"
+                          ],
+                          "properties": {
+                            "immediateChildren": {
+                              "$ref": "#/components/schemas/ProjectOverviewImmediateChildren",
+                              "description": "Exact counts of live, direct children only."
+                            },
+                            "operations": {
+                              "$ref": "#/components/schemas/ProjectOperations",
+                              "description": "The canonical project operational metadata."
+                            },
+                            "progress": {
+                              "$ref": "#/components/schemas/ProjectTaskProgress",
+                              "description": "Bounded aggregate progress for live direct tasks only."
+                            },
+                            "project": {
+                              "oneOf": [
+                                {
+                                  "type": "object",
+                                  "required": ["id", "name", "userId"],
+                                  "properties": {
+                                    "createdAt": {
+                                      "type": ["string", "null"],
+                                      "format": "date-time",
+                                      "description": "The time the project was created"
+                                    },
+                                    "deletedAt": {
+                                      "type": ["string", "null"],
+                                      "format": "date-time"
+                                    },
+                                    "id": {
+                                      "type": "string",
+                                      "description": "The id of the project"
+                                    },
+                                    "name": {
+                                      "type": "string",
+                                      "description": "The name of the project"
+                                    },
+                                    "parentId": {
+                                      "type": ["string", "null"],
+                                      "description": "The parent project id"
+                                    },
+                                    "updatedAt": {
+                                      "type": ["string", "null"],
+                                      "format": "date-time",
+                                      "description": "The time the project was updated"
+                                    },
+                                    "userId": {
+                                      "type": "string",
+                                      "description": "The user id of who created the project"
+                                    }
+                                  }
+                                }
+                              ],
+                              "description": "The canonical project row."
+                            },
+                            "risk": {
+                              "$ref": "#/components/schemas/ProjectTaskRisk",
+                              "description": "Bounded aggregate risk for live direct tasks only."
+                            },
+                            "userAccessLevel": {
+                              "$ref": "#/components/schemas/AccessLevel",
+                              "description": "The validated caller access level for this project."
+                            }
+                          }
+                        }
+                      ],
+                      "description": "Data to be returned"
+                    },
+                    "error": {
+                      "type": "boolean",
+                      "description": "Indicates if an error occurred"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GenericErrorResponse"
+                }
+              }
+            }
+          },
+          "404": {
             "description": "",
             "content": {
               "application/json": {
@@ -13628,6 +13945,17 @@
                 "enum": ["skill"]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "A project decision record backed by collaborative markdown.",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["decision"]
+              }
+            }
           }
         ],
         "description": "Sub type of a document with associated properties encoded in each variant.\nThis ensures type-safety: task properties only exist when the document is a task."
@@ -13877,6 +14205,27 @@
             "minimum": 0
           }
         }
+      },
+      "BusinessRole": {
+        "type": "string",
+        "description": "A company-scoped, non-hierarchical business role bundle.",
+        "enum": [
+          "member",
+          "manager",
+          "approver",
+          "hr_admin",
+          "payroll_admin",
+          "org_admin",
+          "auditor",
+          "agent"
+        ]
+      },
+      "BusinessRoleSet": {
+        "type": "array",
+        "items": {
+          "$ref": "#/components/schemas/BusinessRole"
+        },
+        "description": "An unordered set of company business role bundles."
       },
       "CalendarAttendee": {
         "type": "object",
@@ -16239,6 +16588,37 @@
           }
         }
       },
+      "CreateDecisionRequest": {
+        "type": "object",
+        "description": "Request body for creating a project-scoped Decision markdown document.",
+        "required": ["decisionName", "projectId"],
+        "properties": {
+          "decisionName": {
+            "type": "string",
+            "description": "The Decision title."
+          },
+          "markdown": {
+            "type": ["string", "null"],
+            "description": "Markdown source text. Defaults to an empty Decision document."
+          },
+          "projectId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "The project that owns this Decision."
+          }
+        }
+      },
+      "CreateDecisionResponse": {
+        "type": "object",
+        "description": "Response for creating a Decision document.",
+        "required": ["documentId"],
+        "properties": {
+          "documentId": {
+            "type": "string",
+            "description": "The document ID of the created Decision."
+          }
+        }
+      },
       "CreateDocumentRequest": {
         "type": "object",
         "required": ["sha", "documentName"],
@@ -18037,6 +18417,17 @@
                 "enum": ["skill"]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "A project decision record backed by collaborative markdown.",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["decision"]
+              }
+            }
           }
         ],
         "description": "The sub type of a document preview with associated properties.\nTask-related properties are encoded within the variant to ensure valid states."
@@ -18184,7 +18575,7 @@
       "DocumentSubType": {
         "type": "string",
         "description": "The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.",
-        "enum": ["task", "snippet", "skill"]
+        "enum": ["task", "snippet", "skill", "decision"]
       },
       "DocumentSyncContentUpdatedMetadata": {
         "type": "object",
@@ -18938,6 +19329,21 @@
               "type": {
                 "type": "string",
                 "enum": ["team_role"]
+              }
+            }
+          },
+          {
+            "type": "object",
+            "description": "Company permissions derived from unordered business-role bundles.",
+            "required": ["roles", "type"],
+            "properties": {
+              "roles": {
+                "$ref": "#/components/schemas/BusinessRoleSet",
+                "description": "The effective business-role bundles held by the principal."
+              },
+              "type": {
+                "type": "string",
+                "enum": ["team_business_roles"]
               }
             }
           }
@@ -22205,6 +22611,14 @@
               }
             ]
           },
+          "nextAction": {
+            "type": ["string", "null"],
+            "description": "Optional human-authored next action; never inferred from task data."
+          },
+          "objective": {
+            "type": ["string", "null"],
+            "description": "Optional human-authored operational objective."
+          },
           "policy": {
             "type": ["object", "null"],
             "description": "Optional bounded object-shaped operational policy."
@@ -22340,11 +22754,6 @@
           }
         }
       },
-      "ProjectPriority": {
-        "type": "string",
-        "description": "The relative operational urgency stored for a project.",
-        "enum": ["low", "normal", "high", "urgent"]
-      },
       "ProjectPreview": {
         "oneOf": [
           {
@@ -22425,6 +22834,134 @@
           }
         }
       },
+      "ProjectPriority": {
+        "type": "string",
+        "description": "The relative operational urgency stored for a project.",
+        "enum": ["low", "normal", "high", "urgent"]
+      },
+      "ProjectTaskProgress": {
+        "type": "object",
+        "description": "Bounded progress totals for the live direct tasks of one project.\n\nThis deliberately contains only aggregate facts: it cannot disclose task\nidentifiers, names, or individual status values.",
+        "required": [
+          "completedTasks",
+          "wipTasks",
+          "includedTasks",
+          "hasUnavailableStatuses"
+        ],
+        "properties": {
+          "completedTasks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Direct live tasks whose exact singleton status is Completed."
+          },
+          "hasUnavailableStatuses": {
+            "type": "boolean",
+            "description": "At least one included task had an unusable status representation."
+          },
+          "includedTasks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Direct live tasks included in progress; canceled tasks are excluded."
+          },
+          "wipTasks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Direct live tasks whose exact singleton status is In Progress or In Review."
+          }
+        }
+      },
+      "ProjectTaskRisk": {
+        "type": "object",
+        "description": "Bounded risk totals for the live direct tasks of one project.\n\nThe result intentionally contains aggregate facts only; task identities and\nraw property values never cross the project-domain boundary.",
+        "required": [
+          "overdueTasks",
+          "blockedTasks",
+          "unassignedTasks",
+          "openMilestones",
+          "atRiskMilestones",
+          "approachingTarget",
+          "hasUnavailableRiskData"
+        ],
+        "properties": {
+          "approachingTarget": {
+            "type": "boolean",
+            "description": "Whether an operational Planned or Active project target falls within seven calendar days."
+          },
+          "atRiskMilestones": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Open milestone Tasks that are overdue or blocked, counted once."
+          },
+          "blockedTasks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Blocked direct live canonical Tasks; individual task details are redacted."
+          },
+          "hasUnavailableRiskData": {
+            "type": "boolean",
+            "description": "Whether any aggregate risk input was unavailable without exposing its source."
+          },
+          "openMilestones": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Open direct live canonical milestone Tasks."
+          },
+          "overdueTasks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Overdue direct live canonical Tasks; individual task details are redacted."
+          },
+          "unassignedTasks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Unassigned direct live canonical Tasks; individual task details are redacted."
+          }
+        }
+      },
+      "PropertyDateRange": {
+        "type": "object",
+        "description": "A compact UTC range for matching Date property values.",
+        "properties": {
+          "gt": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Match values strictly after this UTC timestamp."
+          },
+          "gte": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Match values at or after this UTC timestamp."
+          },
+          "lt": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Match values strictly before this UTC timestamp."
+          },
+          "lte": {
+            "type": ["string", "null"],
+            "format": "date-time",
+            "description": "Match values at or before this UTC timestamp."
+          }
+        }
+      },
+      "PropertyDateRangeFilter": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PropertyDateRange",
+            "description": "UTC bounds for the Date property value."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "exclude": {
+                "type": "boolean",
+                "description": "Exclude Tasks whose Date property matches these bounds."
+              }
+            }
+          }
+        ],
+        "description": "A Date-property range together with whether matching Task values are excluded."
+      },
       "PropertyDefinition": {
         "type": "object",
         "description": "Property definition model (service representation).",
@@ -22486,9 +23023,24 @@
       },
       "PropertyFilter": {
         "type": "object",
-        "description": "A single property-based filter condition.\n\nEach filter targets a specific property definition on entities of a given type,\nmatching against select option UUIDs or entity reference IDs.\nMultiple values within a single filter are OR'd together.\nMultiple filters are AND'd together.",
+        "description": "A single property-based filter condition.\n\nEach filter targets a specific property definition on entities of a given type,\nmatching against select option UUIDs, entity reference IDs, or a boolean value.\nMultiple values within a single filter are OR'd together.\nMultiple filters are AND'd together.",
         "required": ["property_definition_id"],
         "properties": {
+          "boolean_value": {
+            "type": ["boolean", "null"],
+            "description": "Boolean value to match. None does not filter on a boolean value."
+          },
+          "date_range": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PropertyDateRangeFilter",
+                "description": "Task Date property range. Date ranges are Task-only and cannot be\ncombined with option, entity-reference, or boolean matching."
+              }
+            ]
+          },
           "entity_ids": {
             "type": "array",
             "items": {
@@ -22499,6 +23051,17 @@
           "entity_type": {
             "type": ["string", "null"],
             "description": "The entity type for the property lookup (e.g., \"TASK\", \"DOCUMENT\", \"PROJECT\").\nWhen None, matches across all entity types."
+          },
+          "number_range": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PropertyNumberRangeFilter",
+                "description": "Task Number property range. Number ranges are Task-only and cannot be\ncombined with any other property value matching."
+              }
+            ]
           },
           "option_ids": {
             "type": "array",
@@ -22527,6 +23090,50 @@
             "description": "The value to set for the property."
           }
         }
+      },
+      "PropertyNumberRange": {
+        "type": "object",
+        "description": "A compact range for matching Number property values. Bounds are validated\nat the public API boundary to be finite IEEE-754 values.",
+        "properties": {
+          "gt": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Match values strictly greater than this finite number."
+          },
+          "gte": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Match values greater than or equal to this finite number."
+          },
+          "lt": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Match values strictly less than this finite number."
+          },
+          "lte": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Match values less than or equal to this finite number."
+          }
+        }
+      },
+      "PropertyNumberRangeFilter": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PropertyNumberRange",
+            "description": "Finite bounds for the Number property value."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "exclude": {
+                "type": "boolean",
+                "description": "Exclude Tasks whose Number property matches these bounds."
+              }
+            }
+          }
+        ],
+        "description": "A Number-property range together with whether matching Task values are excluded."
       },
       "PropertyOwner": {
         "oneOf": [
@@ -22957,6 +23564,14 @@
                 "description": "Optional active-team lead. `null` or omission clears the lead."
               }
             ]
+          },
+          "nextAction": {
+            "type": ["string", "null"],
+            "description": "Optional concise description of the next concrete action."
+          },
+          "objective": {
+            "type": ["string", "null"],
+            "description": "Optional concise statement of the project's intended outcome."
           },
           "policy": {
             "type": ["object", "null"],
@@ -24100,6 +24715,17 @@
                 "enum": ["skill"]
               }
             }
+          },
+          {
+            "type": "object",
+            "description": "A project decision record backed by collaborative markdown.",
+            "required": ["type"],
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": ["decision"]
+              }
+            }
           }
         ],
         "description": "Sub type of a document with associated properties encoded in each variant.\nThis ensures type-safety: task properties only exist when the document is a task."
@@ -25174,6 +25800,82 @@
           }
         }
       },
+      "TaskDependencyRelations": {
+        "type": "object",
+        "description": "Caller-scoped direct dependency relations for one task.\n\nThis read model deliberately exposes identifiers only after the domain has\napplied an individual document-view check for each related task.",
+        "required": [
+          "taskId",
+          "readiness",
+          "dependsOnTaskIds",
+          "blockingTaskIds",
+          "hasUnavailableDependencies",
+          "successorTaskIds",
+          "hasUnavailableSuccessors"
+        ],
+        "properties": {
+          "blockingTaskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "dependsOnTaskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "hasUnavailableDependencies": {
+            "type": "boolean"
+          },
+          "hasUnavailableSuccessors": {
+            "type": "boolean"
+          },
+          "readiness": {
+            "$ref": "#/components/schemas/TaskReadiness"
+          },
+          "successorTaskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "taskId": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
+      },
+      "TaskDependencyRelationsBatchRequest": {
+        "type": "object",
+        "required": ["taskIds"],
+        "properties": {
+          "taskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 200
+          }
+        },
+        "additionalProperties": false
+      },
+      "TaskDependencyRelationsErrorResponse": {
+        "type": "object",
+        "required": ["error", "message"],
+        "properties": {
+          "error": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
       "TaskFilters": {
         "type": "object",
         "description": "Task-only filters nested under document filters.",
@@ -25188,6 +25890,33 @@
         "type": "string",
         "description": "Computed direct-dependency readiness for one task.\n\nThis is a read model only. Its value is intentionally never stored as a\nproperty or status option.",
         "enum": ["ready", "blocked"]
+      },
+      "TaskSubtaskProgressBatchRequest": {
+        "type": "object",
+        "required": ["taskIds"],
+        "properties": {
+          "taskIds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "maxItems": 200
+          }
+        },
+        "additionalProperties": false
+      },
+      "TaskSubtaskProgressErrorResponse": {
+        "type": "object",
+        "required": ["error", "message"],
+        "properties": {
+          "error": {
+            "type": "boolean"
+          },
+          "message": {
+            "type": "string"
+          }
+        }
       },
       "TeamRole": {
         "type": "string",
@@ -25937,67 +26666,6 @@
         "properties": {
           "id": {
             "type": "string"
-          }
-        }
-      },
-      "ProjectTaskProgress": {
-        "type": "object",
-        "description": "Bounded progress totals for the live direct tasks of one project.\n\nThis deliberately contains only aggregate facts: it cannot disclose task\nidentifiers, names, or individual status values.",
-        "required": [
-          "completedTasks",
-          "includedTasks",
-          "hasUnavailableStatuses"
-        ],
-        "properties": {
-          "completedTasks": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Direct live tasks whose exact singleton status is Completed."
-          },
-          "hasUnavailableStatuses": {
-            "type": "boolean",
-            "description": "At least one included task had an unusable status representation."
-          },
-          "includedTasks": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Direct live tasks included in progress; canceled tasks are excluded."
-          }
-        }
-      },
-      "ProjectTaskRisk": {
-        "type": "object",
-        "description": "Bounded risk totals for the live direct tasks of one project.\n\nThe result intentionally contains aggregate facts only; task identities and\nraw property values never cross the project-domain boundary.",
-        "required": [
-          "overdueTasks",
-          "blockedTasks",
-          "unassignedTasks",
-          "approachingTarget",
-          "hasUnavailableRiskData"
-        ],
-        "properties": {
-          "approachingTarget": {
-            "type": "boolean",
-            "description": "Whether an operational Planned or Active project target falls within seven calendar days."
-          },
-          "blockedTasks": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Blocked direct live canonical Tasks; individual task details are redacted."
-          },
-          "hasUnavailableRiskData": {
-            "type": "boolean",
-            "description": "Whether any aggregate risk input was unavailable without exposing its source."
-          },
-          "overdueTasks": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Overdue direct live canonical Tasks; individual task details are redacted."
-          },
-          "unassignedTasks": {
-            "type": "integer",
-            "format": "int64",
-            "description": "Unassigned direct live canonical Tasks; individual task details are redacted."
           }
         }
       }

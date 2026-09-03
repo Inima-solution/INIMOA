@@ -39,6 +39,8 @@ fn covers_every_seeded_table() {
         "\"Chat\"",
         "\"Project\"",
         "team_invite",
+        "team_business_role",
+        "bots",
         "team_user",
         "team",
         "\"RolesOnUsers\"",

@@ -111,6 +111,14 @@ export function ProjectOverviewSection(props: {
                     </span>
                   </SidePanel.Pill>
                 </SidePanel.Row>
+                <NarrativeRow
+                  label="Objective"
+                  value={overview().operations.objective}
+                />
+                <NarrativeRow
+                  label="Next action"
+                  value={overview().operations.nextAction}
+                />
                 <SidePanel.Row label="Lead">
                   <Show
                     when={overview().operations.leadUserId}
@@ -138,6 +146,15 @@ export function ProjectOverviewSection(props: {
                     </SidePanel.Row>
                   )}
                 </Show>
+                <SidePanel.Row label="Recent change">
+                  <SidePanel.Pill>
+                    <span class="truncate">
+                      {formatDate(overview().operations.updatedAt, {
+                        showTime: true,
+                      })}
+                    </span>
+                  </SidePanel.Pill>
+                </SidePanel.Row>
                 <SidePanel.Row label="Child projects">
                   <CountValue
                     value={overview().immediateChildren.childProjects}
@@ -258,6 +275,26 @@ function DateOnlyRow(props: {
           <SidePanel.Pill>
             <span class="truncate">{formatDateOnly(value())}</span>
           </SidePanel.Pill>
+        )}
+      </Show>
+    </SidePanel.Row>
+  );
+}
+
+function NarrativeRow(props: {
+  label: string;
+  value: string | null | undefined;
+}) {
+  return (
+    <SidePanel.Row label={props.label}>
+      <Show
+        when={props.value}
+        fallback={<SidePanel.EmptyPill label="Not set" />}
+      >
+        {(value) => (
+          <span class="min-w-0 whitespace-pre-wrap break-words text-sm text-ink">
+            {value()}
+          </span>
         )}
       </Show>
     </SidePanel.Row>

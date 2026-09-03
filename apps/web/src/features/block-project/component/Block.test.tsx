@@ -11,6 +11,12 @@ const mocks = vi.hoisted(() => ({
     | undefined,
   dependencyProviderTaskIds: [] as string[][],
   dependencyProviderCount: 0,
+  progressProviderTaskIds: [] as string[][],
+  progressProviderCount: 0,
+  decisionListProps: undefined as
+    | { projectId: string; scopeId: string }
+    | undefined,
+  reportQuery: undefined as unknown,
   boardProps: undefined as
     | {
         activeStatusTaskId?: string;
@@ -100,12 +106,14 @@ const mocks = vi.hoisted(() => ({
   searchText: '',
   topBarProps: undefined as
     | {
-        mode: 'list' | 'board' | 'timeline';
-        onChange: (mode: 'list' | 'board' | 'timeline') => void;
+        mode: 'list' | 'board' | 'timeline' | 'decisions' | 'reports';
+        onChange: (
+          mode: 'list' | 'board' | 'timeline' | 'decisions' | 'reports'
+        ) => void;
         selectorVisible: boolean;
       }
     | undefined,
-  viewMode: 'list' as 'list' | 'board' | 'timeline',
+  viewMode: 'list' as 'list' | 'board' | 'timeline' | 'decisions' | 'reports',
   uploadCallback: undefined as
     | ((files: UploadInput[]) => Promise<void>)
     | undefined,
@@ -254,7 +262,15 @@ vi.mock('@entity/types/entity', () => ({
     entity.type === 'document' && entity.subType?.type === 'task',
 }));
 vi.mock('@property/task-subtask-progress', () => ({
-  TaskSubtaskProgressProvider: (props: ParentProps) => props.children,
+  TaskSubtaskProgressProvider: (
+    props: ParentProps<{
+      taskIds: Accessor<readonly string[]>;
+    }>
+  ) => {
+    mocks.progressProviderCount += 1;
+    mocks.progressProviderTaskIds.push([...props.taskIds()]);
+    return props.children;
+  },
 }));
 vi.mock('@property/editor/hooks/useAllProperties', () => ({
   useAllProperties: () => () => mocks.statusProperties,
@@ -295,6 +311,18 @@ vi.mock('@service-storage/util/refetchResources', () => ({
 }));
 vi.mock('./ModalsProvider', () => ({
   ModalsProvider: (props: ParentProps) => props.children,
+}));
+vi.mock('./ProjectDecisionList', () => ({
+  ProjectDecisionList: (props: { projectId: string; scopeId: string }) => {
+    mocks.decisionListProps = props;
+    return <div data-testid="project-decision-list" />;
+  },
+}));
+vi.mock('./ProjectReportView', () => ({
+  ProjectReportView: (props: { query: unknown }) => {
+    mocks.reportQuery = props.query;
+    return <div data-testid="project-report-view" />;
+  },
 }));
 vi.mock('./sidepanel/ProjectSidePanelSections', () => ({
   ProjectSidePanelSections: (props: { query: unknown }) => {
@@ -342,6 +370,10 @@ beforeEach(() => {
   mocks.blockEntityResolver = undefined;
   mocks.dependencyProviderCount = 0;
   mocks.dependencyProviderTaskIds = [];
+  mocks.progressProviderCount = 0;
+  mocks.progressProviderTaskIds = [];
+  mocks.decisionListProps = undefined;
+  mocks.reportQuery = undefined;
   mocks.boardProps = undefined;
   mocks.timelineProps = undefined;
   mocks.canEdit = true;
@@ -839,13 +871,72 @@ describe('project task dependency relation batching', () => {
     expect(document.querySelector('[data-testid="soup-view-list"]')).toBeNull();
   });
 
-  it('preserves the shared Task filter control and source across ordinary List, Board, and List', () => {
+  it('mounts the project-scoped Decision list only in Decisions mode', () => {
+    render(() => <Block />);
+
+    expect(mocks.decisionListProps).toBeUndefined();
+    expect(
+      document.querySelector('[data-testid="project-decision-list"]')
+    ).toBeNull();
+
+    mocks.topBarProps?.onChange('decisions');
+
+    expect(mocks.decisionListProps).toEqual({
+      projectId: 'project-id',
+      scopeId: 'scope-id',
+    });
+    expect(
+      document.querySelector('[data-testid="project-decision-list"]')
+    ).toBeTruthy();
+    expect(
+      document.querySelector('[data-testid="project-milestone-filter"]')
+    ).toBeNull();
+    expect(mocks.boardProps).toBeUndefined();
+    expect(mocks.timelineProps).toBeUndefined();
+  });
+
+  it('mounts Reports with the same bounded project overview and without Soup views', () => {
+    render(() => <Block />);
+
+    expect(mocks.reportQuery).toBeUndefined();
+    mocks.topBarProps?.onChange('reports');
+
+    expect(mocks.reportQuery).toBe(mocks.projectOverviewQuery);
+    expect(
+      document.querySelector('[data-testid="project-report-view"]')
+    ).toBeTruthy();
+    expect(document.querySelector('[data-testid="soup-view-list"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="project-milestone-filter"]')
+    ).toBeNull();
+    expect(mocks.decisionListProps).toBeUndefined();
+    expect(mocks.boardProps).toBeUndefined();
+    expect(mocks.timelineProps).toBeUndefined();
+
+    mocks.topBarProps?.onChange('list');
+    expect(
+      document.querySelector('[data-testid="project-report-view"]')
+    ).toBeNull();
+    expect(
+      document.querySelector('[data-testid="soup-view-list"]')
+    ).toBeTruthy();
+    expect(
+      document.querySelector('[data-testid="project-milestone-filter"]')
+    ).toBeTruthy();
+  });
+
+  it('preserves one task source, progress provider, and filter across List, Board, Timeline, and List', () => {
     mocks.searchText = 'follow up';
     mocks.source = [
       { id: 'matching-task-b', subType: { type: 'task' }, type: 'document' },
       { id: 'non-task-result', subType: null, type: 'document' },
       { id: 'matching-task-a', subType: { type: 'task' }, type: 'document' },
     ];
+    mocks.rows = [mocks.source[0], mocks.source[2]].map((original) => ({
+      getIsGrouped: () => false,
+      getIsLoadMore: () => false,
+      original,
+    }));
 
     render(() => <Block />);
 
@@ -854,6 +945,10 @@ describe('project task dependency relation batching', () => {
     );
     expect(filterControl).toBeTruthy();
     expect(mocks.soupViewProviderCount).toBe(1);
+    expect(mocks.progressProviderCount).toBe(1);
+    expect(mocks.progressProviderTaskIds).toEqual([
+      ['matching-task-b', 'matching-task-a'],
+    ]);
 
     mocks.topBarProps?.onChange('board');
 
@@ -865,6 +960,20 @@ describe('project task dependency relation batching', () => {
       document.querySelector('[data-testid="project-milestone-filter"]')
     ).toBe(filterControl);
     expect(mocks.soupViewProviderCount).toBe(1);
+    expect(mocks.progressProviderCount).toBe(1);
+    expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
+
+    mocks.topBarProps?.onChange('timeline');
+
+    expect(mocks.timelineProps).toMatchObject({
+      searching: true,
+      tasks: [{ id: 'matching-task-b' }, { id: 'matching-task-a' }],
+    });
+    expect(
+      document.querySelector('[data-testid="project-milestone-filter"]')
+    ).toBe(filterControl);
+    expect(mocks.soupViewProviderCount).toBe(1);
+    expect(mocks.progressProviderCount).toBe(1);
     expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
 
     mocks.topBarProps?.onChange('list');
@@ -876,6 +985,10 @@ describe('project task dependency relation batching', () => {
       document.querySelector('[data-testid="project-milestone-filter"]')
     ).toBe(filterControl);
     expect(mocks.soupViewProviderCount).toBe(1);
+    expect(mocks.progressProviderCount).toBe(1);
+    expect(mocks.progressProviderTaskIds).toEqual([
+      ['matching-task-b', 'matching-task-a'],
+    ]);
     expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
   });
 

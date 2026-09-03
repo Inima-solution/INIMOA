@@ -55,7 +55,10 @@ use super::service::{
 };
 
 use helpers::{
-    extract_option_ids_from_property_value, is_property_applicable_to, retain_caller_visible_tags,
+    extract_option_ids_from_property_value, is_property_applicable_to,
+    is_property_applicable_to_subject, is_property_required_for_subject,
+    retain_caller_visible_tags, validate_decision_decided_by, validate_decision_source_links,
+    validate_decision_state,
 };
 
 struct PublishedEventActors {
@@ -305,17 +308,24 @@ where
             .iter()
             .map(|receipt| {
                 let canonical_entity_type = receipt.entity_type();
-                let storage_entity_type = match canonical_entity_type {
-                    AccessEntityType::CalendarEvent => EntityType::CalendarEvent,
-                    AccessEntityType::Document => Uuid::parse_str(receipt.entity_id())
+                let document_sub_type = if canonical_entity_type == AccessEntityType::Document {
+                    Uuid::parse_str(receipt.entity_id())
                         .ok()
                         .and_then(|document_id| document_sub_types.get(&document_id))
-                        .map_or(EntityType::Document, |sub_type| match sub_type {
+                        .copied()
+                } else {
+                    None
+                };
+                let storage_entity_type = match canonical_entity_type {
+                    AccessEntityType::CalendarEvent => EntityType::CalendarEvent,
+                    AccessEntityType::Document => {
+                        document_sub_type.map_or(EntityType::Document, |sub_type| match sub_type {
                             DocumentSubType::Task => EntityType::Task,
-                            DocumentSubType::Snippet | DocumentSubType::Skill => {
-                                EntityType::Document
-                            }
-                        }),
+                            DocumentSubType::Snippet
+                            | DocumentSubType::Skill
+                            | DocumentSubType::Decision => EntityType::Document,
+                        })
+                    }
                     AccessEntityType::EmailThread => EntityType::Thread,
                     AccessEntityType::Call => EntityType::CallRecord,
                     AccessEntityType::CrmCompany => EntityType::Company,
@@ -336,6 +346,7 @@ where
                         entity_type: canonical_entity_type,
                     },
                     storage_entity_type,
+                    document_sub_type,
                 })
             })
             .collect()
@@ -663,6 +674,16 @@ where
                 ))
             })?;
 
+        if !is_property_applicable_to_subject(
+            property_definition_id,
+            entity_type,
+            subject.document_sub_type,
+        ) {
+            return Err(PropertiesErr::Validation(
+                "This property cannot be attached to this entity type".to_string(),
+            ));
+        }
+
         // Depends On owns its request-shape validation so generic conversion
         // cannot silently deduplicate a malformed dependency replacement.
         if property_definition_id == SystemPropertyKey::DEPENDS_ON_UUID {
@@ -714,18 +735,18 @@ where
             }
         };
 
+        validate_decision_source_links(property_definition_id, &value)
+            .map_err(|message| PropertiesErr::Validation(message.to_string()))?;
+        validate_decision_decided_by(property_definition_id, &value)
+            .map_err(|message| PropertiesErr::Validation(message.to_string()))?;
+        validate_decision_state(property_definition_id, &value)
+            .map_err(|message| PropertiesErr::Validation(message.to_string()))?;
+
         // Validate property options at service layer (before upserting)
         let option_ids = extract_option_ids_from_property_value(&property_value);
         if !option_ids.is_empty() {
             self.validate_property_options(property_definition_id, &option_ids)
                 .await?;
-        }
-
-        // Check if this property can be attached to the given entity type.
-        if !is_property_applicable_to(property_definition_id, entity_type) {
-            return Err(PropertiesErr::Validation(
-                "This property cannot be attached to this entity type".to_string(),
-            ));
         }
 
         // TASK Status is the one ordinary-looking property write whose commit
@@ -887,7 +908,11 @@ where
         }
 
         let subject = self.resolve_subject(access).await?;
-        if !is_property_applicable_to(property_definition_id, subject.storage_entity_type) {
+        if !is_property_applicable_to_subject(
+            property_definition_id,
+            subject.storage_entity_type,
+            subject.document_sub_type,
+        ) {
             return Err(PropertiesErr::Validation(
                 "This property cannot be attached to this entity type".to_string(),
             ));
@@ -933,6 +958,22 @@ where
         option_id: Uuid,
     ) -> Result<(), PropertiesErr> {
         let subject = self.resolve_subject(access).await?;
+        if !is_property_applicable_to_subject(
+            property_definition_id,
+            subject.storage_entity_type,
+            subject.document_sub_type,
+        ) {
+            return Err(PropertiesErr::Validation(
+                "This property cannot be attached to this entity type".to_string(),
+            ));
+        }
+        if property_definition_id == SystemPropertyKey::DECISION_STATE_UUID
+            && subject.document_sub_type == Some(DocumentSubType::Decision)
+        {
+            return Err(PropertiesErr::Validation(
+                "Decision State cannot be cleared".to_string(),
+            ));
+        }
         let mutation = self
             .repository
             .remove_entity_property_option(
@@ -995,7 +1036,11 @@ where
                 ));
             }
 
-            if !is_property_applicable_to(update.property_definition_id, entity_type) {
+            if !is_property_applicable_to_subject(
+                update.property_definition_id,
+                entity_type,
+                subject.document_sub_type,
+            ) {
                 return Err(PropertiesErr::Validation(
                     "This property cannot be attached to this entity type".to_string(),
                 ));
@@ -1097,7 +1142,11 @@ where
             let entity_id = subject.canonical_key.entity_id.as_str();
             let entity_type = subject.storage_entity_type;
 
-            if !is_property_applicable_to(property_definition_id, entity_type) {
+            if !is_property_applicable_to_subject(
+                property_definition_id,
+                entity_type,
+                subject.document_sub_type,
+            ) {
                 outcomes[index] = Some(EntityOptionUpdateOutcome::Failed {
                     message: "This property cannot be attached to this entity type".to_string(),
                 });
@@ -1850,9 +1899,10 @@ where
         }
 
         // Check if this property is required for the entity type (e.g., Task properties)
-        if SystemPropertyKey::is_required_for_entity(
+        if is_property_required_for_subject(
             property_info.property_definition_id,
             property_info.entity_type,
+            subject.document_sub_type,
         ) {
             tracing::warn!(
                 entity_type = ?property_info.entity_type,

@@ -3,9 +3,11 @@ import { LoadingBlock } from '@core/component/LoadingBlock';
 import { Entity, type TaskEntityWithProperties } from '@entity';
 import {
   getTaskStatusOptionId,
+  isTaskMilestone,
   TASK_STATUS_OPTIONS,
 } from '@entity/utils/task-properties';
 import { TaskDependencyRelations } from '@property/task-dependency-relations';
+import { TaskSubtaskProgressIndicator } from '@property/task-subtask-progress';
 import type { Property } from '@property/types';
 import { Button, EmptyStatePanel } from '@ui';
 import { For, Show } from 'solid-js';
@@ -146,6 +148,12 @@ export function ProjectTaskStatusBoard(props: {
                                 <Entity.Title entity={task} />
                               </span>
                             </button>
+                            <Show when={isTaskMilestone(task)}>
+                              <TaskSubtaskProgressIndicator
+                                taskId={task.id}
+                                mode="row"
+                              />
+                            </Show>
                             <TaskDependencyRelations
                               taskId={task.id}
                               task={task}

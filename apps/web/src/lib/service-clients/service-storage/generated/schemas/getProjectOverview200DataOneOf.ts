@@ -20,11 +20,11 @@ export type GetProjectOverview200DataOneOf = {
   immediateChildren: ProjectOverviewImmediateChildren;
   /** The canonical project operational metadata. */
   operations: ProjectOperations;
-  /** Bounded progress totals for the live direct tasks of one project. */
+  /** Bounded aggregate progress for live direct tasks only. */
   progress: ProjectTaskProgress;
   /** The canonical project row. */
   project: GetProjectOverview200DataOneOfProjectOneOf;
-  /** Bounded risk totals for the live direct tasks of one project. */
+  /** Bounded aggregate risk for live direct tasks only. */
   risk: ProjectTaskRisk;
   /** The validated caller access level for this project. */
   userAccessLevel: AccessLevel;

@@ -6,6 +6,7 @@ use axum::{
     body::Body,
     http::{Request, StatusCode, request::Builder},
 };
+use document_sub_type::DocumentSubType;
 use embedding::embedding_provider::openai::TextEmbedding3Small;
 use entity_access::domain::{
     models::{
@@ -83,6 +84,14 @@ struct CreateDocumentCall {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+struct MarkdownCreationCall {
+    document_name: String,
+    file_type: Option<FileType>,
+    project_id: Option<Uuid>,
+    sub_type: Option<DocumentSubType>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct ImportEmailAttachmentCall {
     user_id: String,
     email_attachment_id: Uuid,
@@ -127,6 +136,9 @@ struct FakeDocumentService {
     get_document_calls: Mutex<Vec<String>>,
     edit_conflict: Mutex<bool>,
     edit_calls: Mutex<Vec<EditDocumentServiceArgs>>,
+    markdown_creation_calls: Mutex<Vec<MarkdownCreationCall>>,
+    set_content_calls: Mutex<Vec<String>>,
+    attach_decision_calls: Mutex<Vec<String>>,
 }
 
 impl FakeDocumentService {
@@ -198,6 +210,27 @@ impl FakeDocumentService {
             .lock()
             .expect("edit calls lock poisoned")
             .len()
+    }
+
+    fn markdown_creation_calls(&self) -> Vec<MarkdownCreationCall> {
+        self.markdown_creation_calls
+            .lock()
+            .expect("markdown creation calls lock poisoned")
+            .clone()
+    }
+
+    fn set_content_calls(&self) -> Vec<String> {
+        self.set_content_calls
+            .lock()
+            .expect("set content calls lock poisoned")
+            .clone()
+    }
+
+    fn attach_decision_calls(&self) -> Vec<String> {
+        self.attach_decision_calls
+            .lock()
+            .expect("attach Decision calls lock poisoned")
+            .clone()
     }
 }
 
@@ -306,7 +339,7 @@ impl DocumentService for FakeDocumentService {
     async fn create_document(
         &self,
         user_id: MacroUserIdStr<'static>,
-        _args: CreateDocumentRepoArgs,
+        args: CreateDocumentRepoArgs,
         _job_id: Option<String>,
     ) -> Result<CreateDocumentResponseData, DocumentError> {
         self.create_calls
@@ -314,6 +347,15 @@ impl DocumentService for FakeDocumentService {
             .expect("create calls lock poisoned")
             .push(CreateDocumentCall {
                 user_id: user_id.as_ref().to_string(),
+            });
+        self.markdown_creation_calls
+            .lock()
+            .expect("markdown creation calls lock poisoned")
+            .push(MarkdownCreationCall {
+                document_name: args.document_name,
+                file_type: args.file_type,
+                project_id: args.project_id,
+                sub_type: args.sub_type,
             });
 
         Ok(create_document_response(user_id))
@@ -505,16 +547,28 @@ impl DocumentCreationService for FakeDocumentService {
         panic!("unexpected creation handle_task_properties call")
     }
 
+    async fn attach_decision_properties(&self, _document_id: &str) -> Result<(), DocumentError> {
+        self.attach_decision_calls
+            .lock()
+            .expect("attach Decision calls lock poisoned")
+            .push(_document_id.to_string());
+        Ok(())
+    }
+
     async fn mark_document_uploaded(&self, _document_id: &str) -> Result<(), DocumentError> {
         panic!("unexpected mark_document_uploaded call")
     }
 
     async fn set_document_content(
         &self,
-        _document_id: &str,
+        document_id: &str,
         _content: DocumentContent,
     ) -> Result<(), DocumentError> {
-        panic!("unexpected set_document_content call")
+        self.set_content_calls
+            .lock()
+            .expect("set content calls lock poisoned")
+            .push(document_id.to_string());
+        Ok(())
     }
 
     async fn cleanup_created_document(&self, _document_id: &str) {
@@ -690,13 +744,12 @@ impl EntityAccessService for FakeEntityAccessService {
         _entity_id: &str,
         entity_type: EntityType,
     ) -> Result<Option<AccessLevel>, AccessError> {
-        if entity_type == EntityType::Project
-            && *self
+        if entity_type == EntityType::Project {
+            return Ok((*self
                 .allow_project_access
                 .lock()
-                .expect("project access lock poisoned")
-        {
-            return Ok(Some(AccessLevel::Owner));
+                .expect("project access lock poisoned"))
+            .then_some(AccessLevel::Owner));
         }
         panic!("unexpected get_access_level call")
     }
@@ -972,6 +1025,93 @@ fn team_member() -> UserTeamInfo {
         role: TeamRole::Member,
         business_roles: Default::default(),
     }
+}
+
+fn create_decision_request(project_id: Option<Uuid>) -> Request<Body> {
+    let mut body = json!({
+        "decisionName": "Adopt event sourcing",
+        "markdown": ""
+    });
+    if let Some(project_id) = project_id {
+        body["projectId"] = json!(project_id);
+    }
+
+    Request::post("/create_decision")
+        .header("authorization", format!("Bearer {JWT_TOKEN}"))
+        .header("content-type", "application/json")
+        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn create_decision_requires_authentication_and_project_id() {
+    let project_id = Uuid::new_v4();
+    let (router, document_service, access_service, _authorization_service) = test_router();
+    access_service.allow_project_access();
+    let unauthenticated = Request::post("/create_decision")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            serde_json::to_vec(&json!({
+                "decisionName": "Adopt event sourcing",
+                "projectId": project_id,
+            }))
+            .unwrap(),
+        ))
+        .unwrap();
+
+    assert_eq!(
+        send_status(&router, unauthenticated).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(document_service.markdown_creation_calls().is_empty());
+
+    let missing_project = create_decision_request(None);
+    assert_eq!(
+        send_status(&router, missing_project).await,
+        StatusCode::BAD_REQUEST
+    );
+    assert!(document_service.markdown_creation_calls().is_empty());
+}
+
+#[tokio::test]
+async fn create_decision_rejects_missing_project_edit_access() {
+    let project_id = Uuid::new_v4();
+    let (router, document_service, _access_service, _authorization_service) = test_router();
+
+    assert_eq!(
+        send_status(&router, create_decision_request(Some(project_id))).await,
+        StatusCode::UNAUTHORIZED
+    );
+    assert!(document_service.markdown_creation_calls().is_empty());
+}
+
+#[tokio::test]
+async fn create_decision_checks_project_access_and_creates_markdown_decision() {
+    let project_id = Uuid::new_v4();
+    let (router, document_service, access_service, _authorization_service) = test_router();
+    access_service.allow_project_access();
+
+    let (status, body) = send(&router, create_decision_request(Some(project_id))).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, json!({ "documentId": "created-document" }));
+    assert_eq!(
+        document_service.markdown_creation_calls(),
+        [MarkdownCreationCall {
+            document_name: "Adopt event sourcing".to_string(),
+            file_type: Some(FileType::Md),
+            project_id: Some(project_id),
+            sub_type: Some(DocumentSubType::Decision),
+        }]
+    );
+    assert_eq!(
+        document_service.set_content_calls(),
+        ["created-document".to_string()]
+    );
+    assert_eq!(
+        document_service.attach_decision_calls(),
+        ["created-document".to_string()]
+    );
 }
 
 #[tokio::test]

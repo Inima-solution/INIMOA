@@ -7,6 +7,7 @@
 import type { PropertyFilterBooleanValue } from './propertyFilterBooleanValue';
 import type { PropertyFilterDateRange } from './propertyFilterDateRange';
 import type { PropertyFilterEntityType } from './propertyFilterEntityType';
+import type { PropertyFilterNumberRange } from './propertyFilterNumberRange';
 
 /**
  * A single property-based filter condition.
@@ -25,6 +26,7 @@ export interface PropertyFilter {
   /** The entity type for the property lookup (e.g., "TASK", "DOCUMENT", "PROJECT").
 When None, matches across all entity types. */
   entity_type?: PropertyFilterEntityType;
+  number_range?: PropertyFilterNumberRange;
   /** Select option UUIDs to match. Multiple values are OR'd together. */
   option_ids?: string[];
   /** The UUID of the property definition to filter on. */

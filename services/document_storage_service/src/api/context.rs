@@ -244,6 +244,13 @@ impl TaskPropertiesPort for TaskPropertiesAdapter {
             .map_err(Into::into)
     }
 
+    async fn attach_decision_properties(&self, entity_ids: Vec<String>) -> anyhow::Result<()> {
+        self.system_properties
+            .attach_decision_properties(entity_ids)
+            .await
+            .map_err(Into::into)
+    }
+
     async fn update_task_status(&self, task_id: &str, status: &str) -> anyhow::Result<()> {
         let status_option = StatusOption::try_from(status).map_err(|e| anyhow::anyhow!(e))?;
         use properties::PropertiesService as _;
@@ -302,6 +309,17 @@ impl TaskPropertiesPort for TaskPropertiesAdapter {
 
         self.system_properties
             .copy_task_properties(from_task_id, to_task_id)
+            .await
+            .map_err(Into::into)
+    }
+
+    async fn copy_decision_properties(
+        &self,
+        from_document_id: &str,
+        to_document_id: &str,
+    ) -> anyhow::Result<()> {
+        self.system_properties
+            .copy_decision_properties(from_document_id, to_document_id)
             .await
             .map_err(Into::into)
     }

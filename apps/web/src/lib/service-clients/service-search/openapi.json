@@ -1625,7 +1625,7 @@
       "DocumentSubType": {
         "type": "string",
         "description": "The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.",
-        "enum": ["task", "snippet", "skill"]
+        "enum": ["task", "snippet", "skill", "decision"]
       },
       "EmailFilters": {
         "type": "object",
@@ -2930,6 +2930,17 @@
             "type": ["string", "null"],
             "description": "The entity type for the property lookup (e.g., \"TASK\", \"DOCUMENT\", \"PROJECT\").\nWhen None, matches across all entity types."
           },
+          "number_range": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/PropertyNumberRangeFilter",
+                "description": "Task Number property range. Number ranges are Task-only and cannot be\ncombined with any other property value matching."
+              }
+            ]
+          },
           "option_ids": {
             "type": "array",
             "items": {
@@ -2942,6 +2953,50 @@
             "description": "The UUID of the property definition to filter on."
           }
         }
+      },
+      "PropertyNumberRange": {
+        "type": "object",
+        "description": "A compact range for matching Number property values. Bounds are validated\nat the public API boundary to be finite IEEE-754 values.",
+        "properties": {
+          "gt": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Match values strictly greater than this finite number."
+          },
+          "gte": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Match values greater than or equal to this finite number."
+          },
+          "lt": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Match values strictly less than this finite number."
+          },
+          "lte": {
+            "type": ["number", "null"],
+            "format": "double",
+            "description": "Match values less than or equal to this finite number."
+          }
+        }
+      },
+      "PropertyNumberRangeFilter": {
+        "allOf": [
+          {
+            "$ref": "#/components/schemas/PropertyNumberRange",
+            "description": "Finite bounds for the Number property value."
+          },
+          {
+            "type": "object",
+            "properties": {
+              "exclude": {
+                "type": "boolean",
+                "description": "Exclude Tasks whose Number property matches these bounds."
+              }
+            }
+          }
+        ],
+        "description": "A Number-property range together with whether matching Task values are excluded."
       },
       "PropertyOwner": {
         "oneOf": [

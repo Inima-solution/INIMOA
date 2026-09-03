@@ -14,10 +14,14 @@ raw property values never cross the project-domain boundary.
 export interface ProjectTaskRisk {
   /** Whether an operational Planned or Active project target falls within seven calendar days. */
   approachingTarget: boolean;
+  /** Open milestone Tasks that are overdue or blocked, counted once. */
+  atRiskMilestones: number;
   /** Blocked direct live canonical Tasks; individual task details are redacted. */
   blockedTasks: number;
   /** Whether any aggregate risk input was unavailable without exposing its source. */
   hasUnavailableRiskData: boolean;
+  /** Open direct live canonical milestone Tasks. */
+  openMilestones: number;
   /** Overdue direct live canonical Tasks; individual task details are redacted. */
   overdueTasks: number;
   /** Unassigned direct live canonical Tasks; individual task details are redacted. */

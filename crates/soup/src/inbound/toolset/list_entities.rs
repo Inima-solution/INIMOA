@@ -262,6 +262,7 @@ impl EntityItem {
                         SoupDocumentSubType::Task { .. } => "task",
                         SoupDocumentSubType::Snippet {} => "snippet",
                         SoupDocumentSubType::Skill {} => "skill",
+                        SoupDocumentSubType::Decision {} => "decision",
                     }
                     .to_string()
                 }),

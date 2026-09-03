@@ -52,6 +52,14 @@ describe('cached GraphQL history', () => {
             timestampMs: Date.parse('2025-01-03T00:00:00.000Z'),
             sourceHash: 'three',
           },
+          {
+            profile: 'quick-access-v1',
+            recordKey: 'GraphqlSoupDocument:decision-latest',
+            bucket: 'decision',
+            searchText: 'architecture decision',
+            timestampMs: Date.parse('2025-01-02T00:00:00.000Z'),
+            sourceHash: 'four',
+          },
         ],
         nextCursor: null,
       })
@@ -60,6 +68,7 @@ describe('cached GraphQL history', () => {
       args.keys.map((recordKey) => {
         const isChat = recordKey === 'GraphqlSoupChat:chat-middle';
         const isTask = recordKey === 'GraphqlSoupDocument:document-task';
+        const isDecision = recordKey === 'GraphqlSoupDocument:decision-latest';
         return {
           recordKey,
           record: {
@@ -71,13 +80,18 @@ describe('cached GraphQL history', () => {
                   ? 'Middle Chat'
                   : 'Task Document',
             ownerId: isChat ? 'chat-owner' : 'document-owner',
+            ...(!isChat && {
+              projectId: isDecision ? 'project-1' : null,
+            }),
             createdAt: isChat
               ? '2025-01-01T00:00:00.000Z'
               : '2024-12-31T00:00:00.000Z',
             ...(!isChat && {
               subType: isTask
                 ? { __typename: 'GraphqlTaskSubType', isCompleted: true }
-                : null,
+                : isDecision
+                  ? { __typename: 'GraphqlDecisionSubType' }
+                  : null,
             }),
           },
         };
@@ -96,6 +110,7 @@ describe('cached GraphQL history', () => {
         'task',
         'snippet',
         'skill',
+        'decision',
         'chat',
         'project',
       ],
@@ -106,6 +121,7 @@ describe('cached GraphQL history', () => {
       'document-newest',
       'chat-middle',
       'document-task',
+      'decision-latest',
     ]);
     expect(result[0]).toMatchObject({
       ownerId: 'document-owner',
@@ -117,6 +133,12 @@ describe('cached GraphQL history', () => {
       ownerId: 'document-owner',
       createdAt: '2024-12-31T00:00:00.000Z',
       subType: { type: 'task', is_completed: true },
+    });
+    expect(result[3]).toMatchObject({
+      type: 'document',
+      fileType: 'md',
+      projectId: 'project-1',
+      subType: { type: 'decision' },
     });
     expect(readRecordsByKeys).toHaveBeenCalledTimes(2);
     expect(

@@ -7,6 +7,7 @@ export type {
   DocumentFieldFilters,
   DocumentFilterClause,
   DocumentFilterExpression,
+  NumberRangeFilter,
   PropertyFilter,
   Query,
   QueryState,

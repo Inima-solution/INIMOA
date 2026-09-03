@@ -175,14 +175,28 @@ const LOCAL_BUILD_SERVICE_IMAGES: &[&str] = &[
 /// Repository-built app containers safe to recreate during `stack update`.
 /// OpenSearch is built for cold-stack correctness but remains under the infra
 /// lifecycle, which waits for health before Rust services can reconnect.
-const LOCAL_RECREATE_SERVICE_IMAGES: &[&str] = &[
-    "websocket_service",
-    "sync_service",
-    "lexical_service",
-    "ai_editing_worker",
-    "analytics_proxy",
-    "sdk-webhook-relay",
-];
+const LOCAL_RECREATE_SERVICE_IMAGES: &[&str] =
+    &["websocket_service", "sync_service", "lexical_service"];
+
+const PROFILE_AI: &str = "ai";
+const PROFILE_NOTIFICATIONS: &str = "notifications";
+const PROFILE_SEARCH: &str = "search";
+const PROFILE_AGENT: &str = "agent";
+const PROFILE_EXTRAS: &str = "extras";
+const PROFILE_FULL: &str = "full";
+
+/// Whether a feature profile is active for this invocation. Docker Compose
+/// reads the same comma-separated `COMPOSE_PROFILES` variable, so this keeps
+/// orchestration-only work (Kafka topics, OpenSearch indices, tunnels) aligned
+/// with the containers Compose will start.
+pub(super) fn compose_profile_enabled(profile: &str) -> bool {
+    macro_env_var::maybe_read_env("COMPOSE_PROFILES").is_some_and(|profiles| {
+        profiles
+            .split(',')
+            .map(str::trim)
+            .any(|active| active == profile || active == PROFILE_FULL)
+    })
+}
 
 /// Image-only app services that infra-only bake mode does not otherwise start.
 /// Infra images are pulled by `bring_up_infra`; the Rust runtime image is built
@@ -191,7 +205,7 @@ const LOCAL_PULL_SERVICE_IMAGES: &[&str] = &["proxy", "mailpit", "static_file_cd
 
 /// Bring up a Local or Dev stack and (unless `--no-frontend`) the frontend.
 pub fn run_stack(mode: Mode, args: &cli::RunArgs) -> Result<()> {
-    if mode.spec().runs_local_infra {
+    if mode.spec().runs_local_infra && compose_profile_enabled(PROFILE_AGENT) {
         // This mode will provision Kafka topics mid-bring-up; reject a build
         // that can't do that before any containers start.
         kafka::ensure_available(&format!("run-{}", mode.label()))?;
@@ -255,9 +269,10 @@ pub fn run_stack(mode: Mode, args: &cli::RunArgs) -> Result<()> {
     // DynamoDB/OpenSearch connection refused).
     bring_up_infra(&stage, mode, &instance, &env, InfraInit::Full)?;
     bring_up_app(&stage, mode, &instance, &env)?;
-    let _sdk_webhook_tunnel = (mode == Mode::Local && !stage.is_dry_run())
-        .then(|| sdk_webhook::start(&instance))
-        .transpose()?;
+    let _sdk_webhook_tunnel =
+        (mode == Mode::Local && compose_profile_enabled(PROFILE_AGENT) && !stage.is_dry_run())
+            .then(|| sdk_webhook::start(&instance))
+            .transpose()?;
 
     // No restart-to-reload step: the teardown means `up` always creates fresh
     // containers, which start on the just-built binaries bind-mounted at
@@ -585,9 +600,19 @@ fn recreate_aux_service_containers(
     instance: &Instance,
     env: &env_layer::ResolvedEnv,
 ) -> Result<()> {
+    let mut services = LOCAL_RECREATE_SERVICE_IMAGES.to_vec();
+    if compose_profile_enabled(PROFILE_AI) || compose_profile_enabled(PROFILE_NOTIFICATIONS) {
+        services.push("ai_editing_worker");
+    }
+    if compose_profile_enabled(PROFILE_EXTRAS) {
+        services.push("analytics_proxy");
+    }
+    if compose_profile_enabled(PROFILE_AGENT) {
+        services.push("sdk-webhook-relay");
+    }
     let mut up = compose_cmd(instance, env);
     up.args(["up", "-d", "--force-recreate", "--no-deps"])
-        .args(LOCAL_RECREATE_SERVICE_IMAGES);
+        .args(services);
     stage.run("Recreating auxiliary service containers", &mut up)
 }
 
@@ -630,11 +655,17 @@ fn bring_up_infra(
     // only confirms "running"; LocalStack readiness is polled below. FusionAuth
     // is deliberately excluded — its healthcheck gives up (5 retries) long before
     // its ~minute kickstart finishes, so it's started + polled separately.
-    let waited: &[&str] = if spec.runs_local_infra {
-        &["postgres", "redis", "search", "kafka", "localstack"]
+    let mut waited = if spec.runs_local_infra {
+        vec!["postgres", "redis", "localstack"]
     } else {
-        &["redis", "kafka", "localstack"]
+        vec!["redis", "localstack"]
     };
+    if compose_profile_enabled(PROFILE_SEARCH) {
+        waited.push("search");
+    }
+    if compose_profile_enabled(PROFILE_AGENT) {
+        waited.push("kafka");
+    }
     let mut up = compose_cmd(instance, env);
     up.arg("up").arg("-d").arg("--wait").args(waited);
     stage.run("Starting infra (docker compose up -d --wait)", &mut up)?;
@@ -661,7 +692,7 @@ fn bring_up_infra(
         // the topics (they live in the broker's data dir), so only a full init
         // provisions — which also means a snapshot-restoring `stack up`
         // never needs the rdkafka-backed `local-stack` feature.
-        if init == InfraInit::Full {
+        if init == InfraInit::Full && compose_profile_enabled(PROFILE_AGENT) {
             stage.run_step("Creating Kafka topics", || kafka::provision(instance))?;
         }
 
@@ -678,7 +709,7 @@ fn bring_up_infra(
         // aliases (idempotent) so the unified search path works out of the box
         // instead of 404ing on the missing `documents`/`chats`/… indices.
         // Restored volumes already contain them.
-        if init == InfraInit::Full {
+        if init == InfraInit::Full && compose_profile_enabled(PROFILE_SEARCH) {
             opensearch::provision_indices(stage, instance, &env.merged)?;
         }
     }

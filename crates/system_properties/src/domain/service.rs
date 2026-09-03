@@ -4,8 +4,8 @@ use models_properties::EntityType;
 
 use crate::domain::{
     model::{
-        EmailAttachmentInput, EmailAttachmentProperty, PropertyRow, SystemPropertyError,
-        SystemPropertyKey,
+        DecisionStateOption, EmailAttachmentInput, EmailAttachmentProperty, PropertyRow,
+        SystemPropertyError, SystemPropertyKey,
     },
     port::SystemPropertiesRepository,
 };
@@ -39,6 +39,19 @@ pub trait SystemPropertiesService: Clone + Send + Sync + 'static {
         &self,
         from_task_id: &str,
         to_task_id: &str,
+    ) -> impl Future<Output = Result<(), SystemPropertyError>> + Send;
+
+    /// Attach the Decision-only property set without changing existing values.
+    fn attach_decision_properties(
+        &self,
+        entity_ids: Vec<String>,
+    ) -> impl Future<Output = Result<(), SystemPropertyError>> + Send;
+
+    /// Copy the Decision-only property set between Decision documents.
+    fn copy_decision_properties(
+        &self,
+        from_document_id: &str,
+        to_document_id: &str,
     ) -> impl Future<Output = Result<(), SystemPropertyError>> + Send;
 }
 
@@ -99,6 +112,30 @@ where
     ) -> Result<(), SystemPropertyError> {
         self.repository
             .copy_task_properties(from_task_id, to_task_id)
+            .await
+    }
+
+    #[tracing::instrument(skip(self, entity_ids))]
+    async fn attach_decision_properties(
+        &self,
+        entity_ids: Vec<String>,
+    ) -> Result<(), SystemPropertyError> {
+        let rows = entity_ids
+            .iter()
+            .flat_map(|entity_id| collect_decision_property_rows(entity_id))
+            .collect();
+
+        self.repository.bulk_insert_properties_if_absent(rows).await
+    }
+
+    #[tracing::instrument(skip(self))]
+    async fn copy_decision_properties(
+        &self,
+        from_document_id: &str,
+        to_document_id: &str,
+    ) -> Result<(), SystemPropertyError> {
+        self.repository
+            .copy_decision_properties(from_document_id, to_document_id)
             .await
     }
 }
@@ -215,5 +252,29 @@ fn collect_task_property_rows(entity_id: &str) -> Vec<PropertyRow> {
         PropertyRow::null_value(entity_id, entity_type, SystemPropertyKey::Milestone.uuid()),
         // Start Date
         PropertyRow::null_value(entity_id, entity_type, SystemPropertyKey::StartDate.uuid()),
+    ]
+}
+
+/// Collect the required properties for a Decision markdown document.
+///
+/// Project ownership stays canonical in `Document.projectId`; duplicating it
+/// here would create two writable sources of truth.
+pub(crate) fn collect_decision_property_rows(entity_id: &str) -> Vec<PropertyRow> {
+    let entity_type = EntityType::Document;
+
+    vec![
+        PropertyRow::select_option(
+            entity_id,
+            entity_type,
+            SystemPropertyKey::DecisionState.uuid(),
+            DecisionStateOption::Proposed.uuid(),
+        ),
+        PropertyRow::null_value(entity_id, entity_type, SystemPropertyKey::DecidedBy.uuid()),
+        PropertyRow::null_value(entity_id, entity_type, SystemPropertyKey::DecidedAt.uuid()),
+        PropertyRow::null_value(
+            entity_id,
+            entity_type,
+            SystemPropertyKey::DecisionSources.uuid(),
+        ),
     ]
 }

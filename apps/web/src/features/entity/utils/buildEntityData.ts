@@ -5,6 +5,7 @@ import type {
   CallEntity,
   ChannelEntity,
   ChatEntity,
+  DecisionEntity,
   DocumentEntity,
   EmailEntity,
   EntityData,
@@ -88,6 +89,16 @@ export function buildEntityData(
           projectId: args.projectId,
         })
       )
+      .with('decision', (): DecisionEntity | undefined => {
+        if (!args.projectId) return undefined;
+        return {
+          ...base,
+          type: 'document',
+          fileType: 'md',
+          subType: { type: 'decision' },
+          projectId: args.projectId,
+        };
+      })
       .with(
         'md',
         (): DocumentEntity => ({

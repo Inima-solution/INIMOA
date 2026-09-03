@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { makeSubject, onEnd, pipe } from 'wonka';
 import { EntityPropertiesDocument } from '../../service-clients/service-storage/graphql/generated/graphql';
 import { createUrqlQuery } from '../../urql-solid';
+import { entityKeys } from '../storage/keys';
 import { propertiesKeys } from './keys';
 
 const useFeatureFlagMock = vi.hoisted(() => vi.fn());
@@ -233,6 +234,17 @@ function derivedProjectionInvalidationKeys(): unknown[] {
           JSON.stringify(propertiesKeys.taskSubtaskProgress._def) ||
         JSON.stringify(queryKey) ===
           JSON.stringify(propertiesKeys.taskDependencyRelations._def)
+    );
+}
+
+function projectOverviewInvalidationKeys(): unknown[] {
+  return vi
+    .mocked(testQueryClient.invalidateQueries)
+    .mock.calls.flatMap(([args]) => (args ? [args.queryKey] : []))
+    .filter(
+      (queryKey) =>
+        JSON.stringify(queryKey) ===
+        JSON.stringify(entityKeys.projectOverview._def)
     );
 }
 
@@ -858,6 +870,9 @@ describe('useBulkSaveEntityPropertiesMutation dispositions', () => {
       propertiesKeys.taskSubtaskProgress._def,
       propertiesKeys.taskDependencyRelations._def,
     ]);
+    expect(projectOverviewInvalidationKeys()).toEqual([
+      entityKeys.projectOverview._def,
+    ]);
   });
 
   it('refreshes subtask progress once for REST Parent Task and Subtasks saves', async () => {
@@ -899,24 +914,39 @@ describe('useBulkSaveEntityPropertiesMutation dispositions', () => {
       propertiesKeys.taskSubtaskProgress._def,
       propertiesKeys.taskDependencyRelations._def,
     ]);
+    expect(projectOverviewInvalidationKeys()).toEqual([
+      entityKeys.projectOverview._def,
+    ]);
+  });
+
+  it('refreshes project overviews once for report-affecting Task properties', async () => {
+    await mutation.mutateAsync(
+      propertySaveVariables(
+        [
+          SYSTEM_PROPERTY_IDS.ASSIGNEES,
+          SYSTEM_PROPERTY_IDS.MILESTONE,
+          SYSTEM_PROPERTY_IDS.DUE_DATE,
+          SYSTEM_PROPERTY_IDS.DEPENDS_ON,
+        ],
+        'TASK'
+      )
+    );
+
+    expect(projectOverviewInvalidationKeys()).toEqual([
+      entityKeys.projectOverview._def,
+    ]);
   });
 
   it('does not refresh derived projections for unrelated or non-Task writes', async () => {
     await mutation.mutateAsync(
-      propertySaveVariables(
-        [
-          SYSTEM_PROPERTY_IDS.MILESTONE,
-          SYSTEM_PROPERTY_IDS.DUE_DATE,
-          SYSTEM_PROPERTY_IDS.PRIORITY,
-        ],
-        'TASK'
-      )
+      propertySaveVariables([SYSTEM_PROPERTY_IDS.PRIORITY], 'TASK')
     );
     await mutation.mutateAsync(
       propertySaveVariables([SYSTEM_PROPERTY_IDS.STATUS], 'DOCUMENT')
     );
 
     expect(derivedProjectionInvalidationKeys()).toEqual([]);
+    expect(projectOverviewInvalidationKeys()).toEqual([]);
   });
 
   it('commits the required Task Milestone Boolean through the shared mutation', async () => {
@@ -1175,7 +1205,7 @@ describe('useBulkSaveEntityPropertiesMutation dispositions', () => {
     expect(rollbackMock).toHaveBeenCalledOnce();
     expect(invalidateSoupEntityMock).toHaveBeenCalledOnce();
     expect(invalidateSoupEntityMock).toHaveBeenCalledWith('task-1');
-    expect(testQueryClient.invalidateQueries).toHaveBeenCalledTimes(3);
+    expect(testQueryClient.invalidateQueries).toHaveBeenCalledTimes(4);
     expect(testQueryClient.invalidateQueries).toHaveBeenCalledWith({
       queryKey: savedTaskKey,
     });

@@ -99,3 +99,20 @@ fn property_entity_type_conversion_rejects_unsupported_variants() {
     };
     assert!(literal.entity_type.is_none());
 }
+
+#[test]
+fn decision_subtype_materializes_to_the_authoritative_document_filter() {
+    let ast = materialize_graphql_filter(json!({
+        "documentFilter": {
+            "literal": { "subType": "DECISION" }
+        }
+    }))
+    .unwrap();
+
+    assert!(matches!(
+        ast.document_filter.as_deref(),
+        Some(Expr::Literal(DocumentLiteral::SubType(
+            DocumentSubType::Decision
+        )))
+    ));
+}

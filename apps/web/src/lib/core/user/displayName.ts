@@ -51,6 +51,14 @@ const [userDisplayNames, setUserDisplayNames] = createStore<DisplayNameStore>(
 
 const displayNameFetchQueue = new Set<string>();
 
+function loadingUserNameItem(id: MacroId): UserNameItem {
+  return {
+    loading: true,
+    _createdAt: new Date(),
+    id,
+  };
+}
+
 /** Adds items to fetch queue and schedules processing */
 function queueItemsForFetch(items: string[]) {
   let addedItem = false;
@@ -159,18 +167,14 @@ function ensureUserNameItem(id: MacroId) {
       DEFAULT_CACHE_TIME_SECONDS * 1000;
 
   if (!cached || cacheExpired) {
-    setUserDisplayNames(id, {
-      loading: true,
-      _createdAt: new Date(),
-      id: id,
-    });
+    setUserDisplayNames(id, loadingUserNameItem(id));
     queueItemsForFetch([id]);
   }
 }
 
 function getUserNameItem(id: MacroId): UserNameItem {
   ensureUserNameItem(id);
-  return unwrap(userDisplayNames[id]);
+  return unwrap(userDisplayNames[id]) ?? loadingUserNameItem(id);
 }
 
 /** Resolves a display name from the shared reactive cache. */
@@ -206,7 +210,7 @@ export function getDisplayNameParts(
 function useUserNameItem(id: MacroId) {
   ensureUserNameItem(id);
 
-  const getItem = () => unwrap(userDisplayNames[id]);
+  const getItem = () => unwrap(userDisplayNames[id]) ?? loadingUserNameItem(id);
 
   const refetch = () => {
     setUserDisplayNames(id, {

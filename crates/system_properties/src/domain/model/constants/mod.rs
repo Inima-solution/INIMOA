@@ -3,5 +3,5 @@
 mod options;
 mod system_property_key;
 
-pub use options::{EffortOption, PriorityOption, StageOption, StatusOption};
+pub use options::{DecisionStateOption, EffortOption, PriorityOption, StageOption, StatusOption};
 pub use system_property_key::SystemPropertyKey;

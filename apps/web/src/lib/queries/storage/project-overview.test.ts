@@ -36,6 +36,7 @@ const overview: GetProjectOverview200DataOneOf = {
   },
   progress: {
     completedTasks: 1,
+    wipTasks: 2,
     hasUnavailableStatuses: false,
     includedTasks: 4,
   },
@@ -61,9 +62,11 @@ const overview: GetProjectOverview200DataOneOf = {
     userId: 'user-a',
   },
   risk: {
+    atRiskMilestones: 0,
     approachingTarget: false,
     blockedTasks: 0,
     hasUnavailableRiskData: false,
+    openMilestones: 0,
     overdueTasks: 0,
     unassignedTasks: 0,
   },

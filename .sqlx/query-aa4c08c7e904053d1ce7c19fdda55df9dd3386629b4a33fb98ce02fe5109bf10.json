@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "\n        SELECT\n            operations.project_id, operations.status, operations.priority,\n            operations.lead_user_id, operations.start_date, operations.target_date,\n            operations.completed_at, operations.created_at, operations.updated_at, operations.policy,\n            owner_membership.team_id AS owner_team_id\n        FROM \"Project\" project\n        JOIN project_operations operations ON operations.project_id = project.id\n        JOIN team_user owner_membership ON owner_membership.user_id = project.\"userId\"\n        WHERE project.id = $1 AND project.\"deletedAt\" IS NULL\n        FOR UPDATE OF project, operations, owner_membership\n        ",
+  "query": "\n        UPDATE project_operations\n        SET status = $2, priority = $3, lead_user_id = $4, start_date = $5, target_date = $6,\n            objective = $7, next_action = $8, completed_at = $9, policy = $10, updated_at = $11\n        WHERE project_id = $1\n        RETURNING project_id, status, priority, lead_user_id, start_date, target_date,\n                  objective, next_action, completed_at, created_at, updated_at, policy\n        ",
   "describe": {
     "columns": [
       {
@@ -35,33 +35,48 @@
       },
       {
         "ordinal": 6,
+        "name": "objective",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 7,
+        "name": "next_action",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 8,
         "name": "completed_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 7,
+        "ordinal": 9,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 8,
+        "ordinal": 10,
         "name": "updated_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 9,
+        "ordinal": 11,
         "name": "policy",
         "type_info": "Jsonb"
-      },
-      {
-        "ordinal": 10,
-        "name": "owner_team_id",
-        "type_info": "Uuid"
       }
     ],
     "parameters": {
       "Left": [
-        "Text"
+        "Text",
+        "Text",
+        "Text",
+        "Text",
+        "Date",
+        "Date",
+        "Text",
+        "Text",
+        "Timestamptz",
+        "Jsonb",
+        "Timestamptz"
       ]
     },
     "nullable": [
@@ -72,11 +87,12 @@
       true,
       true,
       true,
-      false,
-      false,
       true,
-      false
+      true,
+      false,
+      false,
+      true
     ]
   },
-  "hash": "af2ed4ddda4778f4f865548082e177e6b86a89f91ccb2ac6d34733be7117f702"
+  "hash": "aa4c08c7e904053d1ce7c19fdda55df9dd3386629b4a33fb98ce02fe5109bf10"
 }

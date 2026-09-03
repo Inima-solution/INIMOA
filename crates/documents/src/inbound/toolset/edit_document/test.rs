@@ -260,6 +260,10 @@ impl DocumentCreationService for FakeDocumentService {
         panic!("unexpected handle_task_properties call")
     }
 
+    async fn attach_decision_properties(&self, _document_id: &str) -> Result<(), DocumentError> {
+        panic!("unexpected attach_decision_properties call")
+    }
+
     async fn mark_document_uploaded(&self, _document_id: &str) -> Result<(), DocumentError> {
         panic!("unexpected mark_document_uploaded call")
     }

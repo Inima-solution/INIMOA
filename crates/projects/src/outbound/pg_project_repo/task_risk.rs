@@ -18,13 +18,15 @@ pub(super) async fn get_project_task_risk_scoped(
         LEFT JOIN project_operations operations ON operations.project_id = p.id
         WHERE p.id = $1 AND p."deletedAt" IS NULL
       ), tasks AS (
-        SELECT d.id, s.values status_values, due.values due_values, a.values assignee_values, dep.values dependency_values
+        SELECT d.id, s.values status_values, due.values due_values, a.values assignee_values,
+          dep.values dependency_values, milestone.values milestone_values
         FROM scoped_project p JOIN "Document" d ON d."projectId" = p.id AND d."deletedAt" IS NULL
         JOIN document_sub_type st ON st.document_id = d.id AND st.sub_type = 'task'::document_sub_type_value
         LEFT JOIN entity_properties s ON s.entity_id=d.id AND s.entity_type='TASK' AND s.property_definition_id=$3
         LEFT JOIN entity_properties due ON due.entity_id=d.id AND due.entity_type='TASK' AND due.property_definition_id=$4
         LEFT JOIN entity_properties a ON a.entity_id=d.id AND a.entity_type='TASK' AND a.property_definition_id=$5
         LEFT JOIN entity_properties dep ON dep.entity_id=d.id AND dep.entity_type='TASK' AND dep.property_definition_id=$6
+        LEFT JOIN entity_properties milestone ON milestone.entity_id=d.id AND milestone.entity_type='TASK' AND milestone.property_definition_id=$13
       ), normalized_shape AS (
         SELECT *,
           CASE WHEN jsonb_typeof(status_values)='object' AND status_values->>'type'='SelectOption'
@@ -39,7 +41,12 @@ pub(super) async fn get_project_task_risk_scoped(
           CASE WHEN jsonb_typeof(due_values) = 'object' AND due_values->>'type' = 'Date'
              AND jsonb_typeof(due_values->'value') = 'string'
              AND due_values->>'value' ~ '^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])T([01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](\.[0-9]{1,9})?Z$'
-            THEN true ELSE false END due_shape
+            THEN true ELSE false END due_shape,
+          CASE WHEN milestone_values IS NULL OR milestone_values='null'::jsonb THEN true
+            WHEN jsonb_typeof(milestone_values)='object' AND milestone_values->>'type'='Boolean'
+              AND jsonb_typeof(milestone_values->'value')='boolean' THEN true ELSE false END milestone_canonical,
+          CASE WHEN jsonb_typeof(milestone_values)='object' AND milestone_values->>'type'='Boolean'
+              AND milestone_values->'value'='true'::jsonb THEN true ELSE false END milestone
         FROM tasks
       ), normalized AS (
         SELECT *, CASE WHEN due_shape THEN CASE
@@ -100,6 +107,7 @@ pub(super) async fn get_project_task_risk_scoped(
         FROM source JOIN dependencies dep ON dep.id=source.id
       )
       SELECT risk.overdue_tasks, risk.blocked_tasks, risk.unassigned_tasks,
+        risk.open_milestones, risk.at_risk_milestones,
         COALESCE(project.operations_status IN ('planned', 'active')
           AND project.target_date BETWEEN $12 AND ($12 + 7), false) AS approaching_target,
         risk.has_unavailable_risk_data
@@ -110,7 +118,9 @@ pub(super) async fn get_project_task_risk_scoped(
         SELECT COUNT(*) FILTER (WHERE state='open' AND overdue) overdue_tasks,
           COUNT(*) FILTER (WHERE state='open' AND blocked) blocked_tasks,
           COUNT(*) FILTER (WHERE state='open' AND unassigned) unassigned_tasks,
-          COALESCE(bool_or(state='unavailable' OR (state='open' AND (due_unavailable OR assignee_unavailable OR dependency_unavailable))),false) has_unavailable_risk_data
+          COUNT(*) FILTER (WHERE state='open' AND milestone) open_milestones,
+          COUNT(*) FILTER (WHERE state='open' AND milestone AND (overdue OR blocked)) at_risk_milestones,
+          COALESCE(bool_or(state='unavailable' OR (state='open' AND (due_unavailable OR assignee_unavailable OR dependency_unavailable OR NOT milestone_canonical))),false) has_unavailable_risk_data
         FROM classified
       ) risk
       "#)
@@ -118,12 +128,15 @@ pub(super) async fn get_project_task_risk_scoped(
     .bind(SystemPropertyKey::ASSIGNEES_UUID).bind(SystemPropertyKey::DEPENDS_ON_UUID)
     .bind(StatusOption::COMPLETED_UUID.to_string()).bind(StatusOption::CANCELED_UUID.to_string())
     .bind(StatusOption::NOT_STARTED_UUID.to_string()).bind(StatusOption::IN_PROGRESS_UUID.to_string())
-    .bind(StatusOption::IN_REVIEW_UUID.to_string()).bind(as_of_date).fetch_optional(pool).await?;
+    .bind(StatusOption::IN_REVIEW_UUID.to_string()).bind(as_of_date)
+    .bind(SystemPropertyKey::MILESTONE_UUID).fetch_optional(pool).await?;
     row.map(|r| {
         ProjectTaskRisk::new(
             r.try_get("overdue_tasks")?,
             r.try_get("blocked_tasks")?,
             r.try_get("unassigned_tasks")?,
+            r.try_get("open_milestones")?,
+            r.try_get("at_risk_milestones")?,
             r.try_get("approaching_target")?,
             r.try_get("has_unavailable_risk_data")?,
         )

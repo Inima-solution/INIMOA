@@ -49,9 +49,18 @@ import { refetchSoupEntity } from '@queries/soup/cache';
 import { useProjectOverviewQuery } from '@queries/storage/project-overview';
 import { EntityType } from '@service-properties/generated/schemas/entityType';
 import { refetchResources } from '@service-storage/util/refetchResources';
-import { type Component, createMemo, createSignal, Show } from 'solid-js';
+import {
+  type Component,
+  createMemo,
+  createSignal,
+  Match,
+  Show,
+  Switch,
+} from 'solid-js';
 import { projectBlockDataSignal } from '../signal/projectBlockData';
 import { ModalsProvider } from './ModalsProvider';
+import { ProjectDecisionList } from './ProjectDecisionList';
+import { ProjectReportView } from './ProjectReportView';
 import { ProjectTaskDeadlineTimeline } from './ProjectTaskDeadlineTimeline';
 import { ProjectTaskStatusBoard } from './ProjectTaskStatusBoard';
 import type { ProjectTaskViewMode } from './ProjectViewModeControl';
@@ -175,15 +184,29 @@ const Block: Component = () => {
                 onChange={setTaskViewMode}
                 selectorVisible={!isSpecialProject}
               />
-              <ProjectEntityList
-                mode={viewMode()}
-                projectId={projectId}
-                soup={projectSoup}
-                projectOverview={projectOverview}
-                // Scope is already attached by the block container so we can use that
-                // Change this when we remove blocks
-                scopeId={blockHotkeyScopeSignal.get()}
-              />
+              <Switch
+                fallback={
+                  <ProjectEntityList
+                    mode={viewMode()}
+                    projectId={projectId}
+                    soup={projectSoup}
+                    projectOverview={projectOverview}
+                    // Scope is already attached by the block container so we can use that
+                    // Change this when we remove blocks
+                    scopeId={blockHotkeyScopeSignal.get()}
+                  />
+                }
+              >
+                <Match when={!isSpecialProject && viewMode() === 'decisions'}>
+                  <ProjectDecisionList
+                    projectId={projectId}
+                    scopeId={blockHotkeyScopeSignal.get()}
+                  />
+                </Match>
+                <Match when={!isSpecialProject && viewMode() === 'reports'}>
+                  <ProjectReportView query={projectOverview} />
+                </Match>
+              </Switch>
             </div>
           </SidePanel.Layout>
         </ModalsProvider>
@@ -368,7 +391,7 @@ const ProjectSoupViewList = (props: {
   return (
     <TaskSubtaskProgressProvider taskIds={taskIds}>
       <TaskDependencyRelationsProvider taskIds={taskIds}>
-        <Show when={!props.isSpecialProject}>
+        <Show when={!props.isSpecialProject && props.mode !== 'decisions'}>
           <SplitToolbarLeft>
             <CollapsibleToolbarItem
               id="project-toolbar-task-filter"

@@ -187,8 +187,8 @@ impl ProjectService for FakeProjectService {
                 non_task_documents: 0,
                 chats: 0,
             },
-            progress: ProjectTaskProgress::new(0, 0, false).unwrap(),
-            risk: ProjectTaskRisk::new(0, 0, 0, false, false).unwrap(),
+            progress: ProjectTaskProgress::new(0, 0, 0, false).unwrap(),
+            risk: ProjectTaskRisk::new(0, 0, 0, 0, 0, false, false).unwrap(),
         })
     }
 
@@ -567,6 +567,8 @@ fn test_operations() -> ProjectOperations {
         lead_user_id: None,
         start_date: None,
         target_date: None,
+        objective: None,
+        next_action: None,
         completed_at: None,
         created_at: now,
         updated_at: now,
@@ -743,6 +745,8 @@ async fn operations_get_returns_typed_success_after_view_and_company_read() {
                 "leadUserId": null,
                 "startDate": null,
                 "targetDate": null,
+                "objective": null,
+                "nextAction": null,
                 "completedAt": null,
                 "createdAt": "2026-08-28T00:00:00Z",
                 "updatedAt": "2026-08-28T00:00:00Z",
@@ -954,6 +958,8 @@ async fn overview_returns_exact_bounded_camel_case_envelope_after_one_service_ca
                     "leadUserId": null,
                     "startDate": null,
                     "targetDate": null,
+                    "objective": null,
+                    "nextAction": null,
                     "completedAt": null,
                     "createdAt": "2026-08-28T00:00:00Z",
                     "updatedAt": "2026-08-28T00:00:00Z",
@@ -1171,6 +1177,8 @@ fn operations_api_json_is_camel_case_and_excludes_server_owned_input_fields() {
         "leadUserId": null,
         "startDate": "2026-08-28",
         "targetDate": "2026-09-01",
+        "objective": "Deliver the overview",
+        "nextAction": "Review the checkpoint",
         "policy": { "cadence": "weekly" },
         "expectedUpdatedAt": "2026-08-28T00:00:00Z"
     });
@@ -1179,6 +1187,11 @@ fn operations_api_json_is_camel_case_and_excludes_server_owned_input_fields() {
     assert_eq!(request.status, ProjectOperationalStatus::Active);
     assert_eq!(request.priority, ProjectPriority::High);
     assert!(request.lead_user_id.is_none());
+    assert_eq!(request.objective.as_deref(), Some("Deliver the overview"));
+    assert_eq!(
+        request.next_action.as_deref(),
+        Some("Review the checkpoint")
+    );
     assert!(
         serde_json::from_value::<super::project_operations::ReplaceProjectOperationsRequest>(
             json!({
@@ -1200,6 +1213,8 @@ fn operations_api_json_is_camel_case_and_excludes_server_owned_input_fields() {
             "leadUserId": null,
             "startDate": null,
             "targetDate": null,
+            "objective": null,
+            "nextAction": null,
             "completedAt": null,
             "createdAt": "2026-08-28T00:00:00Z",
             "updatedAt": "2026-08-28T00:00:00Z",

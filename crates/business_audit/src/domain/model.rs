@@ -314,6 +314,10 @@ pub enum ProjectOperationsChangedField {
     StartDate,
     /// Target date changed.
     TargetDate,
+    /// Human-authored project objective changed.
+    Objective,
+    /// Human-authored next action changed.
+    NextAction,
     /// Policy object changed.
     Policy,
     /// Completion stamp changed under the lifecycle rules.

@@ -422,7 +422,7 @@ export const editCommentResponse = zod
         .union([
           zod.null(),
           zod
-            .enum(['task', 'snippet', 'skill'])
+            .enum(['task', 'snippet', 'skill', 'decision'])
             .describe(
               'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
             ),
@@ -4617,7 +4617,7 @@ export const getUserDocumentsHandlerResponse = zod.object({
               .union([
                 zod.null(),
                 zod
-                  .enum(['task', 'snippet', 'skill'])
+                  .enum(['task', 'snippet', 'skill', 'decision'])
                   .describe(
                     'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
                   ),
@@ -4786,7 +4786,7 @@ export const createDocumentResponse = zod.object({
             .union([
               zod.null(),
               zod
-                .enum(['task', 'snippet', 'skill'])
+                .enum(['task', 'snippet', 'skill', 'decision'])
                 .describe(
                   'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
                 ),
@@ -4866,6 +4866,32 @@ export const createDocumentResponse = zod.object({
     .describe('Data to be returned'),
   error: zod.boolean().describe('Indicates if an error occurred'),
 });
+
+/**
+ * @summary Create a project-scoped Decision backed by collaborative markdown.
+ */
+export const createDecisionHandlerBody = zod
+  .object({
+    decisionName: zod.string().describe('The Decision title.'),
+    markdown: zod
+      .string()
+      .nullish()
+      .describe(
+        'Markdown source text. Defaults to an empty Decision document.'
+      ),
+    projectId: zod.uuid().describe('The project that owns this Decision.'),
+  })
+  .describe(
+    'Request body for creating a project-scoped Decision markdown document.'
+  );
+
+export const createDecisionHandlerResponse = zod
+  .object({
+    documentId: zod
+      .string()
+      .describe('The document ID of the created Decision.'),
+  })
+  .describe('Response for creating a Decision document.');
 
 /**
  * @summary Creates and initializes a markdown document in one backend-owned lifecycle.
@@ -4962,7 +4988,7 @@ export const createMarkdownHandlerResponse = zod
         .union([
           zod.null(),
           zod
-            .enum(['task', 'snippet', 'skill'])
+            .enum(['task', 'snippet', 'skill', 'decision'])
             .describe(
               'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
             ),
@@ -5274,7 +5300,7 @@ export const createTaskHandlerResponse = zod
         .union([
           zod.null(),
           zod
-            .enum(['task', 'snippet', 'skill'])
+            .enum(['task', 'snippet', 'skill', 'decision'])
             .describe(
               'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
             ),
@@ -5474,6 +5500,13 @@ export const getBatchPreviewHandlerResponse = zod.object({
                     .describe(
                       'A skill document — markdown instructions for AI'
                     ),
+                  zod
+                    .object({
+                      type: zod.enum(['decision']),
+                    })
+                    .describe(
+                      'A project decision record backed by collaborative markdown.'
+                    ),
                 ])
                 .describe(
                   'The sub type of a document preview with associated properties.\nTask-related properties are encoded within the variant to ensure valid states.'
@@ -5603,6 +5636,13 @@ export const getDocumentByTeamSlugResponse = zod.object({
                         })
                         .describe(
                           'A skill document — markdown instructions for AI'
+                        ),
+                      zod
+                        .object({
+                          type: zod.enum(['decision']),
+                        })
+                        .describe(
+                          'A project decision record backed by collaborative markdown.'
                         ),
                     ])
                     .describe(
@@ -5802,7 +5842,7 @@ export const getDocumentResponse = zod.object({
             .union([
               zod.null(),
               zod
-                .enum(['task', 'snippet', 'skill'])
+                .enum(['task', 'snippet', 'skill', 'decision'])
                 .describe(
                   'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
                 ),
@@ -5974,7 +6014,7 @@ export const saveDocumentHandlerResponse = zod.object({
         .union([
           zod.null(),
           zod
-            .enum(['task', 'snippet', 'skill'])
+            .enum(['task', 'snippet', 'skill', 'decision'])
             .describe(
               'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
             ),
@@ -6653,7 +6693,7 @@ export const copyDocumentResponse = zod
               .union([
                 zod.null(),
                 zod
-                  .enum(['task', 'snippet', 'skill'])
+                  .enum(['task', 'snippet', 'skill', 'decision'])
                   .describe(
                     'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
                   ),
@@ -7086,7 +7126,7 @@ export const getDocumentLocationV3Response = zod
               .union([
                 zod.null(),
                 zod
-                  .enum(['task', 'snippet', 'skill'])
+                  .enum(['task', 'snippet', 'skill', 'decision'])
                   .describe(
                     'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
                   ),
@@ -7142,7 +7182,7 @@ export const getDocumentLocationV3Response = zod
               .union([
                 zod.null(),
                 zod
-                  .enum(['task', 'snippet', 'skill'])
+                  .enum(['task', 'snippet', 'skill', 'decision'])
                   .describe(
                     'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
                   ),
@@ -7209,7 +7249,7 @@ export const getDocumentLocationV3Response = zod
               .union([
                 zod.null(),
                 zod
-                  .enum(['task', 'snippet', 'skill'])
+                  .enum(['task', 'snippet', 'skill', 'decision'])
                   .describe(
                     'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
                   ),
@@ -7378,7 +7418,7 @@ export const simpleSaveResponse = zod.object({
         .union([
           zod.null(),
           zod
-            .enum(['task', 'snippet', 'skill'])
+            .enum(['task', 'snippet', 'skill', 'decision'])
             .describe(
               'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
             ),
@@ -7562,7 +7602,7 @@ export const getDocumentVersionResponse = zod.object({
         .union([
           zod.null(),
           zod
-            .enum(['task', 'snippet', 'skill'])
+            .enum(['task', 'snippet', 'skill', 'decision'])
             .describe(
               'The document sub type enum represents all values of document sub types.\nThese values should match the `document_sub_type_value` table in macrodb.'
             ),
@@ -7638,6 +7678,31 @@ export const getEntityPermissionResponse = zod
               type: zod.enum(['team_role']),
             })
             .describe('Permission for team-based entities.'),
+          zod
+            .object({
+              roles: zod
+                .array(
+                  zod
+                    .enum([
+                      'member',
+                      'manager',
+                      'approver',
+                      'hr_admin',
+                      'payroll_admin',
+                      'org_admin',
+                      'auditor',
+                      'agent',
+                    ])
+                    .describe(
+                      'A company-scoped, non-hierarchical business role bundle.'
+                    )
+                )
+                .describe('An unordered set of company business role bundles.'),
+              type: zod.enum(['team_business_roles']),
+            })
+            .describe(
+              'Company permissions derived from unordered business-role bundles.'
+            ),
         ])
         .describe(
           "A user's permission for an entity, discriminated by entity kind.\n\nItems (documents, chats, projects, threads) use access levels.\nChannels use view-only permission or participant roles."
@@ -8001,6 +8066,13 @@ export const getHistoryHandlerResponse = zod.object({
                     })
                     .describe(
                       'A skill document — markdown instructions for AI'
+                    ),
+                  zod
+                    .object({
+                      type: zod.enum(['decision']),
+                    })
+                    .describe(
+                      'A project decision record backed by collaborative markdown.'
                     ),
                 ])
                 .describe(
@@ -8469,6 +8541,13 @@ export const getItemsSoupResponse = zod
                               })
                               .describe(
                                 'A skill document — markdown instructions for AI'
+                              ),
+                            zod
+                              .object({
+                                type: zod.enum(['decision']),
+                              })
+                              .describe(
+                                'A project decision record backed by collaborative markdown.'
                               ),
                           ])
                           .describe(
@@ -11663,6 +11742,58 @@ export const postItemsSoupBody = zod
       .array(
         zod
           .object({
+            boolean_value: zod
+              .boolean()
+              .nullish()
+              .describe(
+                'Boolean value to match. None does not filter on a boolean value.'
+              ),
+            date_range: zod
+              .union([
+                zod.null(),
+                zod
+                  .object({
+                    gt: zod.iso
+                      .datetime({})
+                      .nullish()
+                      .describe(
+                        'Match values strictly after this UTC timestamp.'
+                      ),
+                    gte: zod.iso
+                      .datetime({})
+                      .nullish()
+                      .describe('Match values at or after this UTC timestamp.'),
+                    lt: zod.iso
+                      .datetime({})
+                      .nullish()
+                      .describe(
+                        'Match values strictly before this UTC timestamp.'
+                      ),
+                    lte: zod.iso
+                      .datetime({})
+                      .nullish()
+                      .describe(
+                        'Match values at or before this UTC timestamp.'
+                      ),
+                  })
+                  .describe(
+                    'A compact UTC range for matching Date property values.'
+                  )
+                  .and(
+                    zod.object({
+                      exclude: zod
+                        .boolean()
+                        .optional()
+                        .describe(
+                          'Exclude Tasks whose Date property matches these bounds.'
+                        ),
+                    })
+                  )
+                  .describe(
+                    'A Date-property range together with whether matching Task values are excluded.'
+                  ),
+              ])
+              .optional(),
             entity_ids: zod
               .array(zod.string())
               .optional()
@@ -11675,6 +11806,54 @@ export const postItemsSoupBody = zod
               .describe(
                 'The entity type for the property lookup (e.g., \"TASK\", \"DOCUMENT\", \"PROJECT\").\nWhen None, matches across all entity types.'
               ),
+            number_range: zod
+              .union([
+                zod.null(),
+                zod
+                  .object({
+                    gt: zod
+                      .number()
+                      .nullish()
+                      .describe(
+                        'Match values strictly greater than this finite number.'
+                      ),
+                    gte: zod
+                      .number()
+                      .nullish()
+                      .describe(
+                        'Match values greater than or equal to this finite number.'
+                      ),
+                    lt: zod
+                      .number()
+                      .nullish()
+                      .describe(
+                        'Match values strictly less than this finite number.'
+                      ),
+                    lte: zod
+                      .number()
+                      .nullish()
+                      .describe(
+                        'Match values less than or equal to this finite number.'
+                      ),
+                  })
+                  .describe(
+                    'A compact range for matching Number property values. Bounds are validated\nat the public API boundary to be finite IEEE-754 values.'
+                  )
+                  .and(
+                    zod.object({
+                      exclude: zod
+                        .boolean()
+                        .optional()
+                        .describe(
+                          'Exclude Tasks whose Number property matches these bounds.'
+                        ),
+                    })
+                  )
+                  .describe(
+                    'A Number-property range together with whether matching Task values are excluded.'
+                  ),
+              ])
+              .optional(),
             option_ids: zod
               .array(zod.string())
               .optional()
@@ -11686,7 +11865,7 @@ export const postItemsSoupBody = zod
               .describe('The UUID of the property definition to filter on.'),
           })
           .describe(
-            "A single property-based filter condition.\n\nEach filter targets a specific property definition on entities of a given type,\nmatching against select option UUIDs or entity reference IDs.\nMultiple values within a single filter are OR'd together.\nMultiple filters are AND'd together."
+            "A single property-based filter condition.\n\nEach filter targets a specific property definition on entities of a given type,\nmatching against select option UUIDs, entity reference IDs, or a boolean value.\nMultiple values within a single filter are OR'd together.\nMultiple filters are AND'd together."
           )
       )
       .optional()
@@ -12112,6 +12291,13 @@ export const postItemsSoupResponse = zod
                               })
                               .describe(
                                 'A skill document — markdown instructions for AI'
+                              ),
+                            zod
+                              .object({
+                                type: zod.enum(['decision']),
+                              })
+                              .describe(
+                                'A project decision record backed by collaborative markdown.'
                               ),
                           ])
                           .describe(
@@ -15219,6 +15405,13 @@ export const postItemsSoupAstResponse = zod
                               })
                               .describe(
                                 'A skill document — markdown instructions for AI'
+                              ),
+                            zod
+                              .object({
+                                type: zod.enum(['decision']),
+                              })
+                              .describe(
+                                'A project decision record backed by collaborative markdown.'
                               ),
                           ])
                           .describe(
@@ -18584,6 +18777,13 @@ export const postItemsSoupAstGroupedResponse = zod
                                     .describe(
                                       'A skill document — markdown instructions for AI'
                                     ),
+                                  zod
+                                    .object({
+                                      type: zod.enum(['decision']),
+                                    })
+                                    .describe(
+                                      'A project decision record backed by collaborative markdown.'
+                                    ),
                                 ])
                                 .describe(
                                   'Sub type of a document with associated properties encoded in each variant.\nThis ensures type-safety: task properties only exist when the document is a task.'
@@ -21694,6 +21894,13 @@ export const postItemsSoupAstGroupedResponse = zod
                                     .describe(
                                       'A skill document — markdown instructions for AI'
                                     ),
+                                  zod
+                                    .object({
+                                      type: zod.enum(['decision']),
+                                    })
+                                    .describe(
+                                      'A project decision record backed by collaborative markdown.'
+                                    ),
                                 ])
                                 .describe(
                                   'Sub type of a document with associated properties encoded in each variant.\nThis ensures type-safety: task properties only exist when the document is a task.'
@@ -24543,6 +24750,13 @@ export const getPinsHandlerResponse = zod.object({
                             .describe(
                               'A skill document — markdown instructions for AI'
                             ),
+                          zod
+                            .object({
+                              type: zod.enum(['decision']),
+                            })
+                            .describe(
+                              'A project decision record backed by collaborative markdown.'
+                            ),
                         ])
                         .describe(
                           'Sub type of a document with associated properties encoded in each variant.\nThis ensures type-safety: task properties only exist when the document is a task.'
@@ -24687,6 +24901,13 @@ export const getPinsHandlerResponse = zod.object({
                             })
                             .describe(
                               'A skill document — markdown instructions for AI'
+                            ),
+                          zod
+                            .object({
+                              type: zod.enum(['decision']),
+                            })
+                            .describe(
+                              'A project decision record backed by collaborative markdown.'
                             ),
                         ])
                         .describe(
@@ -26092,6 +26313,13 @@ export const getProjectContentHandlerResponse = zod.object({
                       .describe(
                         'A skill document — markdown instructions for AI'
                       ),
+                    zod
+                      .object({
+                        type: zod.enum(['decision']),
+                      })
+                      .describe(
+                        'A project decision record backed by collaborative markdown.'
+                      ),
                   ])
                   .describe(
                     'Sub type of a document with associated properties encoded in each variant.\nThis ensures type-safety: task properties only exist when the document is a task.'
@@ -26233,6 +26461,61 @@ export const revertDeleteProjectResponse = zod.object({
   error: zod.boolean().describe('Indicates if an error occurred'),
 });
 
+export const getTaskDependencyRelationsBodyTaskIdsMax = 200;
+
+export const getTaskDependencyRelationsBody = zod.object({
+  taskIds: zod.array(zod.uuid()).max(getTaskDependencyRelationsBodyTaskIdsMax),
+});
+
+export const getTaskDependencyRelationsResponseItem = zod
+  .object({
+    blockingTaskIds: zod.array(zod.uuid()),
+    dependsOnTaskIds: zod.array(zod.uuid()),
+    hasUnavailableDependencies: zod.boolean(),
+    hasUnavailableSuccessors: zod.boolean(),
+    readiness: zod
+      .enum(['ready', 'blocked'])
+      .describe(
+        'Computed direct-dependency readiness for one task.\n\nThis is a read model only. Its value is intentionally never stored as a\nproperty or status option.'
+      ),
+    successorTaskIds: zod.array(zod.uuid()),
+    taskId: zod.uuid(),
+  })
+  .describe(
+    'Caller-scoped direct dependency relations for one task.\n\nThis read model deliberately exposes identifiers only after the domain has\napplied an individual document-view check for each related task.'
+  );
+export const getTaskDependencyRelationsResponse = zod.array(
+  getTaskDependencyRelationsResponseItem
+);
+
+export const getTaskSubtaskProgressBodyTaskIdsMax = 200;
+
+export const getTaskSubtaskProgressBody = zod.object({
+  taskIds: zod.array(zod.uuid()).max(getTaskSubtaskProgressBodyTaskIdsMax),
+});
+
+export const getTaskSubtaskProgressResponseCompletedSubtasksMin = 0;
+
+export const getTaskSubtaskProgressResponseTotalSubtasksMin = 0;
+
+export const getTaskSubtaskProgressResponseItem = zod
+  .object({
+    completedSubtasks: zod
+      .number()
+      .min(getTaskSubtaskProgressResponseCompletedSubtasksMin),
+    hasUnavailableSubtasks: zod.boolean(),
+    taskId: zod.uuid(),
+    totalSubtasks: zod
+      .number()
+      .min(getTaskSubtaskProgressResponseTotalSubtasksMin),
+  })
+  .describe(
+    'Computed direct-subtask progress for one task. This read model never\nexposes child identities.'
+  );
+export const getTaskSubtaskProgressResponse = zod.array(
+  getTaskSubtaskProgressResponseItem
+);
+
 /**
  * @summary Gets the users recently deleted items.
  */
@@ -26319,6 +26602,13 @@ export const recentlyDeletedResponse = zod.object({
                         })
                         .describe(
                           'A skill document — markdown instructions for AI'
+                        ),
+                      zod
+                        .object({
+                          type: zod.enum(['decision']),
+                        })
+                        .describe(
+                          'A project decision record backed by collaborative markdown.'
                         ),
                     ])
                     .describe(
@@ -27156,6 +27446,115 @@ export const getProjectOperationsResponse = zod.object({
         .datetime({})
         .describe('When the operational record was created.'),
       leadUserId: zod.union([zod.null(), zod.string()]).optional(),
+      nextAction: zod
+        .string()
+        .nullish()
+        .describe(
+          'Optional human-authored next action; never inferred from task data.'
+        ),
+      objective: zod
+        .string()
+        .nullish()
+        .describe('Optional human-authored operational objective.'),
+      policy: zod
+        .object({})
+        .nullish()
+        .describe('Optional bounded object-shaped operational policy.'),
+      priority: zod
+        .enum(['low', 'normal', 'high', 'urgent'])
+        .describe('The relative operational urgency stored for a project.'),
+      projectId: zod.string().describe('Canonical project identifier.'),
+      startDate: zod.iso
+        .date()
+        .nullish()
+        .describe('Optional planned start date.'),
+      status: zod
+        .enum(['planned', 'active', 'paused', 'completed', 'archived'])
+        .describe('The operational lifecycle state stored for a project.'),
+      targetDate: zod.iso
+        .date()
+        .nullish()
+        .describe('Optional planned target date.'),
+      updatedAt: zod.iso
+        .datetime({})
+        .describe('When the operational record was last updated.'),
+    })
+    .describe(
+      'Operational metadata attached one-to-one to a canonical project.\n\nThis model deliberately excludes project content and generic project fields.'
+    )
+    .describe('Data to be returned'),
+  error: zod.boolean().describe('Indicates if an error occurred'),
+});
+
+/**
+ * @summary Replace all client-owned operational metadata for one project.
+ */
+export const replaceProjectOperationsParams = zod.object({
+  id: zod.string().describe('ID of the project'),
+});
+
+export const replaceProjectOperationsBody = zod
+  .object({
+    expectedUpdatedAt: zod.iso
+      .datetime({})
+      .describe(
+        'Operational record version observed before this full replacement.'
+      ),
+    leadUserId: zod.union([zod.null(), zod.string()]).optional(),
+    nextAction: zod
+      .string()
+      .nullish()
+      .describe('Optional concise description of the next concrete action.'),
+    objective: zod
+      .string()
+      .nullish()
+      .describe(
+        "Optional concise statement of the project's intended outcome."
+      ),
+    policy: zod
+      .object({})
+      .nullish()
+      .describe('Optional bounded object-shaped operational policy.'),
+    priority: zod
+      .enum(['low', 'normal', 'high', 'urgent'])
+      .describe('The relative operational urgency stored for a project.'),
+    startDate: zod.iso
+      .date()
+      .nullish()
+      .describe('Optional planned start date.'),
+    status: zod
+      .enum(['planned', 'active', 'paused', 'completed', 'archived'])
+      .describe('The operational lifecycle state stored for a project.'),
+    targetDate: zod.iso
+      .date()
+      .nullish()
+      .describe('Optional planned target date.'),
+  })
+  .describe(
+    'Full replacement of client-owned operational project fields.\n\nThe project identity, acting user, team, request correlation, completion time,\nand record timestamps are server-owned and therefore excluded.'
+  );
+
+export const replaceProjectOperationsResponse = zod.object({
+  data: zod
+    .object({
+      completedAt: zod.iso
+        .datetime({})
+        .nullish()
+        .describe('When work was completed, if recorded.'),
+      createdAt: zod.iso
+        .datetime({})
+        .describe('When the operational record was created.'),
+      leadUserId: zod.union([zod.null(), zod.string()]).optional(),
+      nextAction: zod
+        .string()
+        .nullish()
+        .describe(
+          'Optional human-authored next action; never inferred from task data.'
+        ),
+      objective: zod
+        .string()
+        .nullish()
+        .describe('Optional human-authored operational objective.'),
       policy: zod
         .object({})
         .nullish()
@@ -27224,6 +27623,16 @@ export const getProjectOverviewResponse = zod.object({
             .datetime({})
             .describe('When the operational record was created.'),
           leadUserId: zod.union([zod.null(), zod.string()]).optional(),
+          nextAction: zod
+            .string()
+            .nullish()
+            .describe(
+              'Optional human-authored next action; never inferred from task data.'
+            ),
+          objective: zod
+            .string()
+            .nullish()
+            .describe('Optional human-authored operational objective.'),
           policy: zod
             .object({})
             .nullish()
@@ -27267,6 +27676,11 @@ export const getProjectOverviewResponse = zod.object({
             .describe(
               'Direct live tasks included in progress; canceled tasks are excluded.'
             ),
+          wipTasks: zod
+            .number()
+            .describe(
+              'Direct live tasks whose exact singleton status is In Progress or In Review.'
+            ),
         })
         .describe(
           'Bounded progress totals for the live direct tasks of one project.\n\nThis deliberately contains only aggregate facts: it cannot disclose task\nidentifiers, names, or individual status values.'
@@ -27297,6 +27711,11 @@ export const getProjectOverviewResponse = zod.object({
             .describe(
               'Whether an operational Planned or Active project target falls within seven calendar days.'
             ),
+          atRiskMilestones: zod
+            .number()
+            .describe(
+              'Open milestone Tasks that are overdue or blocked, counted once.'
+            ),
           blockedTasks: zod
             .number()
             .describe(
@@ -27307,6 +27726,9 @@ export const getProjectOverviewResponse = zod.object({
             .describe(
               'Whether any aggregate risk input was unavailable without exposing its source.'
             ),
+          openMilestones: zod
+            .number()
+            .describe('Open direct live canonical milestone Tasks.'),
           overdueTasks: zod
             .number()
             .describe(
@@ -27326,85 +27748,6 @@ export const getProjectOverviewResponse = zod.object({
         .describe('Ordered from least to most access top -> bottom'),
     })
     .describe('The bounded, canonical overview for one project.')
-    .describe('Data to be returned'),
-  error: zod.boolean().describe('Indicates if an error occurred'),
-});
-
-/**
- * @summary Replace all client-owned operational metadata for one project.
- */
-export const replaceProjectOperationsParams = zod.object({
-  id: zod.string().describe('ID of the project'),
-});
-
-export const replaceProjectOperationsBody = zod
-  .object({
-    expectedUpdatedAt: zod.iso
-      .datetime({})
-      .describe(
-        'Operational record version observed before this full replacement.'
-      ),
-    leadUserId: zod.union([zod.null(), zod.string()]).optional(),
-    policy: zod
-      .object({})
-      .nullish()
-      .describe('Optional bounded object-shaped operational policy.'),
-    priority: zod
-      .enum(['low', 'normal', 'high', 'urgent'])
-      .describe('The relative operational urgency stored for a project.'),
-    startDate: zod.iso
-      .date()
-      .nullish()
-      .describe('Optional planned start date.'),
-    status: zod
-      .enum(['planned', 'active', 'paused', 'completed', 'archived'])
-      .describe('The operational lifecycle state stored for a project.'),
-    targetDate: zod.iso
-      .date()
-      .nullish()
-      .describe('Optional planned target date.'),
-  })
-  .describe(
-    'Full replacement of client-owned operational project fields.\n\nThe project identity, acting user, team, request correlation, completion time,\nand record timestamps are server-owned and therefore excluded.'
-  );
-
-export const replaceProjectOperationsResponse = zod.object({
-  data: zod
-    .object({
-      completedAt: zod.iso
-        .datetime({})
-        .nullish()
-        .describe('When work was completed, if recorded.'),
-      createdAt: zod.iso
-        .datetime({})
-        .describe('When the operational record was created.'),
-      leadUserId: zod.union([zod.null(), zod.string()]).optional(),
-      policy: zod
-        .object({})
-        .nullish()
-        .describe('Optional bounded object-shaped operational policy.'),
-      priority: zod
-        .enum(['low', 'normal', 'high', 'urgent'])
-        .describe('The relative operational urgency stored for a project.'),
-      projectId: zod.string().describe('Canonical project identifier.'),
-      startDate: zod.iso
-        .date()
-        .nullish()
-        .describe('Optional planned start date.'),
-      status: zod
-        .enum(['planned', 'active', 'paused', 'completed', 'archived'])
-        .describe('The operational lifecycle state stored for a project.'),
-      targetDate: zod.iso
-        .date()
-        .nullish()
-        .describe('Optional planned target date.'),
-      updatedAt: zod.iso
-        .datetime({})
-        .describe('When the operational record was last updated.'),
-    })
-    .describe(
-      'Operational metadata attached one-to-one to a canonical project.\n\nThis model deliberately excludes project content and generic project fields.'
-    )
     .describe('Data to be returned'),
   error: zod.boolean().describe('Indicates if an error occurred'),
 });

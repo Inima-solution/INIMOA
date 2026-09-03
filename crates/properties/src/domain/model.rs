@@ -222,6 +222,7 @@ pub struct PropertyTargetKey {
 pub(crate) struct ResolvedPropertySubject {
     pub(crate) canonical_key: PropertyTargetKey,
     pub(crate) storage_entity_type: EntityType,
+    pub(crate) document_sub_type: Option<document_sub_type::DocumentSubType>,
 }
 
 impl ResolvedPropertySubject {

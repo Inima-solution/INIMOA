@@ -6,6 +6,7 @@ use foreign_entity::domain::ports::{ForeignEntityListQuery, ForeignEntityService
 use macro_event_broker::{EventBrokerError, MacroEvent, MacroEventBroker};
 use macro_user_id::cowlike::CowLike;
 use model::document::{DocumentMetadata, FileType};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use crate::domain::models::{
@@ -51,6 +52,19 @@ fn test_cloudfront_config() -> CloudFrontConfig {
         presigned_url_expiry_seconds: 60,
         browser_cache_expiry_seconds: 60,
     }
+}
+
+async fn start_sync_copy_server() -> String {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = axum::Router::new().route(
+        "/document/{document_id}/copy",
+        axum::routing::post(|| async { axum::http::StatusCode::OK }),
+    );
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    format!("http://{address}")
 }
 
 fn task_document_context(document_id: &str) -> DocumentBasic {
@@ -156,6 +170,10 @@ impl TaskPropertiesPort for TestTaskPropertiesPort {
         Ok(())
     }
 
+    async fn attach_decision_properties(&self, _entity_ids: Vec<String>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
     async fn update_task_status(&self, _entity_id: &str, _status: &str) -> anyhow::Result<()> {
         Ok(())
     }
@@ -175,6 +193,64 @@ impl TaskPropertiesPort for TestTaskPropertiesPort {
         _from_task_id: &str,
         _to_task_id: &str,
     ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn copy_decision_properties(
+        &self,
+        _from_document_id: &str,
+        _to_document_id: &str,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
+#[derive(Clone, Default)]
+struct RecordingDecisionPropertiesPort {
+    copy_calls: Arc<AtomicUsize>,
+    fail_copy: bool,
+}
+
+impl TaskPropertiesPort for RecordingDecisionPropertiesPort {
+    async fn attach_task_properties(&self, _entity_ids: Vec<String>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn attach_decision_properties(&self, _entity_ids: Vec<String>) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn update_task_status(&self, _entity_id: &str, _status: &str) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn set_entity_property(
+        &self,
+        _user_id: &str,
+        _entity_id: &str,
+        _property_definition_id: uuid::Uuid,
+        _value: Option<models_properties::api::requests::SetPropertyValue>,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn copy_task_properties(
+        &self,
+        _from_task_id: &str,
+        _to_task_id: &str,
+    ) -> anyhow::Result<()> {
+        Ok(())
+    }
+
+    async fn copy_decision_properties(
+        &self,
+        _from_document_id: &str,
+        _to_document_id: &str,
+    ) -> anyhow::Result<()> {
+        self.copy_calls.fetch_add(1, Ordering::SeqCst);
+        if self.fail_copy {
+            anyhow::bail!("simulated Decision property copy failure")
+        }
         Ok(())
     }
 }
@@ -1909,6 +1985,66 @@ async fn edit_document_task_hierarchy_conflict_has_no_downstream_side_effects() 
 }
 
 #[tokio::test]
+async fn edit_decision_rejects_project_removal_before_repository_mutation() {
+    let document_id = uuid::Uuid::new_v4().to_string();
+    let mut repo = make_mock_repo();
+    repo.expect_edit_document().times(0);
+    let service = make_test_service(repo);
+    let mut context = task_document_context(&document_id);
+    context.sub_type = Some(DocumentSubType::Decision);
+    context.project_id = Some(uuid::Uuid::new_v4().to_string());
+
+    let result = service
+        .edit_document(
+            edit_receipt(&document_id),
+            context,
+            EditDocumentServiceArgs {
+                document_name: None,
+                project_id: Some(String::new()),
+                share_permission: None,
+                file_type: None,
+            },
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(DocumentError::BadRequest(message))
+            if message == "Decision documents cannot be removed from their project"
+    ));
+}
+
+#[tokio::test]
+async fn edit_decision_rejects_file_type_changes_before_repository_mutation() {
+    let document_id = uuid::Uuid::new_v4().to_string();
+    let mut repo = make_mock_repo();
+    repo.expect_edit_document().times(0);
+    let service = make_test_service(repo);
+    let mut context = task_document_context(&document_id);
+    context.sub_type = Some(DocumentSubType::Decision);
+    context.project_id = Some(uuid::Uuid::new_v4().to_string());
+
+    let result = service
+        .edit_document(
+            edit_receipt(&document_id),
+            context,
+            EditDocumentServiceArgs {
+                document_name: None,
+                project_id: None,
+                share_permission: None,
+                file_type: Some(FileTypeUpdate::Set(FileType::Txt)),
+            },
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(DocumentError::BadRequest(message))
+            if message == "Decision documents must remain markdown"
+    ));
+}
+
+#[tokio::test]
 async fn copy_document_best_effort_bumps_inherited_project_and_publishes_event() {
     let mut repo = make_mock_repo();
     let original_metadata = make_test_metadata();
@@ -1976,6 +2112,255 @@ async fn copy_document_best_effort_bumps_inherited_project_and_publishes_event()
     assert_eq!(event.payload["metadata"]["source_document_id"], "doc-1");
     assert_eq!(event.payload["metadata"]["document_name"], "copied doc");
     assert_eq!(event.payload["metadata"]["owner"], "macro|user@user.com");
+}
+
+#[tokio::test]
+async fn copy_decision_property_failure_cleans_up_created_document() {
+    let mut repo = make_mock_repo();
+    let mut original_metadata = make_test_metadata();
+    original_metadata.file_type = Some("md".to_string());
+    original_metadata.sub_type = Some(DocumentSubType::Decision);
+    let original_for_lookup = original_metadata.clone();
+    repo.expect_get_document_metadata()
+        .withf(|id| id == "doc-1")
+        .returning(move |_| Box::pin(std::future::ready(Ok(original_for_lookup.clone()))));
+    repo.expect_get_project_owner()
+        .withf(|id| id == "project-1")
+        .returning(|_| {
+            Box::pin(std::future::ready(Ok(
+                macro_user_id::user_id::MacroUserIdStr::parse_from_str("macro|user@user.com")
+                    .unwrap()
+                    .into_owned(),
+            )))
+        });
+    let mut copied_metadata = original_metadata.clone();
+    copied_metadata.document_id = "doc-2".to_string();
+    copied_metadata.document_name = "copied Decision".to_string();
+    repo.expect_get_team_default_link_share()
+        .returning(|_| Box::pin(std::future::ready(Ok(None))));
+    repo.expect_copy_document()
+        .returning(move |_, _| Box::pin(std::future::ready(Ok(copied_metadata.clone()))));
+    repo.expect_get_document_version_id()
+        .returning(|_| Box::pin(std::future::ready(Ok((1, true)))));
+    repo.expect_get_latest_document_version_id()
+        .returning(|_| Box::pin(std::future::ready(Ok((1, true)))));
+    repo.expect_set_document_content()
+        .times(1)
+        .returning(|_, _| Box::pin(std::future::ready(Ok(()))));
+    repo.expect_update_project_modified()
+        .returning(|_| Box::pin(std::future::ready(Ok(()))));
+    repo.expect_get_team_task_metadata()
+        .returning(|_| Box::pin(std::future::ready(Ok(None))));
+    repo.expect_delete_document_by_id()
+        .withf(|id| id == "doc-2")
+        .times(1)
+        .returning(|_| Box::pin(std::future::ready(Ok(()))));
+
+    let decision_properties = RecordingDecisionPropertiesPort {
+        fail_copy: true,
+        ..Default::default()
+    };
+    let sync_service_url = start_sync_copy_server().await;
+    let service = DocumentServiceImpl::new(
+        repo,
+        test_cloudfront_config(),
+        sync_service_client::SyncServiceClient::new("test-sync-key".to_string(), sync_service_url),
+        TestUploadUrlPort,
+        decision_properties.clone(),
+        TestConnectionService,
+        TestEntityAccessManagementService::default(),
+        TestForeignEntityService::default(),
+        TestEventBroker::default(),
+    );
+    let mut document_context = task_document_context("doc-1");
+    document_context.file_type = Some("md".to_string());
+    document_context.sub_type = Some(DocumentSubType::Decision);
+    document_context.project_id = Some("project-1".to_string());
+
+    let result = service
+        .copy_document(
+            authenticated_receipt("doc-1"),
+            document_context,
+            macro_user_id::user_id::MacroUserIdStr::parse_from_str("macro|user@user.com")
+                .unwrap()
+                .into_owned(),
+            "copied Decision".to_string(),
+            None,
+            None,
+        )
+        .await;
+
+    assert!(matches!(result, Err(DocumentError::Internal(_))));
+    assert_eq!(decision_properties.copy_calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn copy_finalization_failure_happens_before_decision_properties_are_written() {
+    let mut repo = make_mock_repo();
+    let mut original_metadata = make_test_metadata();
+    original_metadata.file_type = Some("md".to_string());
+    original_metadata.sub_type = Some(DocumentSubType::Decision);
+    let original_for_lookup = original_metadata.clone();
+    repo.expect_get_document_metadata()
+        .returning(move |_| Box::pin(std::future::ready(Ok(original_for_lookup.clone()))));
+    repo.expect_get_project_owner().returning(|_| {
+        Box::pin(std::future::ready(Ok(
+            macro_user_id::user_id::MacroUserIdStr::parse_from_str("macro|user@user.com")
+                .unwrap()
+                .into_owned(),
+        )))
+    });
+    let mut copied_metadata = original_metadata.clone();
+    copied_metadata.document_id = "doc-2".to_string();
+    repo.expect_get_team_default_link_share()
+        .returning(|_| Box::pin(std::future::ready(Ok(None))));
+    repo.expect_copy_document()
+        .returning(move |_, _| Box::pin(std::future::ready(Ok(copied_metadata.clone()))));
+    repo.expect_get_latest_document_version_id()
+        .returning(|_| Box::pin(std::future::ready(Ok((1, true)))));
+    repo.expect_set_document_content()
+        .times(1)
+        .returning(|_, _| Box::pin(std::future::ready(Err(anyhow!("content update failed")))));
+    repo.expect_delete_document_by_id()
+        .withf(|id| id == "doc-2")
+        .times(1)
+        .returning(|_| Box::pin(std::future::ready(Ok(()))));
+
+    let decision_properties = RecordingDecisionPropertiesPort::default();
+    let sync_service_url = start_sync_copy_server().await;
+    let service = DocumentServiceImpl::new(
+        repo,
+        test_cloudfront_config(),
+        sync_service_client::SyncServiceClient::new("test-sync-key".to_string(), sync_service_url),
+        TestUploadUrlPort,
+        decision_properties.clone(),
+        TestConnectionService,
+        TestEntityAccessManagementService::default(),
+        TestForeignEntityService::default(),
+        TestEventBroker::default(),
+    );
+    let mut document_context = task_document_context("doc-1");
+    document_context.file_type = Some("md".to_string());
+    document_context.sub_type = Some(DocumentSubType::Decision);
+    document_context.project_id = Some("project-1".to_string());
+
+    let result = service
+        .copy_document(
+            authenticated_receipt("doc-1"),
+            document_context,
+            macro_user_id::user_id::MacroUserIdStr::parse_from_str("macro|user@user.com")
+                .unwrap()
+                .into_owned(),
+            "copied Decision".to_string(),
+            None,
+            None,
+        )
+        .await;
+
+    assert!(matches!(result, Err(DocumentError::Internal(_))));
+    assert_eq!(decision_properties.copy_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn copy_decision_version_lookup_failure_cleans_up_before_property_copy() {
+    let mut repo = make_mock_repo();
+    let mut original_metadata = make_test_metadata();
+    original_metadata.file_type = Some("md".to_string());
+    original_metadata.sub_type = Some(DocumentSubType::Decision);
+    let original_for_lookup = original_metadata.clone();
+    repo.expect_get_document_metadata()
+        .returning(move |_| Box::pin(std::future::ready(Ok(original_for_lookup.clone()))));
+    repo.expect_get_project_owner().returning(|_| {
+        Box::pin(std::future::ready(Ok(
+            macro_user_id::user_id::MacroUserIdStr::parse_from_str("macro|user@user.com")
+                .unwrap()
+                .into_owned(),
+        )))
+    });
+    let mut copied_metadata = original_metadata.clone();
+    copied_metadata.document_id = "doc-2".to_string();
+    repo.expect_get_team_default_link_share()
+        .returning(|_| Box::pin(std::future::ready(Ok(None))));
+    repo.expect_copy_document()
+        .returning(move |_, _| Box::pin(std::future::ready(Ok(copied_metadata.clone()))));
+    repo.expect_get_latest_document_version_id()
+        .times(1)
+        .returning(|_| Box::pin(std::future::ready(Err(anyhow!("version lookup failed")))));
+    repo.expect_set_document_content().times(0);
+    repo.expect_delete_document_by_id()
+        .withf(|id| id == "doc-2")
+        .times(1)
+        .returning(|_| Box::pin(std::future::ready(Ok(()))));
+
+    let decision_properties = RecordingDecisionPropertiesPort::default();
+    let sync_service_url = start_sync_copy_server().await;
+    let service = DocumentServiceImpl::new(
+        repo,
+        test_cloudfront_config(),
+        sync_service_client::SyncServiceClient::new("test-sync-key".to_string(), sync_service_url),
+        TestUploadUrlPort,
+        decision_properties.clone(),
+        TestConnectionService,
+        TestEntityAccessManagementService::default(),
+        TestForeignEntityService::default(),
+        TestEventBroker::default(),
+    );
+    let mut document_context = task_document_context("doc-1");
+    document_context.file_type = Some("md".to_string());
+    document_context.sub_type = Some(DocumentSubType::Decision);
+    document_context.project_id = Some("project-1".to_string());
+
+    let result = service
+        .copy_document(
+            authenticated_receipt("doc-1"),
+            document_context,
+            macro_user_id::user_id::MacroUserIdStr::parse_from_str("macro|user@user.com")
+                .unwrap()
+                .into_owned(),
+            "copied Decision".to_string(),
+            None,
+            None,
+        )
+        .await;
+
+    assert!(matches!(result, Err(DocumentError::Internal(_))));
+    assert_eq!(decision_properties.copy_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn copy_rejects_non_markdown_decision_before_creating_a_copy() {
+    let mut repo = make_mock_repo();
+    let mut original_metadata = make_test_metadata();
+    original_metadata.file_type = Some("txt".to_string());
+    original_metadata.sub_type = Some(DocumentSubType::Decision);
+    repo.expect_get_document_metadata()
+        .return_once(move |_| Box::pin(std::future::ready(Ok(original_metadata))));
+    repo.expect_copy_document().times(0);
+
+    let service = make_test_service(repo);
+    let mut document_context = task_document_context("doc-1");
+    document_context.file_type = Some("txt".to_string());
+    document_context.sub_type = Some(DocumentSubType::Decision);
+    document_context.project_id = Some("project-1".to_string());
+
+    let result = service
+        .copy_document(
+            authenticated_receipt("doc-1"),
+            document_context,
+            macro_user_id::user_id::MacroUserIdStr::parse_from_str("macro|user@user.com")
+                .unwrap()
+                .into_owned(),
+            "invalid Decision".to_string(),
+            None,
+            None,
+        )
+        .await;
+
+    assert!(matches!(
+        result,
+        Err(DocumentError::BadRequest(message))
+            if message == "Decision documents must remain markdown"
+    ));
 }
 
 fn create_document_repo_args(file_type: FileType) -> CreateDocumentRepoArgs {

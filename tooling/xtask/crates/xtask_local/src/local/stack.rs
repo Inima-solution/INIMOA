@@ -246,9 +246,10 @@ pub fn up(mode: Mode, args: &UpArgs) -> Result<Instance> {
     binaries.pin_gc_root(&instance.artifact_dir())?;
     let active_binaries = binaries.host_dir().to_path_buf();
     super::bring_up_app(&stage, mode, &instance, &env)?;
-    let _sdk_webhook_tunnel = (mode == Mode::Local && !stage.is_dry_run())
-        .then(|| sdk_webhook::start(&instance))
-        .transpose()?;
+    let _sdk_webhook_tunnel =
+        (mode == Mode::Local && super::compose_profile_enabled("agent") && !stage.is_dry_run())
+            .then(|| sdk_webhook::start(&instance))
+            .transpose()?;
 
     // Headless "ready" means the backend answers through the proxy — the caller
     // (a CI step, an agent) acts on the URL the moment we return.
@@ -334,12 +335,17 @@ fn update_running(args: &UpdateArgs) -> Result<()> {
         instance.name()
     ));
 
+    // `--frontend` is also the supported transition from a headless
+    // `--no-frontend` stack to a static bundle. Resolve the desired flavor,
+    // not only the recorded one, so regenerated service/proxy configuration
+    // receives the proxy port as FRONTEND_PORT on that first transition.
+    let static_frontend = state.frontend == "static" || args.frontend;
     let env = env_layer::resolve(
         mode,
         &instance,
         args.env.no_doppler,
         args.env.env_file.as_deref(),
-        state.frontend == "static",
+        static_frontend,
     )?;
     let remounted = if let Some(source) = args.binaries_dir.as_deref() {
         let new = super::build::BinariesDir::classify(source)?;
@@ -445,18 +451,37 @@ fn reload_static_frontend(
     env: &env_layer::ResolvedEnv,
     state: &StackState,
 ) -> Result<()> {
-    if state.frontend != "static" {
-        bail!(
-            "this stack was brought up without a static frontend (--no-frontend); \
-             re-run `just stack up` to serve one"
-        );
-    }
     frontend::build_static(stage, instance, mode)?;
+    let enabling = state.frontend != "static";
+    if enabling {
+        let binaries_dir = state.binaries_dir.as_deref().context(
+            "cannot enable the frontend for a legacy stack without a recorded binaries_dir; \
+             remount binaries with `just stack update --binaries-dir ... --frontend`",
+        )?;
+        let binaries = super::build::BinariesDir::classify(binaries_dir)?;
+        let gmail_forwarder = env
+            .merged
+            .get("GMAIL_FORWARDER_SA_KEY")
+            .is_some_and(|key| !key.trim().is_empty());
+        super::gen_compose::generate(mode, instance, &binaries, true, gmail_forwarder)?;
+        proxy::write_caddyfile(instance, mode, true)?;
+    }
     // build_static replaces the staged directory, so the container must be
     // recreated to establish a bind mount to the new inode.
     let mut up = super::compose_cmd(instance, env);
     up.args(["up", "-d", "--force-recreate", "--no-deps", "proxy"]);
-    stage.run("Recreating proxy (frontend bundle)", &mut up)
+    stage.run("Recreating proxy (frontend bundle)", &mut up)?;
+    if enabling && !stage.is_dry_run() {
+        write_state(
+            instance,
+            &StackState {
+                mode: state.mode.clone(),
+                frontend: "static".to_string(),
+                binaries_dir: state.binaries_dir.clone(),
+            },
+        )?;
+    }
+    Ok(())
 }
 
 /// `cargo x stack status` — container states + health through the proxy, as a

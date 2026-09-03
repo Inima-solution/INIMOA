@@ -91,6 +91,13 @@ define_system_properties! {
     Milestone,         MILESTONE_UUID,          0x13, "Milestone";
     StartDate,         START_DATE_UUID,         0x14, "Start Date";
 
+    // Decision documents. Project is the canonical Document.projectId metadata
+    // rather than a duplicated entity property.
+    DecisionState,     DECISION_STATE_UUID,     0x15, "Decision State";
+    DecidedBy,         DECIDED_BY_UUID,          0x16, "Decided By";
+    DecidedAt,         DECIDED_AT_UUID,          0x17, "Decided At";
+    DecisionSources,   DECISION_SOURCES_UUID,    0x18, "Source Links";
+
     // Emails Attachments
     Source,            SOURCE_UUID,             0x0b, "Source";
     Companies,         COMPANIES_UUID,          0x0c, "Companies";
@@ -175,7 +182,7 @@ mod tests {
     #[test]
     fn test_all_system_property_keys_returns_all_uuids() {
         let all_keys = SystemPropertyKey::all_system_property_keys();
-        assert_eq!(all_keys.len(), 20);
+        assert_eq!(all_keys.len(), 24);
         assert!(all_keys.contains(&SystemPropertyKey::ASSIGNEES_UUID));
         assert!(all_keys.contains(&SystemPropertyKey::STATUS_UUID));
         assert!(all_keys.contains(&SystemPropertyKey::PRIORITY_UUID));
@@ -188,6 +195,10 @@ mod tests {
         assert!(all_keys.contains(&SystemPropertyKey::RELEVANT_DOCUMENTS_UUID));
         assert!(all_keys.contains(&SystemPropertyKey::MILESTONE_UUID));
         assert!(all_keys.contains(&SystemPropertyKey::START_DATE_UUID));
+        assert!(all_keys.contains(&SystemPropertyKey::DECISION_STATE_UUID));
+        assert!(all_keys.contains(&SystemPropertyKey::DECIDED_BY_UUID));
+        assert!(all_keys.contains(&SystemPropertyKey::DECIDED_AT_UUID));
+        assert!(all_keys.contains(&SystemPropertyKey::DECISION_SOURCES_UUID));
         assert!(all_keys.contains(&SystemPropertyKey::SOURCE_UUID));
         assert!(all_keys.contains(&SystemPropertyKey::COMPANIES_UUID));
         assert!(all_keys.contains(&SystemPropertyKey::SENDER_UUID));
@@ -288,6 +299,10 @@ mod tests {
             SystemPropertyKey::RelevantDocuments,
             SystemPropertyKey::Milestone,
             SystemPropertyKey::StartDate,
+            SystemPropertyKey::DecisionState,
+            SystemPropertyKey::DecidedBy,
+            SystemPropertyKey::DecidedAt,
+            SystemPropertyKey::DecisionSources,
             SystemPropertyKey::Source,
             SystemPropertyKey::Companies,
             SystemPropertyKey::Sender,

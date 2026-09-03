@@ -30,6 +30,8 @@ macro_rules! project_operations_from_row {
                 .map(CowLike::into_owned),
             start_date: row.start_date,
             target_date: row.target_date,
+            objective: row.objective,
+            next_action: row.next_action,
             completed_at: row.completed_at,
             created_at: row.created_at,
             updated_at: row.updated_at,
@@ -51,6 +53,8 @@ pub(super) async fn get_project_operations(
             operations.lead_user_id,
             operations.start_date,
             operations.target_date,
+            operations.objective,
+            operations.next_action,
             operations.completed_at,
             operations.created_at,
             operations.updated_at,
@@ -77,7 +81,8 @@ pub(super) async fn get_project_operations_scoped(
         r#"
         SELECT operations.project_id, operations.status, operations.priority,
                CASE WHEN lead_membership.user_id IS NULL THEN NULL ELSE operations.lead_user_id END AS lead_user_id,
-               operations.start_date, operations.target_date, operations.completed_at,
+               operations.start_date, operations.target_date, operations.objective,
+               operations.next_action, operations.completed_at,
                operations.created_at, operations.updated_at, operations.policy
         FROM "Project" project
         JOIN project_operations operations ON operations.project_id = project.id
@@ -106,7 +111,8 @@ pub(super) async fn update_project_operations(
         SELECT
             operations.project_id, operations.status, operations.priority,
             operations.lead_user_id, operations.start_date, operations.target_date,
-            operations.completed_at, operations.created_at, operations.updated_at, operations.policy,
+            operations.objective, operations.next_action, operations.completed_at,
+            operations.created_at, operations.updated_at, operations.policy,
             owner_membership.team_id AS owner_team_id
         FROM "Project" project
         JOIN project_operations operations ON operations.project_id = project.id
@@ -158,10 +164,10 @@ pub(super) async fn update_project_operations(
         r#"
         UPDATE project_operations
         SET status = $2, priority = $3, lead_user_id = $4, start_date = $5, target_date = $6,
-            completed_at = $7, policy = $8, updated_at = $9
+            objective = $7, next_action = $8, completed_at = $9, policy = $10, updated_at = $11
         WHERE project_id = $1
         RETURNING project_id, status, priority, lead_user_id, start_date, target_date,
-                  completed_at, created_at, updated_at, policy
+                  objective, next_action, completed_at, created_at, updated_at, policy
         "#,
         &command.request.project_id,
         resolved.status.to_string(),
@@ -169,6 +175,8 @@ pub(super) async fn update_project_operations(
         resolved.lead_user_id.as_ref().map(ToString::to_string),
         resolved.start_date,
         resolved.target_date,
+        resolved.objective,
+        resolved.next_action,
         resolved.completed_at,
         resolved.policy,
         command.request.now,
@@ -226,6 +234,8 @@ fn audit_changed_field(field: &'static str) -> business_audit::ProjectOperations
         "lead_user_id" => business_audit::ProjectOperationsChangedField::LeadUserId,
         "start_date" => business_audit::ProjectOperationsChangedField::StartDate,
         "target_date" => business_audit::ProjectOperationsChangedField::TargetDate,
+        "objective" => business_audit::ProjectOperationsChangedField::Objective,
+        "next_action" => business_audit::ProjectOperationsChangedField::NextAction,
         "policy" => business_audit::ProjectOperationsChangedField::Policy,
         "completed_at" => business_audit::ProjectOperationsChangedField::CompletedAt,
         _ => unreachable!("domain controls project-operation changed fields"),

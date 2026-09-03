@@ -594,6 +594,28 @@ pub struct CreateSkillResponse {
     pub document_id: String,
 }
 
+/// Request body for creating a project-scoped Decision markdown document.
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+#[cfg_attr(feature = "axum", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct CreateDecisionRequest {
+    /// The Decision title.
+    pub decision_name: String,
+    /// Markdown source text. Defaults to an empty Decision document.
+    pub markdown: Option<String>,
+    /// The project that owns this Decision.
+    pub project_id: uuid::Uuid,
+}
+
+/// Response for creating a Decision document.
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
+#[cfg_attr(feature = "axum", derive(utoipa::ToSchema))]
+#[serde(rename_all = "camelCase")]
+pub struct CreateDecisionResponse {
+    /// The document ID of the created Decision.
+    pub document_id: String,
+}
+
 /// A built-in system skill: static, code-defined AI instructions surfaced
 /// through the same tools as user-authored skill documents, but with no
 /// document behind them.

@@ -85,6 +85,7 @@ services:
   # Contact management - ContactsDB
   # ============================================================================
   contacts_service:
+    profiles: [extras, full]
     <<: [*common-env, *rust-services-image]
     command: ["/app/out/contacts_service"]
     ports:
@@ -106,6 +107,7 @@ services:
   # Document analysis and processing
   # ============================================================================
   document_cognition_service:
+    profiles: [ai, notifications, full]
     <<: [*common-env, *rust-services-image]
     command: ["/app/out/document_cognition_service"]
     ports:
@@ -196,6 +198,7 @@ services:
   # Email processing and management
   # ============================================================================
   email_service:
+    profiles: [email, ai, notifications, search, full]
     <<: [*common-env, *rust-services-image]
     command: ["/app/out/email_service"]
     ports:
@@ -225,6 +228,7 @@ services:
   # container alongside email_service. No HTTP port — pure SQS consumer.
   # ============================================================================
   email_pubsub_workers:
+    profiles: [email, full]
     <<: [*common-env, *rust-services-image]
     command: ["/app/out/pubsub_workers"]
     depends_on:
@@ -244,6 +248,7 @@ services:
   # User notifications - NotificationDB
   # ============================================================================
   notification_service:
+    profiles: [notifications, full]
     <<: [*common-env, *rust-services-image]
     command: ["/app/out/notification_service"]
     ports:
@@ -274,6 +279,7 @@ services:
   # Search indexing worker
   # ============================================================================
   search_processing_service:
+    profiles: [search, full]
     <<: [*common-env, *rust-services-image]
     command: ["/app/out/search_processing_service"]
     ports:
@@ -305,6 +311,7 @@ services:
   # instead. Trigger processing and external sessions run without either.
   # ============================================================================
   agent_harness_service:
+    profiles: [agent, full]
     <<: [*common-env, *rust-services-image]
     command: ["/app/out/agent_harness_service"]
     restart: on-failure
@@ -375,6 +382,7 @@ services:
   # URL unfurling - no dependencies
   # ============================================================================
   unfurl_service:
+    profiles: [extras, full]
     <<: [*common-env, *rust-services-image]
     command: ["/app/out/unfurl_service"]
     ports:
@@ -395,6 +403,7 @@ services:
   # Proxies external images to avoid CORS issues and IP leakage
   # ============================================================================
   image_proxy_service:
+    profiles: [extras, full]
     <<: [*common-env, *rust-services-image]
     command: ["/app/out/image_proxy_service"]
     ports:
@@ -470,6 +479,7 @@ services:
   # AI-powered document editing Cloudflare Worker (local wrangler dev)
   # ============================================================================
   ai_editing_worker:
+    profiles: [ai, notifications, full]
     <<: *common-env
     build:
       context: .
@@ -497,6 +507,7 @@ services:
   # if neither profile is up, trace exports just fail harmlessly.
   # ============================================================================
   analytics_proxy:
+    profiles: [extras, full]
     <<: *common-env
     build:
       context: .

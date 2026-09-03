@@ -7,6 +7,8 @@ pub mod activity;
 pub mod entity_mutation;
 pub mod events;
 pub mod models;
+/// Canonical project-report formulas shared by storage and presentation adapters.
+pub mod report;
 pub mod response;
 
 #[cfg(feature = "ports")]

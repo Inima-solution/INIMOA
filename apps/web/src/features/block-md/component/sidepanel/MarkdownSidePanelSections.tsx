@@ -1,4 +1,3 @@
-import { EntityActivitySectionConditional } from '@app/features/activity/EntityActivitySection';
 import {
   EntityPropertiesSection,
   EntityTagsSection,
@@ -67,6 +66,7 @@ import { HistoryScrubber } from '../../history/HistoryScrubber';
 import { HistorySessionList } from '../../history/HistorySessionList';
 import { mdStore } from '../../signal/markdownBlockData';
 import { TaskDuplicateMatchesSidePanelSection } from '../TaskDuplicateMatches';
+import { MarkdownActivitySection } from './MarkdownActivitySection';
 
 interface MarkdownSidePanelSectionsProps {
   canEdit: boolean;
@@ -128,9 +128,9 @@ export function MarkdownSidePanelSections(
           <HistorySectionContent />
         </SidePanel.Section>
       </Show>
-      <EntityActivitySectionConditional
-        entityId={blockId}
-        entityType={propertiesEntityType()}
+      <MarkdownActivitySection
+        blockId={blockId}
+        blockName={blockName}
         order={40}
       />
       <GithubSectionConditional documentId={blockId} isTask={isTask()} />

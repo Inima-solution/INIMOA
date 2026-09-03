@@ -513,6 +513,8 @@ fn operations_request(project_id: Uuid) -> crate::domain::models::UpdateProjectO
             lead_user_id: None,
             start_date: None,
             target_date: None,
+            objective: None,
+            next_action: None,
             policy: None,
             expected_updated_at: chrono::Utc::now(),
         },
@@ -538,6 +540,8 @@ fn operations_row(project_id: Uuid) -> crate::domain::models::ProjectOperations 
         lead_user_id: None,
         start_date: None,
         target_date: None,
+        objective: None,
+        next_action: None,
         completed_at: None,
         created_at: chrono::Utc::now(),
         updated_at: chrono::Utc::now(),
@@ -571,7 +575,7 @@ async fn task_progress_requires_matching_human_project_and_team_receipts_before_
     let project_id = Uuid::from_u128(305);
     let team_id = Uuid::from_u128(306);
     let actor = user_id("macro|owner@example.com");
-    let expected = crate::domain::models::ProjectTaskProgress::new(1, 2, true).unwrap();
+    let expected = crate::domain::models::ProjectTaskProgress::new(1, 0, 2, true).unwrap();
     let mut repo = MockProjectRepo::new();
     repo.expect_get_project_task_progress_scoped()
         .return_once(move |id, team| {
@@ -691,7 +695,7 @@ async fn task_risk_uses_one_scoped_read_with_the_caller_selected_date() {
     let team_id = Uuid::from_u128(0x504);
     let actor = user_id("macro|owner@example.com");
     let as_of_date = chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
-    let expected = crate::domain::models::ProjectTaskRisk::new(1, 2, 3, true, true).unwrap();
+    let expected = crate::domain::models::ProjectTaskRisk::new(1, 2, 3, 2, 1, true, true).unwrap();
     let expected_from_repo = expected.clone();
     let mut repo = MockProjectRepo::new();
     repo.expect_get_project_task_risk_scoped()
@@ -804,8 +808,10 @@ async fn overview_requires_matching_human_project_and_team_receipts_before_scope
     let as_of_date = chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
     let snapshot = overview_snapshot(project_id);
     let expected_operations = snapshot.operations.clone();
-    let expected_progress = crate::domain::models::ProjectTaskProgress::new(0, 0, false).unwrap();
-    let expected_risk = crate::domain::models::ProjectTaskRisk::new(1, 0, 0, false, false).unwrap();
+    let expected_progress =
+        crate::domain::models::ProjectTaskProgress::new(0, 0, 0, false).unwrap();
+    let expected_risk =
+        crate::domain::models::ProjectTaskRisk::new(1, 0, 0, 0, 0, false, false).unwrap();
     let mut repo = MockProjectRepo::new();
     repo.expect_get_project_overview_scoped()
         .return_once(move |id, team| {
@@ -1026,7 +1032,7 @@ async fn overview_fails_closed_when_aggregate_reads_are_absent_or_fail() {
         .return_once(|_, _| {
             Box::pin(async {
                 Ok(Some(
-                    crate::domain::models::ProjectTaskProgress::new(0, 0, false).unwrap(),
+                    crate::domain::models::ProjectTaskProgress::new(0, 0, 0, false).unwrap(),
                 ))
             })
         });
@@ -1049,7 +1055,7 @@ async fn overview_fails_closed_when_aggregate_reads_are_absent_or_fail() {
         .return_once(|_, _| {
             Box::pin(async {
                 Ok(Some(
-                    crate::domain::models::ProjectTaskProgress::new(0, 0, false).unwrap(),
+                    crate::domain::models::ProjectTaskProgress::new(0, 0, 0, false).unwrap(),
                 ))
             })
         });

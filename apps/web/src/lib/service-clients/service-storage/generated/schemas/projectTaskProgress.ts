@@ -18,4 +18,6 @@ export interface ProjectTaskProgress {
   hasUnavailableStatuses: boolean;
   /** Direct live tasks included in progress; canceled tasks are excluded. */
   includedTasks: number;
+  /** Direct live tasks whose exact singleton status is In Progress or In Review. */
+  wipTasks: number;
 }

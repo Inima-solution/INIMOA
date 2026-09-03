@@ -69,7 +69,8 @@ function historyItemFromSearchDocument(
       const subType =
         document.bucket === 'task' ||
         document.bucket === 'snippet' ||
-        document.bucket === 'skill'
+        document.bucket === 'skill' ||
+        document.bucket === 'decision'
           ? {
               type: document.bucket,
               ...(document.bucket === 'task'
@@ -86,6 +87,7 @@ function historyItemFromSearchDocument(
         ...base,
         type: 'document',
         fileType: markdown ? 'md' : undefined,
+        projectId: record.projectId,
         subType,
       } as HistoryItem;
     }
@@ -148,6 +150,7 @@ export async function readCachedGraphqlHistoryItems(
       'task',
       'snippet',
       'skill',
+      'decision',
       'chat',
       'project',
     ],

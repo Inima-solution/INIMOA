@@ -12,7 +12,10 @@ type BaseHistoryItem = Pick<Item, 'id' | 'name'> & {
 };
 
 export type DocumentHistoryItem = BaseHistoryItem &
-  Pick<Extract<Item, { type: 'document' }>, 'type' | 'fileType' | 'subType'>;
+  Pick<
+    Extract<Item, { type: 'document' }>,
+    'type' | 'fileType' | 'subType' | 'projectId'
+  >;
 
 export type ChatHistoryItem = BaseHistoryItem &
   Pick<Extract<Item, { type: 'chat' }>, 'type' | 'isPersistent'>;

@@ -3,9 +3,10 @@
 //! per-instance external networks/volumes. (Compose orchestration itself stays
 //! on the CLI; bollard has no compose support.)
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail, ensure};
 use bollard::Docker;
-use bollard::models::{NetworkCreateRequest, VolumeCreateRequest};
+use bollard::models::{Network, NetworkCreateRequest, VolumeCreateRequest};
+use bollard::query_parameters::ListNetworksOptionsBuilder;
 use macro_env_var::maybe_env_var;
 
 /// Run a future to completion on a throwaway current-thread runtime (xtask's
@@ -31,10 +32,19 @@ fn connect() -> Result<Docker> {
     }
 }
 
-/// Idempotently create a bridge network (no-op if it already exists).
+/// Idempotently create a bridge network (no-op if exactly one already exists).
 pub fn ensure_network(name: &str) -> Result<()> {
     block_on(async {
         let docker = connect()?;
+
+        match exact_network_count(&docker, name).await? {
+            0 => {}
+            1 => return Ok(()),
+            count => bail!(
+                "found {count} Docker networks named {name}; refusing to choose an ambiguous network"
+            ),
+        }
+
         match docker
             .create_network(NetworkCreateRequest {
                 name: name.to_string(),
@@ -42,11 +52,35 @@ pub fn ensure_network(name: &str) -> Result<()> {
             })
             .await
         {
-            Ok(_) => Ok(()),
-            Err(e) if already_exists(&e) => Ok(()),
-            Err(e) => Err(e).with_context(|| format!("creating network {name}")),
-        }
+            Ok(_) => {}
+            Err(e) if already_exists(&e) => {}
+            Err(e) => return Err(e).with_context(|| format!("creating network {name}")),
+        };
+
+        let count = exact_network_count(&docker, name).await?;
+        ensure!(
+            count == 1,
+            "found {count} Docker networks named {name} after creation; a concurrent creator made the network ambiguous"
+        );
+        Ok(())
     })
+}
+
+async fn exact_network_count(docker: &Docker, name: &str) -> Result<usize> {
+    let filters = std::collections::HashMap::from([("name", vec![name])]);
+    let options = ListNetworksOptionsBuilder::new().filters(&filters).build();
+    let networks = docker
+        .list_networks(Some(options))
+        .await
+        .with_context(|| format!("listing networks named {name}"))?;
+    Ok(count_exact_network_names(&networks, name))
+}
+
+fn count_exact_network_names(networks: &[Network], name: &str) -> usize {
+    networks
+        .iter()
+        .filter(|network| network.name.as_deref() == Some(name))
+        .count()
 }
 
 /// Idempotently create a named volume (no-op if it already exists).
@@ -70,6 +104,43 @@ pub fn ensure_volume(name: &str) -> Result<()> {
 fn already_exists(e: &bollard::errors::Error) -> bool {
     let s = e.to_string();
     s.contains("already exists") || s.contains("409")
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    fn network(name: Option<&str>) -> Network {
+        Network {
+            name: name.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn exact_network_count_ignores_partial_name_matches() {
+        let networks = [
+            network(Some("databases-inimoa-dx1")),
+            network(Some("databases-inimoa-dx1-old")),
+            network(Some("prefix-databases-inimoa-dx1")),
+            network(None),
+        ];
+
+        assert_eq!(
+            count_exact_network_names(&networks, "databases-inimoa-dx1"),
+            1
+        );
+    }
+
+    #[test]
+    fn exact_network_count_exposes_ambiguous_duplicates() {
+        let networks = [
+            network(Some("auth-inimoa-dx1")),
+            network(Some("auth-inimoa-dx1")),
+        ];
+
+        assert_eq!(count_exact_network_names(&networks, "auth-inimoa-dx1"), 2);
+    }
 }
 
 /// A container belonging to a compose project, as `status-local` reports it.

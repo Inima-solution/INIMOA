@@ -138,10 +138,37 @@ vi.mock('@property/editors/selectors/PropertyEntitySelector', () => ({
     </button>
   ),
 }));
-vi.mock('@ui', () => ({
-  Button: 'button',
-  cn: (...values: string[]) => values.join(' '),
-}));
+vi.mock('@ui', () => {
+  const Checkbox = Object.assign(
+    (props: {
+      checked: boolean;
+      onChange: (checked: boolean) => void;
+      children?: JSX.Element;
+    }) => (
+      <label>
+        <input
+          type="checkbox"
+          checked={props.checked}
+          onChange={(event) => props.onChange(event.currentTarget.checked)}
+        />
+        {props.children}
+      </label>
+    ),
+    {
+      Control: () => null,
+      Label: (props: { children?: JSX.Element }) => (
+        <span>{props.children}</span>
+      ),
+    }
+  );
+  return {
+    Button: (props: JSX.ButtonHTMLAttributes<HTMLButtonElement>) => (
+      <button {...props} />
+    ),
+    Checkbox,
+    cn: (...values: string[]) => values.join(' '),
+  };
+});
 vi.mock('./consolidated-filter-chip', () => ({
   ConsolidatedFilterChip: () => null,
 }));
@@ -368,6 +395,46 @@ describe('MobileFilterDrawer due date', () => {
           { propertyId: 'status', type: 'select', value: 'open' },
           { propertyId: 'status', type: 'select', value: 'closed' },
           { propertyId: 'reviewer', type: 'entity', value: 'user-1' },
+        ],
+      },
+    });
+    view.unmount();
+  });
+
+  it('uses the shared finite Number editor and preserves unrelated property filters', () => {
+    state.propertyDefinitions = [
+      {
+        definition: {
+          id: 'estimate',
+          display_name: 'Estimate',
+          data_type: 'NUMBER',
+          is_system: false,
+        },
+        property_options: [],
+      },
+    ];
+    state.queryFilters.state.include = {
+      properties: [{ propertyId: 'keep', type: 'select', value: 'open' }],
+    };
+    const view = render(() => <MobileFilterDrawer />);
+    fireEvent.input(screen.getByLabelText('Estimate lower bound'), {
+      target: { value: '2' },
+    });
+    fireEvent.input(screen.getByLabelText('Estimate upper bound'), {
+      target: { value: '5' },
+    });
+    fireEvent.click(screen.getByLabelText('Exclude matching tasks'));
+    fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+    expect(state.queryFilters.set).toHaveBeenLastCalledWith({
+      include: {
+        properties: [
+          { propertyId: 'keep', type: 'select', value: 'open' },
+          {
+            propertyId: 'estimate',
+            type: 'number',
+            range: { gte: 2, lte: 5 },
+            exclude: true,
+          },
         ],
       },
     });
