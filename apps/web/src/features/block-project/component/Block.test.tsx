@@ -11,6 +11,9 @@ const mocks = vi.hoisted(() => ({
     | undefined,
   dependencyProviderTaskIds: [] as string[][],
   dependencyProviderCount: 0,
+  decisionListProps: undefined as
+    | { projectId: string; scopeId: string }
+    | undefined,
   boardProps: undefined as
     | {
         activeStatusTaskId?: string;
@@ -100,12 +103,12 @@ const mocks = vi.hoisted(() => ({
   searchText: '',
   topBarProps: undefined as
     | {
-        mode: 'list' | 'board' | 'timeline';
-        onChange: (mode: 'list' | 'board' | 'timeline') => void;
+        mode: 'list' | 'board' | 'timeline' | 'decisions';
+        onChange: (mode: 'list' | 'board' | 'timeline' | 'decisions') => void;
         selectorVisible: boolean;
       }
     | undefined,
-  viewMode: 'list' as 'list' | 'board' | 'timeline',
+  viewMode: 'list' as 'list' | 'board' | 'timeline' | 'decisions',
   uploadCallback: undefined as
     | ((files: UploadInput[]) => Promise<void>)
     | undefined,
@@ -296,6 +299,12 @@ vi.mock('@service-storage/util/refetchResources', () => ({
 vi.mock('./ModalsProvider', () => ({
   ModalsProvider: (props: ParentProps) => props.children,
 }));
+vi.mock('./ProjectDecisionList', () => ({
+  ProjectDecisionList: (props: { projectId: string; scopeId: string }) => {
+    mocks.decisionListProps = props;
+    return <div data-testid="project-decision-list" />;
+  },
+}));
 vi.mock('./sidepanel/ProjectSidePanelSections', () => ({
   ProjectSidePanelSections: (props: { query: unknown }) => {
     mocks.sidePanelQuery = props.query;
@@ -342,6 +351,7 @@ beforeEach(() => {
   mocks.blockEntityResolver = undefined;
   mocks.dependencyProviderCount = 0;
   mocks.dependencyProviderTaskIds = [];
+  mocks.decisionListProps = undefined;
   mocks.boardProps = undefined;
   mocks.timelineProps = undefined;
   mocks.canEdit = true;
@@ -837,6 +847,30 @@ describe('project task dependency relation batching', () => {
     });
     expect(mocks.sourceFetchNextPage).not.toHaveBeenCalled();
     expect(document.querySelector('[data-testid="soup-view-list"]')).toBeNull();
+  });
+
+  it('mounts the project-scoped Decision list only in Decisions mode', () => {
+    render(() => <Block />);
+
+    expect(mocks.decisionListProps).toBeUndefined();
+    expect(
+      document.querySelector('[data-testid="project-decision-list"]')
+    ).toBeNull();
+
+    mocks.topBarProps?.onChange('decisions');
+
+    expect(mocks.decisionListProps).toEqual({
+      projectId: 'project-id',
+      scopeId: 'scope-id',
+    });
+    expect(
+      document.querySelector('[data-testid="project-decision-list"]')
+    ).toBeTruthy();
+    expect(
+      document.querySelector('[data-testid="project-milestone-filter"]')
+    ).toBeNull();
+    expect(mocks.boardProps).toBeUndefined();
+    expect(mocks.timelineProps).toBeUndefined();
   });
 
   it('preserves the shared Task filter control and source across ordinary List, Board, and List', () => {

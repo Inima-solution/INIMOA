@@ -40,6 +40,10 @@ import {
   INBOX_FILTER_ENTRY_KEY,
   registerInboxFilterSplit,
 } from '@app/features/next-soup/soup-view/inbox-filter-controllers';
+import {
+  selectSoupViewInitialValue,
+  soupViewEntryStateKey,
+} from '@app/features/next-soup/soup-view/soup-view-entry-state';
 import { useSoupFilterPersistence } from '@app/features/next-soup/use-soup-filter-persistence';
 import {
   deduplicateEntities,
@@ -204,7 +208,25 @@ export const useMaybeSoupView = () => useContext(SoupViewContext);
 interface SoupViewContextProviderProps extends SoupViewInitializeOptions {
   soup?: SoupState;
   initialEnabled?: boolean;
+  /**
+   * Isolates this provider's split-history state from another Soup provider
+   * mounted in the same entry (for example a Project's content and Decisions
+   * modes). Omitted to preserve every existing entry-state key.
+   */
+  entryStateNamespace?: string;
 }
+
+type SoupViewEntryStateKey =
+  | 'search.filters'
+  | 'search.predicates'
+  | 'search.text'
+  | 'soup.assigneeFilter'
+  | 'soup.ownerFilter'
+  | 'soup.stageFilter'
+  | typeof INBOX_FILTER_ENTRY_KEY
+  | 'soup.tab'
+  | 'soup.viewMode'
+  | 'soup.readFilter';
 
 type PersistedQueryFilters = Partial<
   Record<ListView, Partial<Record<string, QueryState>>>
@@ -293,6 +315,11 @@ function rawEntityNotifications(
 export const SoupViewContextProvider: FlowComponent<
   SoupViewContextProviderProps
 > = (props) => {
+  const entryStateKey = (key: SoupViewEntryStateKey) =>
+    soupViewEntryStateKey(key, props.entryStateNamespace);
+  const queryEntryStateKey = entryStateKey('search.filters');
+  const predicatesEntryStateKey = entryStateKey('search.predicates');
+  const tabEntryStateKey = entryStateKey('soup.tab');
   const soup = props.soup ?? createSoupState();
   const [enabled, setEnabled] = createSignal(props.initialEnabled ?? false);
   const [config, setConfig] = createSignal<SoupViewInitializeOptions>({
@@ -317,17 +344,11 @@ export const SoupViewContextProvider: FlowComponent<
   });
 
   const initialEntryState = panel.handle.currentEntryState();
-  const initialEntryQuery = initialEntryState?.['search.filters'] as
-    | Query
-    | undefined;
-  const initialEntryPredicates = initialEntryState?.['search.predicates'] as
-    | SetPredicatesInput<string>
-    | undefined;
   const initialView = activeListView();
   const initialTab = initialView
     ? resolveTabId(
         initialView,
-        (initialEntryState?.['soup.tab'] as string | undefined) ??
+        (initialEntryState?.[tabEntryStateKey] as string | undefined) ??
           (filterPersistenceEnabled()
             ? persistedActiveTabs()[initialView]
             : undefined)
@@ -343,22 +364,28 @@ export const SoupViewContextProvider: FlowComponent<
       : undefined;
 
   const store = createQueryStore({
-    initial:
-      initialEntryQuery ??
-      (props.preferInitialFilters ? props.initialQuery : undefined) ??
-      initialPersistedQuery ??
-      props.initialQuery,
+    initial: selectSoupViewInitialValue({
+      entryState: initialEntryState,
+      key: 'search.filters',
+      namespace: props.entryStateNamespace,
+      initialValue: props.initialQuery,
+      persistedValue: initialPersistedQuery,
+      preferInitial: props.preferInitialFilters,
+    }),
   });
 
-  const initialPredicates =
-    initialEntryPredicates ??
-    (props.preferInitialFilters ? props.initialClientFilters : undefined) ??
-    initialPersistedPredicates ??
-    props.initialClientFilters;
+  const initialPredicates = selectSoupViewInitialValue({
+    entryState: initialEntryState,
+    key: 'search.predicates',
+    namespace: props.entryStateNamespace,
+    initialValue: props.initialClientFilters,
+    persistedValue: initialPersistedPredicates,
+    preferInitial: props.preferInitialFilters,
+  });
   if (initialPredicates) soup.predicates.set(initialPredicates);
 
   const filterCaptorTeardown = panel.handle.registerEntryStateCaptor(
-    'search.filters',
+    queryEntryStateKey,
     () => structuredClone(unwrap(store.state)) as Query
   );
   onCleanup(filterCaptorTeardown);
@@ -367,7 +394,7 @@ export const SoupViewContextProvider: FlowComponent<
   // toggleable filters) also needs to round-trip per entry, since the chip UI
   // reads predicates directly and would otherwise show empty after back-nav.
   const predicatesCaptorTeardown = panel.handle.registerEntryStateCaptor(
-    'search.predicates',
+    predicatesEntryStateKey,
     (): SetPredicatesInput<string> => ({
       and: [...soup.predicates.andIds()],
       or: [...soup.predicates.orIds()],
@@ -465,28 +492,30 @@ export const SoupViewContextProvider: FlowComponent<
   const [searchPaused, setSearchPaused] = createSignal(false);
   const sourceSearchPaused = createMemo(() => searchPaused() || !enabled());
   const [assigneeFilter, setAssigneeFilter] = makeFlaggedPersisted(
-    useEntryState<string[]>('soup.assigneeFilter', { default: [] }),
+    useEntryState<string[]>(entryStateKey('soup.assigneeFilter'), {
+      default: [],
+    }),
     {
       enabled: filterPersistenceEnabled,
       name: soupViewPersistenceKey('soup-view-assignee-filter'),
     }
   );
   const [ownerFilter, setOwnerFilter] = makeFlaggedPersisted(
-    useEntryState<string[]>('soup.ownerFilter', { default: [] }),
+    useEntryState<string[]>(entryStateKey('soup.ownerFilter'), { default: [] }),
     {
       enabled: filterPersistenceEnabled,
       name: soupViewPersistenceKey('soup-view-owner-filter'),
     }
   );
   const [stageFilter, setStageFilter] = makeFlaggedPersisted(
-    useEntryState<string[]>('soup.stageFilter', { default: [] }),
+    useEntryState<string[]>(entryStateKey('soup.stageFilter'), { default: [] }),
     {
       enabled: filterPersistenceEnabled,
       name: soupViewPersistenceKey('soup-view-stage-filter'),
     }
   );
   const [inboxFilter, setInboxFilter] = makeFlaggedPersisted(
-    useEntryState<string[] | undefined>(INBOX_FILTER_ENTRY_KEY, {
+    useEntryState<string[] | undefined>(entryStateKey(INBOX_FILTER_ENTRY_KEY), {
       default: undefined,
     }),
     {
@@ -512,7 +541,7 @@ export const SoupViewContextProvider: FlowComponent<
     }
   });
   const [activeTab, setActiveTab] = useEntryState<string | undefined>(
-    'soup.tab',
+    tabEntryStateKey,
     { default: initialTab }
   );
 
@@ -580,16 +609,16 @@ export const SoupViewContextProvider: FlowComponent<
       const entryState = panel.handle.currentEntryState();
       const tabId = resolveTabId(
         view,
-        (entryState?.['soup.tab'] as string | undefined) ??
+        (entryState?.[tabEntryStateKey] as string | undefined) ??
           persistedActiveTabs()[view] ??
           activeTab()
       );
       const query =
-        entryState && 'search.filters' in entryState
+        entryState && queryEntryStateKey in entryState
           ? undefined
           : persistedQueryFor(view, tabId);
       const predicates =
-        entryState && 'search.predicates' in entryState
+        entryState && predicatesEntryStateKey in entryState
           ? undefined
           : persistedPredicatesFor(view, tabId);
 
@@ -603,11 +632,14 @@ export const SoupViewContextProvider: FlowComponent<
 
   // List/board display mode — per-entry state so back/forward restores the
   // mode the user left each entry with.
-  const [viewMode, setViewMode] = useEntryState<SoupViewMode>('soup.viewMode', {
-    default: 'board',
-  });
+  const [viewMode, setViewMode] = useEntryState<SoupViewMode>(
+    entryStateKey('soup.viewMode'),
+    { default: 'board' }
+  );
   const [readFilter, setReadFilter] = makeFlaggedPersisted(
-    useEntryState<ReadFilter>('soup.readFilter', { default: 'unread' }),
+    useEntryState<ReadFilter>(entryStateKey('soup.readFilter'), {
+      default: 'unread',
+    }),
     {
       enabled: filterPersistenceEnabled,
       name: soupViewPersistenceKey('soup-view-read-filter'),
@@ -795,9 +827,10 @@ export const SoupViewContextProvider: FlowComponent<
     compileToAst(applyViewFilters(queryFilters.state))
   );
 
-  const [searchText, setSearchText] = useEntryState<string>('search.text', {
-    default: props.initialSearchText ?? '',
-  });
+  const [searchText, setSearchText] = useEntryState<string>(
+    entryStateKey('search.text'),
+    { default: props.initialSearchText ?? '' }
+  );
 
   // The split's effective search text — derived, never synchronized: while
   // the dock search session is open and this split is foregrounded, it IS the
@@ -829,12 +862,11 @@ export const SoupViewContextProvider: FlowComponent<
         setConfig(options);
 
         const entryState = panel.handle.currentEntryState();
-        const entryQuery = entryState?.['search.filters'] as Query | undefined;
         const view = activeListView();
         const tabId = view
           ? resolveTabId(
               view,
-              (entryState?.['soup.tab'] as string | undefined) ??
+              (entryState?.[tabEntryStateKey] as string | undefined) ??
                 (filterPersistenceEnabled()
                   ? persistedActiveTabs()[view]
                   : undefined)
@@ -846,29 +878,30 @@ export const SoupViewContextProvider: FlowComponent<
           filterPersistenceEnabled() && view && tabId
             ? persistedQueryFor(view, tabId)
             : undefined;
-        const entryPredicates = entryState?.['search.predicates'] as
-          | SetPredicatesInput<string>
-          | undefined;
         const savedPredicates =
           filterPersistenceEnabled() && view && tabId
             ? persistedPredicatesFor(view, tabId)
             : undefined;
 
         queryFilters.replace(
-          entryQuery ??
-            (options.preferInitialFilters ? options.initialQuery : undefined) ??
-            persistedQuery ??
-            options.initialQuery ??
-            null
+          selectSoupViewInitialValue({
+            entryState,
+            key: 'search.filters',
+            namespace: props.entryStateNamespace,
+            initialValue: options.initialQuery,
+            persistedValue: persistedQuery,
+            preferInitial: options.preferInitialFilters,
+          }) ?? null
         );
         soup.predicates.set(
-          entryPredicates ??
-            (options.preferInitialFilters
-              ? options.initialClientFilters
-              : undefined) ??
-            savedPredicates ??
-            options.initialClientFilters ??
-            {}
+          selectSoupViewInitialValue({
+            entryState,
+            key: 'search.predicates',
+            namespace: props.entryStateNamespace,
+            initialValue: options.initialClientFilters,
+            persistedValue: savedPredicates,
+            preferInitial: options.preferInitialFilters,
+          }) ?? {}
         );
         setSearchText(options.initialSearchText ?? '');
         setEnabled(true);

@@ -8,6 +8,7 @@ import { type HotkeyToken, TOKENS } from '@core/hotkey/tokens';
 import {
   createCanvasFileFromJsonString,
   createChat,
+  createDecision,
   createMarkdownFile,
   createTask,
 } from '@core/util/create';
@@ -29,7 +30,7 @@ type MenuItemProps = {
 type CreateBlockSpec = {
   label: string;
   blockName: BlockName | BlockAlias;
-  hotkeyToken: HotkeyToken;
+  hotkeyToken?: HotkeyToken;
   icon: Component;
   loading?: boolean;
   createFn: (projectId: string) => Promise<string>;
@@ -37,6 +38,30 @@ type CreateBlockSpec = {
 };
 
 const BLOCK_CREATE_SPECS: CreateBlockSpec[] = [
+  {
+    label: 'Decision',
+    blockName: 'decision' as BlockAlias,
+    icon: () => (
+      <div class="size-4 shrink-0">
+        <EntityIcon
+          targetType="decision"
+          size="shrinkFill"
+          theme="monochrome"
+        />
+      </div>
+    ),
+    loading: true,
+    createFn: async (projectId) => {
+      const result = await createDecision({
+        title: '',
+        content: '',
+        projectId,
+        source: 'project-create-menu',
+      });
+      if (!result) throw new Error('Failed to create decision');
+      return result;
+    },
+  },
   {
     label: 'Note',
     blockName: 'md' as BlockName,

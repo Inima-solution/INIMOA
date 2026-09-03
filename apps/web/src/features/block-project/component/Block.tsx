@@ -52,6 +52,7 @@ import { refetchResources } from '@service-storage/util/refetchResources';
 import { type Component, createMemo, createSignal, Show } from 'solid-js';
 import { projectBlockDataSignal } from '../signal/projectBlockData';
 import { ModalsProvider } from './ModalsProvider';
+import { ProjectDecisionList } from './ProjectDecisionList';
 import { ProjectTaskDeadlineTimeline } from './ProjectTaskDeadlineTimeline';
 import { ProjectTaskStatusBoard } from './ProjectTaskStatusBoard';
 import type { ProjectTaskViewMode } from './ProjectViewModeControl';
@@ -175,15 +176,25 @@ const Block: Component = () => {
                 onChange={setTaskViewMode}
                 selectorVisible={!isSpecialProject}
               />
-              <ProjectEntityList
-                mode={viewMode()}
-                projectId={projectId}
-                soup={projectSoup}
-                projectOverview={projectOverview}
-                // Scope is already attached by the block container so we can use that
-                // Change this when we remove blocks
-                scopeId={blockHotkeyScopeSignal.get()}
-              />
+              <Show
+                when={!isSpecialProject && viewMode() === 'decisions'}
+                fallback={
+                  <ProjectEntityList
+                    mode={viewMode()}
+                    projectId={projectId}
+                    soup={projectSoup}
+                    projectOverview={projectOverview}
+                    // Scope is already attached by the block container so we can use that
+                    // Change this when we remove blocks
+                    scopeId={blockHotkeyScopeSignal.get()}
+                  />
+                }
+              >
+                <ProjectDecisionList
+                  projectId={projectId}
+                  scopeId={blockHotkeyScopeSignal.get()}
+                />
+              </Show>
             </div>
           </SidePanel.Layout>
         </ModalsProvider>
@@ -368,7 +379,7 @@ const ProjectSoupViewList = (props: {
   return (
     <TaskSubtaskProgressProvider taskIds={taskIds}>
       <TaskDependencyRelationsProvider taskIds={taskIds}>
-        <Show when={!props.isSpecialProject}>
+        <Show when={!props.isSpecialProject && props.mode !== 'decisions'}>
           <SplitToolbarLeft>
             <CollapsibleToolbarItem
               id="project-toolbar-task-filter"

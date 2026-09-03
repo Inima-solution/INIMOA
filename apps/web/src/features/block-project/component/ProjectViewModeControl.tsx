@@ -1,6 +1,6 @@
 import { SegmentedControl } from '@ui';
 
-export type ProjectTaskViewMode = 'list' | 'board' | 'timeline';
+export type ProjectTaskViewMode = 'list' | 'board' | 'timeline' | 'decisions';
 
 export function ProjectViewModeControl(props: {
   mode: ProjectTaskViewMode;
@@ -13,7 +13,7 @@ export function ProjectViewModeControl(props: {
     <SegmentedControl
       value={props.mode}
       onChange={props.onChange}
-      aria-label="Project task view"
+      aria-label="Project view"
       size="sm"
       class={
         isTouch()
@@ -24,6 +24,7 @@ export function ProjectViewModeControl(props: {
         { value: 'list', label: 'List' },
         { value: 'board', label: 'Board' },
         { value: 'timeline', label: 'Timeline' },
+        { value: 'decisions', label: 'Decisions' },
       ]}
     />
   );
