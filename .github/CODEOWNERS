@@ -1,2 +1,4 @@
-/crates/macro_db_client/migrations/ @macro-inc/infra
-/infra/ @macro-inc/infra
+# Repository ownership is documentary until main-branch rules are enabled.
+# INIMOA currently has one GitHub collaborator, so requiring a Code Owner
+# approval would deadlock that owner's own pull requests.
+* @Ahn-Hyun
