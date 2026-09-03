@@ -7,11 +7,13 @@ import {
   getTaskPriorityOptionId,
   getTaskScheduleProjection,
   getTaskStatusOptionId,
+  isTaskMilestone,
 } from '@entity/utils/task-properties';
 import {
   TaskDependencyRelations,
   useTaskDependencyRelations,
 } from '@property/task-dependency-relations';
+import { TaskSubtaskProgressIndicator } from '@property/task-subtask-progress';
 import { createResizeObserver } from '@solid-primitives/resize-observer';
 import { Button, EmptyStatePanel } from '@ui';
 import {
@@ -444,10 +446,10 @@ export function ProjectTaskDeadlineTimeline(props: {
                           };
 
                           return (
-                            <li>
+                            <li class="flex min-w-0 items-center gap-2">
                               <button
                                 type="button"
-                                class="relative flex min-h-10 w-full min-w-0 items-center gap-2 px-3 py-1 text-left text-sm text-ink hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 touch:min-h-11"
+                                class="relative flex min-h-10 min-w-0 flex-1 items-center gap-2 px-3 py-1 text-left text-sm text-ink hover:bg-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/40 touch:min-h-11"
                                 onClick={(event) =>
                                   props.onOpenTask(task, event)
                                 }
@@ -525,6 +527,12 @@ export function ProjectTaskDeadlineTimeline(props: {
                                   )}
                                 </Show>
                               </button>
+                              <Show when={isTaskMilestone(task)}>
+                                <TaskSubtaskProgressIndicator
+                                  taskId={task.id}
+                                  mode="row"
+                                />
+                              </Show>
                             </li>
                           );
                         })()

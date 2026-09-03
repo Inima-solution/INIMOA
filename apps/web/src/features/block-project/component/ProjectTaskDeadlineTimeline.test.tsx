@@ -28,6 +28,7 @@ const mocks = vi.hoisted(() => ({
         | undefined)
     | undefined,
   relationLookupCalls: [] as string[],
+  progressTaskIds: [] as string[],
 }));
 
 vi.mock('@core/component/LoadingBlock', () => ({
@@ -65,6 +66,16 @@ vi.mock('@property/task-dependency-relations', () => ({
     );
   },
 }));
+vi.mock('@property/task-subtask-progress', () => ({
+  TaskSubtaskProgressIndicator: (props: { taskId: string; mode?: string }) => {
+    mocks.progressTaskIds.push(props.taskId);
+    return (
+      <span data-testid="task-subtask-progress" data-mode={props.mode}>
+        Derived progress
+      </span>
+    );
+  },
+}));
 
 afterEach(() => {
   cleanup();
@@ -72,6 +83,7 @@ afterEach(() => {
   mocks.resizeCallbacks = [];
   mocks.relationsForTask = undefined;
   mocks.relationLookupCalls = [];
+  mocks.progressTaskIds = [];
   vi.useRealTimers();
 });
 
@@ -687,13 +699,18 @@ describe('ProjectTaskDeadlineTimeline', () => {
     expect(onOpenTask).toHaveBeenCalledTimes(2);
   });
 
-  it('renders one row-mode dependency relation for every visible task in source order without a standalone milestone label', () => {
+  it('renders derived progress only for milestones and keeps every row relation', () => {
     const first = task('First', due('2026-04-10T08:00:00'), true);
     const second = task('Second', due('2026-04-10T10:00:00'));
     const third = task('Third', due('2026-04-10T12:00:00'));
+    const malformed = withProperty(
+      task('Malformed milestone', due('2026-04-10T14:00:00')),
+      SYSTEM_PROPERTY_IDS.MILESTONE,
+      { type: 'Boolean', value: 'true' }
+    );
     const view = render(() => (
       <ProjectTaskDeadlineTimeline
-        tasks={[first, second, third]}
+        tasks={[first, second, third, malformed]}
         onOpenTask={() => {}}
       />
     ));
@@ -702,9 +719,18 @@ describe('ProjectTaskDeadlineTimeline', () => {
       { taskId: first.id, task: first, mode: 'row' },
       { taskId: second.id, task: second, mode: 'row' },
       { taskId: third.id, task: third, mode: 'row' },
+      { taskId: malformed.id, task: malformed, mode: 'row' },
     ]);
-    expect(view.getAllByTestId('task-dependency-relation')).toHaveLength(3);
-    expect(view.queryByText('Milestone')).toBeNull();
+    expect(view.getAllByTestId('task-dependency-relation')).toHaveLength(4);
+    expect(view.getAllByTestId('task-subtask-progress')).toHaveLength(1);
+    expect(
+      view.getByTestId('task-subtask-progress').getAttribute('data-mode')
+    ).toBe('row');
+    expect(
+      view.getByTestId('task-subtask-progress').closest('button')
+    ).toBeNull();
+    expect(view.getByRole('button', { name: /First/ })).toBeTruthy();
+    expect(mocks.progressTaskIds).toEqual([first.id]);
   });
 
   it('does not invoke the relation renderer when the timeline has no visible tasks', () => {

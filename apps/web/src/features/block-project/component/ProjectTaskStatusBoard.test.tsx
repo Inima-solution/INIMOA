@@ -13,6 +13,7 @@ import { ProjectTaskStatusBoard } from './ProjectTaskStatusBoard';
 const mocks = vi.hoisted(() => ({
   contextMenuEntities: [] as TaskEntityWithProperties[],
   relationTasks: [] as TaskEntityWithProperties[],
+  progressTaskIds: [] as string[],
 }));
 
 vi.mock('@core/component/LoadingBlock', () => ({
@@ -47,11 +48,22 @@ vi.mock('@property/task-dependency-relations', () => ({
     );
   },
 }));
+vi.mock('@property/task-subtask-progress', () => ({
+  TaskSubtaskProgressIndicator: (props: { taskId: string; mode?: string }) => {
+    mocks.progressTaskIds.push(props.taskId);
+    return (
+      <span data-testid="task-subtask-progress" data-mode={props.mode}>
+        Derived progress
+      </span>
+    );
+  },
+}));
 
 afterEach(() => {
   cleanup();
   mocks.contextMenuEntities = [];
   mocks.relationTasks = [];
+  mocks.progressTaskIds = [];
 });
 
 function task(name: string, status?: unknown): TaskEntityWithProperties {
@@ -78,6 +90,28 @@ function task(name: string, status?: unknown): TaskEntityWithProperties {
 
 function selectedStatus(value: string) {
   return { type: 'SelectOption', value: [value] };
+}
+
+function milestoneTask(name: string) {
+  const item = task(name);
+  item.properties = [
+    {
+      definition: { id: SYSTEM_PROPERTY_IDS.MILESTONE },
+      value: { type: 'Boolean', value: true },
+    } as unknown as SoupProperty,
+  ];
+  return item;
+}
+
+function malformedMilestoneTask(name: string) {
+  const item = task(name);
+  item.properties = [
+    {
+      definition: { id: SYSTEM_PROPERTY_IDS.MILESTONE },
+      value: { type: 'Boolean', value: 'true' },
+    } as unknown as SoupProperty,
+  ];
+  return item;
 }
 
 const statusProperty = {
@@ -210,17 +244,23 @@ describe('ProjectTaskStatusBoard', () => {
     expect(onOpenTask).toHaveBeenCalledTimes(3);
   });
 
-  it('places each task under the existing board row with its row-mode relation component', () => {
-    const milestone = task('Milestone task');
+  it('places derived progress only on milestone rows and preserves relation rendering', () => {
+    const milestone = milestoneTask('Milestone task');
+    const ordinary = task('Ordinary task');
+    const malformed = malformedMilestoneTask('Malformed milestone');
     const view = render(() => (
-      <ProjectTaskStatusBoard tasks={[milestone]} onOpenTask={() => {}} />
+      <ProjectTaskStatusBoard
+        tasks={[milestone, ordinary, malformed]}
+        onOpenTask={() => {}}
+      />
     ));
 
-    const relation = view.getByTestId('task-dependency-relation');
-    expect(relation.getAttribute('data-mode')).toBe('row');
-    expect(relation.textContent).toBe('Milestone task');
-    expect(mocks.relationTasks).toEqual([milestone]);
-    expect(relation.closest('[data-testid="task-context-menu"]')).toBeTruthy();
+    const progress = view.getByTestId('task-subtask-progress');
+    expect(progress.getAttribute('data-mode')).toBe('row');
+    expect(mocks.progressTaskIds).toEqual([milestone.id]);
+    expect(progress.closest('[data-testid="task-context-menu"]')).toBeTruthy();
+    expect(mocks.relationTasks).toEqual([milestone, ordinary, malformed]);
+    expect(view.getAllByTestId('task-dependency-relation')).toHaveLength(3);
   });
 
   it('keeps populated board content during loading and distinguishes loading from empty', () => {
