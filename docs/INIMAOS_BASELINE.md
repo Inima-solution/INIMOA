@@ -36,14 +36,20 @@ delivery record.
 
 ## GitHub control state
 
-Read-only GitHub inspection on 2026-09-03 established:
+GitHub inspection and enforcement on 2026-09-03 established:
 
-- `main` is not branch-protected and no repository ruleset exists;
+- `main` is branch-protected: pull requests and the observed
+  `Governance Contract` status are required, required approvals are zero,
+  conversations must be resolved, administrator enforcement is enabled, and
+  force pushes and deletions are blocked;
 - repository Actions are enabled with default read-only workflow permissions;
 - PR #1 has no review or check-run evidence;
-- PR #2 opened from `gate-foundation-closure`, but the upstream-generated
-  conventions workflow could not provide a fork gate: its jobs target the
-  unavailable `namespace-profile-linux-small` custom runner;
+- PR #2 is assigned to `Ahn-Hyun`; its branch-push run `33720449622` and
+  pull-request run `33720452533` both completed successfully on exact commit
+  `f45afb63c1025fa8d1e15652c00567cb17da8769`;
+- the upstream-generated conventions workflow could not provide a fork gate:
+  its jobs target the unavailable `namespace-profile-linux-small` custom
+  runner;
 - the upstream conventions workflow is now disabled manually and remains
   unsuitable until a compatible runner is explicitly approved;
 - no release, deployment, or GitHub environment exists for the canonical
@@ -51,8 +57,9 @@ Read-only GitHub inspection on 2026-09-03 established:
 - merge commits, squash merges, and rebase merges are all enabled; and
 - merged branches are not automatically deleted.
 
-Therefore no required-review, required-check, deployment, or release claim is
-currently valid.
+The pull-request path and one narrow required check are now enforced. No human
+review, deployment, release, staging, or disaster-recovery claim follows from
+that governance check.
 
 This branch adds `.github/workflows/inimoa-governance-check.yml` as the only
 fork-native gate. It is not generated or upstream-owned. It uses a
@@ -62,26 +69,19 @@ mutation, browser, schedule, release, or manual-dispatch path, and has a bounded
 timeout. It checks pull requests to `main` and pushes to non-`main` branches so
 PR #2 can produce evidence before merge.
 
-The enforcement sequence is:
+The enforced control state is:
 
 1. Keep `.github/workflows/code_check_conventions.yml` disabled until a
    compatible custom runner is approved. Keep every other checked-in upstream
    workflow disabled until it is individually reviewed and approved for this
    fork.
-2. Commit and push the fork-native governance workflow. Its expected check
-   display is `INIMOA Governance Check / Governance Contract`; treat that as an
-   expectation until GitHub records the first successful run.
-3. Verify the branch-push and PR checks both pass on the exact commit. Do not
-   manually dispatch any workflow.
-4. Protect `main` with pull requests required, zero required approvals,
-   conversation resolution, administrator enforcement, and force-push and
-   deletion blocks.
-5. Keep Code Owners documentary and do not require Code Owner approval while
+2. Require the observed GitHub Actions context `Governance Contract`; its
+   workflow/job display is `INIMOA Governance Check / Governance Contract`.
+3. Require pull requests with zero approvals, conversation resolution,
+   administrator enforcement, and force-push and deletion blocks.
+4. Keep Code Owners documentary and do not require Code Owner approval while
    the repository has only one collaborator.
-6. Leave required status checks unset until the successful fork-native run
-   exposes its stable context name; copy the observed context exactly rather
-   than inferring it from this document.
-7. Keep the current merge methods unchanged until the owner separately chooses
+5. Keep the current merge methods unchanged until the owner separately chooses
    a merge strategy.
 
 ## Branch, commit, and ownership rules
@@ -176,7 +176,7 @@ execution exists yet.
 | --- | --- |
 | Current remotes, fork, baseline, commit, and license | Recorded |
 | Dedicated feature branch and preserved upstream worktree | Recorded; upstream rehearsal still open |
-| Branch protection, reviews, checks, and merge strategy | Policy partially defined; external enforcement and merge choice open |
+| Branch protection, reviews, checks, and merge strategy | PR path and `Governance Contract` enforced; human review intentionally zero for the sole collaborator; merge choice open |
 | Upstream evaluation process | Defined; execution open |
 | Isolated development, staging, and production resources | Local only; staging and production open |
 | Doppler-backed staging secrets | Approach approved; staging proof open |

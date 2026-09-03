@@ -69,6 +69,6 @@ jobs:
           grep -Fqx '# INIMAOS baseline and delivery boundary' docs/INIMAOS_BASELINE.md
           grep -Fqx 'This branch adds `.github/workflows/inimoa-governance-check.yml` as the only' docs/INIMAOS_BASELINE.md
           grep -Fqx 'GitHub-hosted `ubuntu-latest` runner, declares only `contents: read`, receives' docs/INIMAOS_BASELINE.md
-          grep -Fqx '   display is `INIMOA Governance Check / Governance Contract`; treat that as an' docs/INIMAOS_BASELINE.md
-          grep -Fqx '5. Keep Code Owners documentary and do not require Code Owner approval while' docs/INIMAOS_BASELINE.md
-          grep -Fqx '6. Leave required status checks unset until the successful fork-native run' docs/INIMAOS_BASELINE.md
+          grep -Fqx '2. Require the observed GitHub Actions context `Governance Contract`; its' docs/INIMAOS_BASELINE.md
+          grep -Fqx '3. Require pull requests with zero approvals, conversation resolution,' docs/INIMAOS_BASELINE.md
+          grep -Fqx '4. Keep Code Owners documentary and do not require Code Owner approval while' docs/INIMAOS_BASELINE.md
