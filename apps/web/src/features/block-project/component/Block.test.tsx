@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   decisionListProps: undefined as
     | { projectId: string; scopeId: string }
     | undefined,
+  reportQuery: undefined as unknown,
   boardProps: undefined as
     | {
         activeStatusTaskId?: string;
@@ -103,12 +104,14 @@ const mocks = vi.hoisted(() => ({
   searchText: '',
   topBarProps: undefined as
     | {
-        mode: 'list' | 'board' | 'timeline' | 'decisions';
-        onChange: (mode: 'list' | 'board' | 'timeline' | 'decisions') => void;
+        mode: 'list' | 'board' | 'timeline' | 'decisions' | 'reports';
+        onChange: (
+          mode: 'list' | 'board' | 'timeline' | 'decisions' | 'reports'
+        ) => void;
         selectorVisible: boolean;
       }
     | undefined,
-  viewMode: 'list' as 'list' | 'board' | 'timeline' | 'decisions',
+  viewMode: 'list' as 'list' | 'board' | 'timeline' | 'decisions' | 'reports',
   uploadCallback: undefined as
     | ((files: UploadInput[]) => Promise<void>)
     | undefined,
@@ -305,6 +308,12 @@ vi.mock('./ProjectDecisionList', () => ({
     return <div data-testid="project-decision-list" />;
   },
 }));
+vi.mock('./ProjectReportView', () => ({
+  ProjectReportView: (props: { query: unknown }) => {
+    mocks.reportQuery = props.query;
+    return <div data-testid="project-report-view" />;
+  },
+}));
 vi.mock('./sidepanel/ProjectSidePanelSections', () => ({
   ProjectSidePanelSections: (props: { query: unknown }) => {
     mocks.sidePanelQuery = props.query;
@@ -352,6 +361,7 @@ beforeEach(() => {
   mocks.dependencyProviderCount = 0;
   mocks.dependencyProviderTaskIds = [];
   mocks.decisionListProps = undefined;
+  mocks.reportQuery = undefined;
   mocks.boardProps = undefined;
   mocks.timelineProps = undefined;
   mocks.canEdit = true;
@@ -871,6 +881,36 @@ describe('project task dependency relation batching', () => {
     ).toBeNull();
     expect(mocks.boardProps).toBeUndefined();
     expect(mocks.timelineProps).toBeUndefined();
+  });
+
+  it('mounts Reports with the same bounded project overview and without Soup views', () => {
+    render(() => <Block />);
+
+    expect(mocks.reportQuery).toBeUndefined();
+    mocks.topBarProps?.onChange('reports');
+
+    expect(mocks.reportQuery).toBe(mocks.projectOverviewQuery);
+    expect(
+      document.querySelector('[data-testid="project-report-view"]')
+    ).toBeTruthy();
+    expect(document.querySelector('[data-testid="soup-view-list"]')).toBeNull();
+    expect(
+      document.querySelector('[data-testid="project-milestone-filter"]')
+    ).toBeNull();
+    expect(mocks.decisionListProps).toBeUndefined();
+    expect(mocks.boardProps).toBeUndefined();
+    expect(mocks.timelineProps).toBeUndefined();
+
+    mocks.topBarProps?.onChange('list');
+    expect(
+      document.querySelector('[data-testid="project-report-view"]')
+    ).toBeNull();
+    expect(
+      document.querySelector('[data-testid="soup-view-list"]')
+    ).toBeTruthy();
+    expect(
+      document.querySelector('[data-testid="project-milestone-filter"]')
+    ).toBeTruthy();
   });
 
   it('preserves the shared Task filter control and source across ordinary List, Board, and List', () => {

@@ -49,10 +49,18 @@ import { refetchSoupEntity } from '@queries/soup/cache';
 import { useProjectOverviewQuery } from '@queries/storage/project-overview';
 import { EntityType } from '@service-properties/generated/schemas/entityType';
 import { refetchResources } from '@service-storage/util/refetchResources';
-import { type Component, createMemo, createSignal, Show } from 'solid-js';
+import {
+  type Component,
+  createMemo,
+  createSignal,
+  Match,
+  Show,
+  Switch,
+} from 'solid-js';
 import { projectBlockDataSignal } from '../signal/projectBlockData';
 import { ModalsProvider } from './ModalsProvider';
 import { ProjectDecisionList } from './ProjectDecisionList';
+import { ProjectReportView } from './ProjectReportView';
 import { ProjectTaskDeadlineTimeline } from './ProjectTaskDeadlineTimeline';
 import { ProjectTaskStatusBoard } from './ProjectTaskStatusBoard';
 import type { ProjectTaskViewMode } from './ProjectViewModeControl';
@@ -176,8 +184,7 @@ const Block: Component = () => {
                 onChange={setTaskViewMode}
                 selectorVisible={!isSpecialProject}
               />
-              <Show
-                when={!isSpecialProject && viewMode() === 'decisions'}
+              <Switch
                 fallback={
                   <ProjectEntityList
                     mode={viewMode()}
@@ -190,11 +197,16 @@ const Block: Component = () => {
                   />
                 }
               >
-                <ProjectDecisionList
-                  projectId={projectId}
-                  scopeId={blockHotkeyScopeSignal.get()}
-                />
-              </Show>
+                <Match when={!isSpecialProject && viewMode() === 'decisions'}>
+                  <ProjectDecisionList
+                    projectId={projectId}
+                    scopeId={blockHotkeyScopeSignal.get()}
+                  />
+                </Match>
+                <Match when={!isSpecialProject && viewMode() === 'reports'}>
+                  <ProjectReportView query={projectOverview} />
+                </Match>
+              </Switch>
             </div>
           </SidePanel.Layout>
         </ModalsProvider>

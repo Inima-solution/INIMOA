@@ -24,6 +24,8 @@ describe('ProjectViewModeControl', () => {
     expect(onChange).toHaveBeenCalledWith('timeline');
     fireEvent.click(view.getByRole('radio', { name: 'Decisions' }));
     expect(onChange).toHaveBeenCalledWith('decisions');
+    fireEvent.click(view.getByRole('radio', { name: 'Reports' }));
+    expect(onChange).toHaveBeenCalledWith('reports');
   });
 
   it('uses dense desktop and touch-sized control targets', () => {
