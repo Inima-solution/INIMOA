@@ -29,6 +29,7 @@ const overview: GetProjectOverview200DataOneOf = {
   },
   progress: {
     completedTasks: 2,
+    wipTasks: 1,
     includedTasks: 3,
     hasUnavailableStatuses: false,
   },
@@ -38,11 +39,13 @@ const overview: GetProjectOverview200DataOneOf = {
     userId: 'macro|owner@example.com',
   },
   risk: {
+    atRiskMilestones: 1,
     overdueTasks: 1,
     blockedTasks: 2,
     unassignedTasks: 0,
     approachingTarget: false,
     hasUnavailableRiskData: false,
+    openMilestones: 2,
   },
   userAccessLevel: 'view',
 };
@@ -66,8 +69,15 @@ describe('ProjectReportView', () => {
 
     expect(view.getByText('67%')).toBeTruthy();
     expect(view.getByText('2 of 3 complete')).toBeTruthy();
+    expect(
+      view.getByText('Work in progress').parentElement?.textContent
+    ).toContain('1');
     expect(view.getByText('Overdue').parentElement?.textContent).toContain('1');
     expect(view.getByText('Blocked').parentElement?.textContent).toContain('2');
+    expect(
+      view.getByText('Milestones at risk').parentElement?.textContent
+    ).toContain('1');
+    expect(view.getByText('2 open milestones')).toBeTruthy();
     expect(
       view.getByText(/Throughput and lead time are unavailable/)
     ).toBeTruthy();
@@ -99,6 +109,7 @@ describe('ProjectReportView', () => {
             ...overview,
             progress: {
               completedTasks: 0,
+              wipTasks: 0,
               includedTasks: 0,
               hasUnavailableStatuses: false,
             },
@@ -121,9 +132,13 @@ describe('ProjectReportView', () => {
         }
       />
     ));
-    expect(unavailable.getAllByText('Unavailable')).toHaveLength(3);
+    expect(unavailable.getAllByText('Unavailable')).toHaveLength(5);
     expect(
       unavailable.getByText('Task status data needs attention')
+    ).toBeTruthy();
+    expect(unavailable.queryByText('2 open milestones')).toBeNull();
+    expect(
+      unavailable.getByText('Milestone data needs attention')
     ).toBeTruthy();
   });
 

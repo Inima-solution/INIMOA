@@ -73,7 +73,7 @@ export function ProjectReportView(props: {
                     <h3 class="mb-2 font-medium text-ink text-sm">
                       Current health
                     </h3>
-                    <dl class="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                    <dl class="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
                       <Metric
                         label="Completion rate"
                         value={
@@ -92,6 +92,15 @@ export function ProjectReportView(props: {
                         }
                       />
                       <Metric
+                        label="Work in progress"
+                        value={
+                          completionAvailable()
+                            ? String(overview().progress.wipTasks)
+                            : 'Unavailable'
+                        }
+                        detail="In progress or in review"
+                      />
+                      <Metric
                         label="Overdue"
                         value={
                           riskAvailable()
@@ -108,6 +117,19 @@ export function ProjectReportView(props: {
                             : 'Unavailable'
                         }
                         detail="Open tasks with unmet dependencies"
+                      />
+                      <Metric
+                        label="Milestones at risk"
+                        value={
+                          riskAvailable()
+                            ? String(overview().risk.atRiskMilestones)
+                            : 'Unavailable'
+                        }
+                        detail={
+                          riskAvailable()
+                            ? `${overview().risk.openMilestones} open milestones`
+                            : 'Milestone data needs attention'
+                        }
                       />
                     </dl>
                   </section>

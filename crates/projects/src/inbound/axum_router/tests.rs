@@ -187,8 +187,8 @@ impl ProjectService for FakeProjectService {
                 non_task_documents: 0,
                 chats: 0,
             },
-            progress: ProjectTaskProgress::new(0, 0, false).unwrap(),
-            risk: ProjectTaskRisk::new(0, 0, 0, false, false).unwrap(),
+            progress: ProjectTaskProgress::new(0, 0, 0, false).unwrap(),
+            risk: ProjectTaskRisk::new(0, 0, 0, 0, 0, false, false).unwrap(),
         })
     }
 

@@ -27676,6 +27676,11 @@ export const getProjectOverviewResponse = zod.object({
             .describe(
               'Direct live tasks included in progress; canceled tasks are excluded.'
             ),
+          wipTasks: zod
+            .number()
+            .describe(
+              'Direct live tasks whose exact singleton status is In Progress or In Review.'
+            ),
         })
         .describe(
           'Bounded progress totals for the live direct tasks of one project.\n\nThis deliberately contains only aggregate facts: it cannot disclose task\nidentifiers, names, or individual status values.'
@@ -27706,6 +27711,11 @@ export const getProjectOverviewResponse = zod.object({
             .describe(
               'Whether an operational Planned or Active project target falls within seven calendar days.'
             ),
+          atRiskMilestones: zod
+            .number()
+            .describe(
+              'Open milestone Tasks that are overdue or blocked, counted once.'
+            ),
           blockedTasks: zod
             .number()
             .describe(
@@ -27716,6 +27726,9 @@ export const getProjectOverviewResponse = zod.object({
             .describe(
               'Whether any aggregate risk input was unavailable without exposing its source.'
             ),
+          openMilestones: zod
+            .number()
+            .describe('Open direct live canonical milestone Tasks.'),
           overdueTasks: zod
             .number()
             .describe(

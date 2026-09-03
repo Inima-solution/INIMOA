@@ -58,12 +58,14 @@ pub(super) async fn get_project_task_progress_scoped(
         SELECT
           progress.included_tasks,
           progress.completed_tasks,
+          progress.wip_tasks,
           progress.has_unavailable_statuses
         FROM scoped_project project
         CROSS JOIN LATERAL (
           SELECT
             COUNT(*) FILTER (WHERE NOT (is_exact_known AND option_id = $5)) AS included_tasks,
             COUNT(*) FILTER (WHERE is_exact_known AND option_id = $4) AS completed_tasks,
+            COUNT(*) FILTER (WHERE is_exact_known AND option_id IN ($7, $8)) AS wip_tasks,
             COALESCE(BOOL_OR(has_usable_value AND NOT is_exact_known), false) AS has_unavailable_statuses
           FROM classified
         ) progress
@@ -82,6 +84,7 @@ pub(super) async fn get_project_task_progress_scoped(
     row.map(|row| {
         ProjectTaskProgress::new(
             row.try_get("completed_tasks")?,
+            row.try_get("wip_tasks")?,
             row.try_get("included_tasks")?,
             row.try_get("has_unavailable_statuses")?,
         )

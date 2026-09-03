@@ -41,7 +41,7 @@ async fn task_progress_is_scoped_and_aggregates_only_live_direct_canonical_tasks
         .execute(&pool)
         .await?;
     let ids = [
-        "301", "302", "303", "304", "305", "306", "307", "308", "309", "310", "311",
+        "301", "302", "303", "304", "305", "306", "307", "308", "309", "310", "311", "313", "314",
     ];
     for (index, suffix) in ids.into_iter().enumerate() {
         let id = format!("20000000-0000-0000-0000-000000000{suffix}");
@@ -75,6 +75,12 @@ async fn task_progress_is_scoped_and_aggregates_only_live_direct_canonical_tasks
                 10 => {
                     serde_json::json!({"type":"SelectOption","value":[system_properties::StatusOption::COMPLETED_UUID, system_properties::StatusOption::IN_PROGRESS_UUID]})
                 }
+                11 => {
+                    serde_json::json!({"type":"SelectOption","value":[system_properties::StatusOption::NOT_STARTED_UUID]})
+                }
+                12 => {
+                    serde_json::json!({"type":"SelectOption","value":[system_properties::StatusOption::IN_REVIEW_UUID]})
+                }
                 _ => {
                     serde_json::json!({"type":"SelectOption","value":[system_properties::StatusOption::IN_PROGRESS_UUID]})
                 }
@@ -103,10 +109,11 @@ async fn task_progress_is_scoped_and_aggregates_only_live_direct_canonical_tasks
     assert_eq!(
         (
             progress.completed_tasks,
+            progress.wip_tasks,
             progress.included_tasks,
             progress.has_unavailable_statuses
         ),
-        (1, 8, true)
+        (1, 2, 10, true)
     );
     assert_eq!(
         repo.get_project_task_progress_scoped(ROOT_ID, uuid::Uuid::from_u128(310))
@@ -117,7 +124,7 @@ async fn task_progress_is_scoped_and_aggregates_only_live_direct_canonical_tasks
         repo.get_project_task_progress_scoped(zero_task_project, team_id)
             .await?,
         Some(crate::domain::models::ProjectTaskProgress::new(
-            0, 0, false
+            0, 0, 0, false
         )?)
     );
     for id in ["missing", deleted_project, departed_owner_project] {
@@ -459,11 +466,13 @@ async fn task_risk_is_scoped_fail_closed_and_uses_calendar_date(
         (
             risk.overdue_tasks,
             risk.blocked_tasks,
-            risk.unassigned_tasks
+            risk.unassigned_tasks,
+            risk.open_milestones,
+            risk.at_risk_milestones
         ),
         // baseline direct cases contribute (1, 1, 2); canonical/null source
         // cases add (+1, 0, +4), and fractional UTC adds (+1, 0, 0).
-        (3, 1, 6)
+        (3, 1, 6, 0, 0)
     );
     assert!(risk.has_unavailable_risk_data);
     for unavailable in ["missing", deleted_project, departed_project] {
@@ -487,7 +496,7 @@ async fn task_risk_is_scoped_fail_closed_and_uses_calendar_date(
             )
             .await?,
         Some(crate::domain::models::ProjectTaskRisk::new(
-            0, 0, 0, false, true
+            0, 0, 0, 0, 0, false, true
         )?)
     );
     assert!(
@@ -499,6 +508,210 @@ async fn task_risk_is_scoped_fail_closed_and_uses_calendar_date(
             )
             .await?
             .is_none()
+    );
+    Ok(())
+}
+
+#[sqlx::test(
+    migrator = "MACRO_DB_MIGRATIONS",
+    fixtures(path = "../../../fixtures", scripts("projects_test_data"))
+)]
+async fn task_risk_counts_only_open_canonical_milestones_and_unions_risk_once(
+    pool: Pool<Postgres>,
+) -> anyhow::Result<()> {
+    let project = "10000000-0000-0000-0000-000000000461";
+    let child_project = "10000000-0000-0000-0000-000000000462";
+    let other_project = "10000000-0000-0000-0000-000000000463";
+    let team = uuid::Uuid::from_u128(0x461);
+    let as_of_date = chrono::NaiveDate::from_ymd_opt(2026, 9, 1).unwrap();
+    let status = SystemPropertyKey::STATUS_UUID;
+    let due = SystemPropertyKey::DUE_DATE_UUID;
+    let depends = SystemPropertyKey::DEPENDS_ON_UUID;
+    let milestone = SystemPropertyKey::MILESTONE_UUID;
+
+    sqlx::query(
+        r#"INSERT INTO "team" (id,name,owner_id) VALUES ($1,'risk-milestone','macro|owner@test.com')"#,
+    )
+    .bind(team)
+    .execute(&pool)
+    .await?;
+    sqlx::query("INSERT INTO team_user (user_id,team_id,team_role) VALUES ('macro|owner@test.com',$1,'owner')")
+        .bind(team)
+        .execute(&pool)
+        .await?;
+    for (id, parent) in [
+        (project, None),
+        (child_project, Some(project)),
+        (other_project, None),
+    ] {
+        sqlx::query(
+            r#"INSERT INTO "Project" (id,name,"userId","parentId") VALUES ($1,$1,'macro|owner@test.com',$2)"#,
+        )
+        .bind(id)
+        .bind(parent)
+        .execute(&pool)
+        .await?;
+    }
+    sqlx::query(
+        "UPDATE project_operations SET status='active', target_date=$1 WHERE project_id=$2",
+    )
+    .bind(as_of_date + chrono::Days::new(8))
+    .bind(project)
+    .execute(&pool)
+    .await?;
+
+    macro_rules! document {
+        ($id:expr, $owner_project:expr, $deleted:expr, $is_task:expr) => {{
+            sqlx::query(r#"INSERT INTO "Document" (id,name,owner,"projectId","deletedAt") VALUES ($1,$1,'macro|owner@test.com',$2,CASE WHEN $3 THEN now() ELSE NULL END)"#)
+                .bind($id).bind($owner_project).bind($deleted).execute(&pool).await?;
+            if $is_task {
+                sqlx::query("INSERT INTO document_sub_type (document_id,sub_type) VALUES ($1,'task'::document_sub_type_value)")
+                    .bind($id).execute(&pool).await?;
+            }
+        }};
+    }
+    macro_rules! property {
+        ($id:expr, $key:expr, $value:expr) => {{
+            sqlx::query("INSERT INTO entity_properties (id,entity_id,entity_type,property_definition_id,values) VALUES ($1,$2,'TASK',$3,$4)")
+                .bind(uuid::Uuid::new_v4()).bind($id).bind($key).bind($value).execute(&pool).await?;
+        }};
+    }
+
+    let overdue = "46000000-0000-0000-0000-000000000401";
+    let blocked = "46000000-0000-0000-0000-000000000402";
+    let both = "46000000-0000-0000-0000-000000000403";
+    let healthy = "46000000-0000-0000-0000-000000000404";
+    let false_marker = "46000000-0000-0000-0000-000000000405";
+    let missing_marker = "46000000-0000-0000-0000-000000000406";
+    let null_marker = "46000000-0000-0000-0000-000000000407";
+    let malformed_marker = "46000000-0000-0000-0000-000000000408";
+    let completed = "46000000-0000-0000-0000-000000000409";
+    let canceled = "46000000-0000-0000-0000-000000000410";
+    let predecessor = "46000000-0000-0000-0000-000000000411";
+    for id in [
+        overdue,
+        blocked,
+        both,
+        healthy,
+        false_marker,
+        missing_marker,
+        null_marker,
+        malformed_marker,
+        completed,
+        canceled,
+        predecessor,
+    ] {
+        document!(id, project, false, true);
+    }
+    for id in [overdue, blocked, both, healthy, completed, canceled] {
+        property!(
+            id,
+            milestone,
+            serde_json::json!({"type":"Boolean","value":true})
+        );
+    }
+    property!(
+        false_marker,
+        milestone,
+        serde_json::json!({"type":"Boolean","value":false})
+    );
+    property!(null_marker, milestone, serde_json::Value::Null);
+    property!(
+        malformed_marker,
+        milestone,
+        serde_json::json!({"type":"Boolean","value":"true"})
+    );
+    for id in [overdue, both, false_marker] {
+        property!(
+            id,
+            due,
+            serde_json::json!({"type":"Date","value":"2026-08-31T00:00:00Z"})
+        );
+    }
+    for id in [blocked, both] {
+        property!(
+            id,
+            depends,
+            serde_json::json!({"type":"EntityReference","value":[{"entity_type":"TASK","entity_id":predecessor}]})
+        );
+    }
+    for (id, option) in [
+        (predecessor, StatusOption::IN_PROGRESS_UUID),
+        (completed, StatusOption::COMPLETED_UUID),
+        (canceled, StatusOption::CANCELED_UUID),
+    ] {
+        property!(
+            id,
+            status,
+            serde_json::json!({"type":"SelectOption","value":[option]})
+        );
+    }
+
+    // These all carry a true marker but are outside the direct-live-Task boundary.
+    for (id, owner_project, deleted, is_task) in [
+        (
+            "46000000-0000-0000-0000-000000000421",
+            child_project,
+            false,
+            true,
+        ),
+        ("46000000-0000-0000-0000-000000000422", project, true, true),
+        (
+            "46000000-0000-0000-0000-000000000423",
+            project,
+            false,
+            false,
+        ),
+        (
+            "46000000-0000-0000-0000-000000000424",
+            other_project,
+            false,
+            true,
+        ),
+    ] {
+        document!(id, owner_project, deleted, is_task);
+        property!(
+            id,
+            milestone,
+            serde_json::json!({"type":"Boolean","value":true})
+        );
+    }
+
+    let repo = PgProjectRepo::new(pool.clone());
+    let risk = repo
+        .get_project_task_risk_scoped(project, team, as_of_date)
+        .await?
+        .expect("scoped project risk");
+    assert_eq!(
+        (
+            risk.overdue_tasks,
+            risk.blocked_tasks,
+            risk.open_milestones,
+            risk.at_risk_milestones,
+        ),
+        (3, 2, 4, 3)
+    );
+    assert!(risk.has_unavailable_risk_data);
+
+    sqlx::query(
+        "UPDATE entity_properties SET values=$1 WHERE entity_id=$2 AND property_definition_id=$3",
+    )
+    .bind(serde_json::json!({"type":"Boolean","value":false}))
+    .bind(malformed_marker)
+    .bind(milestone)
+    .execute(&pool)
+    .await?;
+    let available = repo
+        .get_project_task_risk_scoped(project, team, as_of_date)
+        .await?
+        .expect("scoped project risk");
+    assert_eq!(available.open_milestones, 4);
+    assert_eq!(available.at_risk_milestones, 3);
+    assert!(!available.has_unavailable_risk_data);
+    assert_eq!(
+        repo.get_project_task_risk_scoped(project, uuid::Uuid::new_v4(), as_of_date)
+            .await?,
+        None
     );
     Ok(())
 }

@@ -119,6 +119,7 @@ const populatedOverview: GetProjectOverview200DataOneOf = {
   },
   progress: {
     completedTasks: 2,
+    wipTasks: 1,
     hasUnavailableStatuses: false,
     includedTasks: 3,
   },
@@ -128,9 +129,11 @@ const populatedOverview: GetProjectOverview200DataOneOf = {
     userId: 'macro|lead@example.com',
   },
   risk: {
+    atRiskMilestones: 1,
     approachingTarget: true,
     blockedTasks: 1,
     hasUnavailableRiskData: false,
+    openMilestones: 2,
     overdueTasks: 2,
     unassignedTasks: 3,
   },
@@ -245,13 +248,16 @@ describe('ProjectOverviewSection', () => {
       },
       progress: {
         completedTasks: 0,
+        wipTasks: 0,
         hasUnavailableStatuses: false,
         includedTasks: 0,
       },
       risk: {
+        atRiskMilestones: 0,
         approachingTarget: false,
         blockedTasks: 0,
         hasUnavailableRiskData: false,
+        openMilestones: 0,
         overdueTasks: 0,
         unassignedTasks: 0,
       },
@@ -301,9 +307,11 @@ describe('ProjectOverviewSection', () => {
     mocks.query = readyQuery({
       ...populatedOverview,
       risk: {
+        atRiskMilestones: 0,
         approachingTarget: false,
         blockedTasks: 0,
         hasUnavailableRiskData: false,
+        openMilestones: 0,
         overdueTasks: 2,
         unassignedTasks: 0,
       },

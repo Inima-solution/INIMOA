@@ -70,6 +70,7 @@ const projectOverviewA: GetProjectOverview200DataOneOf = {
   operations: projectA,
   progress: {
     completedTasks: 0,
+    wipTasks: 0,
     hasUnavailableStatuses: false,
     includedTasks: 0,
   },
@@ -83,9 +84,11 @@ const projectOverviewA: GetProjectOverview200DataOneOf = {
     userId: 'user-a',
   },
   risk: {
+    atRiskMilestones: 0,
     approachingTarget: false,
     blockedTasks: 0,
     hasUnavailableRiskData: false,
+    openMilestones: 0,
     overdueTasks: 0,
     unassignedTasks: 0,
   },

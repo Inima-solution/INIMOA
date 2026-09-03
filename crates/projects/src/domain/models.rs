@@ -216,6 +216,8 @@ pub struct ProjectOverviewSnapshot {
 pub struct ProjectTaskProgress {
     /// Direct live tasks whose exact singleton status is Completed.
     pub completed_tasks: i64,
+    /// Direct live tasks whose exact singleton status is In Progress or In Review.
+    pub wip_tasks: i64,
     /// Direct live tasks included in progress; canceled tasks are excluded.
     pub included_tasks: i64,
     /// At least one included task had an unusable status representation.
@@ -226,10 +228,16 @@ impl ProjectTaskProgress {
     /// Builds a bounded progress result while preserving its aggregate invariant.
     pub fn new(
         completed_tasks: i64,
+        wip_tasks: i64,
         included_tasks: i64,
         has_unavailable_statuses: bool,
     ) -> Result<Self, ProjectTaskProgressValidationError> {
-        if completed_tasks < 0 || included_tasks < 0 || completed_tasks > included_tasks {
+        if completed_tasks < 0
+            || wip_tasks < 0
+            || included_tasks < 0
+            || completed_tasks > included_tasks
+            || wip_tasks > included_tasks - completed_tasks
+        {
             return Err(ProjectTaskProgressValidationError::InvalidTotals);
         }
         if included_tasks == 0 && has_unavailable_statuses {
@@ -237,6 +245,7 @@ impl ProjectTaskProgress {
         }
         Ok(Self {
             completed_tasks,
+            wip_tasks,
             included_tasks,
             has_unavailable_statuses,
         })
@@ -247,7 +256,7 @@ impl ProjectTaskProgress {
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum ProjectTaskProgressValidationError {
     /// Completed tasks cannot be negative or exceed included tasks.
-    #[error("completed task totals must be between zero and included task totals")]
+    #[error("completed and WIP task totals must be disjoint and fit within included task totals")]
     InvalidTotals,
     /// A zero included-task result cannot have an unavailable task status.
     #[error("unavailable statuses require at least one included task")]
@@ -268,6 +277,10 @@ pub struct ProjectTaskRisk {
     pub blocked_tasks: i64,
     /// Unassigned direct live canonical Tasks; individual task details are redacted.
     pub unassigned_tasks: i64,
+    /// Open direct live canonical milestone Tasks.
+    pub open_milestones: i64,
+    /// Open milestone Tasks that are overdue or blocked, counted once.
+    pub at_risk_milestones: i64,
     /// Whether an operational Planned or Active project target falls within seven calendar days.
     pub approaching_target: bool,
     /// Whether any aggregate risk input was unavailable without exposing its source.
@@ -280,16 +293,30 @@ impl ProjectTaskRisk {
         overdue_tasks: i64,
         blocked_tasks: i64,
         unassigned_tasks: i64,
+        open_milestones: i64,
+        at_risk_milestones: i64,
         approaching_target: bool,
         has_unavailable_risk_data: bool,
     ) -> Result<Self, ProjectTaskRiskValidationError> {
-        if overdue_tasks < 0 || blocked_tasks < 0 || unassigned_tasks < 0 {
+        if overdue_tasks < 0
+            || blocked_tasks < 0
+            || unassigned_tasks < 0
+            || open_milestones < 0
+            || at_risk_milestones < 0
+        {
             return Err(ProjectTaskRiskValidationError::NegativeTotal);
+        }
+        if at_risk_milestones > open_milestones
+            || at_risk_milestones > overdue_tasks.saturating_add(blocked_tasks)
+        {
+            return Err(ProjectTaskRiskValidationError::InvalidMilestoneTotals);
         }
         Ok(Self {
             overdue_tasks,
             blocked_tasks,
             unassigned_tasks,
+            open_milestones,
+            at_risk_milestones,
             approaching_target,
             has_unavailable_risk_data,
         })
@@ -302,6 +329,9 @@ pub enum ProjectTaskRiskValidationError {
     /// One or more aggregate direct-task counts was negative.
     #[error("task-risk totals cannot be negative")]
     NegativeTotal,
+    /// At-risk milestones must be a subset of open milestones and task risks.
+    #[error("at-risk milestone totals must fit within open milestones and task risks")]
+    InvalidMilestoneTotals,
 }
 
 /// The authoritative root metadata captured with a committed project-tree purge.

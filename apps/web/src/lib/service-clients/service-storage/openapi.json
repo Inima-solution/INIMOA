@@ -22844,6 +22844,7 @@
         "description": "Bounded progress totals for the live direct tasks of one project.\n\nThis deliberately contains only aggregate facts: it cannot disclose task\nidentifiers, names, or individual status values.",
         "required": [
           "completedTasks",
+          "wipTasks",
           "includedTasks",
           "hasUnavailableStatuses"
         ],
@@ -22861,6 +22862,11 @@
             "type": "integer",
             "format": "int64",
             "description": "Direct live tasks included in progress; canceled tasks are excluded."
+          },
+          "wipTasks": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Direct live tasks whose exact singleton status is In Progress or In Review."
           }
         }
       },
@@ -22871,6 +22877,8 @@
           "overdueTasks",
           "blockedTasks",
           "unassignedTasks",
+          "openMilestones",
+          "atRiskMilestones",
           "approachingTarget",
           "hasUnavailableRiskData"
         ],
@@ -22878,6 +22886,11 @@
           "approachingTarget": {
             "type": "boolean",
             "description": "Whether an operational Planned or Active project target falls within seven calendar days."
+          },
+          "atRiskMilestones": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Open milestone Tasks that are overdue or blocked, counted once."
           },
           "blockedTasks": {
             "type": "integer",
@@ -22887,6 +22900,11 @@
           "hasUnavailableRiskData": {
             "type": "boolean",
             "description": "Whether any aggregate risk input was unavailable without exposing its source."
+          },
+          "openMilestones": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Open direct live canonical milestone Tasks."
           },
           "overdueTasks": {
             "type": "integer",

@@ -19,35 +19,48 @@ fn timestamp(value: &str) -> DateTime<Utc> {
 
 #[test]
 fn task_risk_serializes_only_bounded_aggregate_facts_and_rejects_negative_totals() {
-    let risk = ProjectTaskRisk::new(0, 2, 3, true, true).unwrap();
+    let risk = ProjectTaskRisk::new(0, 2, 3, 2, 1, true, true).unwrap();
     assert_eq!(
         serde_json::to_value(risk).unwrap(),
         json!({
             "overdueTasks": 0, "blockedTasks": 2, "unassignedTasks": 3,
+            "openMilestones": 2, "atRiskMilestones": 1,
             "approachingTarget": true,
             "hasUnavailableRiskData": true
         })
     );
     assert!(matches!(
-        ProjectTaskRisk::new(-1, 0, 0, false, false),
+        ProjectTaskRisk::new(-1, 0, 0, 0, 0, false, false),
         Err(ProjectTaskRiskValidationError::NegativeTotal)
+    ));
+    assert!(matches!(
+        ProjectTaskRisk::new(0, 0, 0, 0, 1, false, false),
+        Err(ProjectTaskRiskValidationError::InvalidMilestoneTotals)
+    ));
+    assert!(matches!(
+        ProjectTaskRisk::new(0, 0, 0, 1, 1, false, false),
+        Err(ProjectTaskRiskValidationError::InvalidMilestoneTotals)
     ));
 }
 
 #[test]
 fn task_progress_serializes_only_aggregate_totals_and_enforces_invariants() {
-    let zero = ProjectTaskProgress::new(0, 0, false).unwrap();
+    let zero = ProjectTaskProgress::new(0, 0, 0, false).unwrap();
     assert_eq!(
         serde_json::to_value(&zero).unwrap(),
-        json!({"completedTasks": 0, "includedTasks": 0, "hasUnavailableStatuses": false})
+        json!({"completedTasks": 0, "wipTasks": 0, "includedTasks": 0, "hasUnavailableStatuses": false})
     );
     assert!(matches!(
-        ProjectTaskProgress::new(2, 1, false),
+        ProjectTaskProgress::new(2, 0, 1, false),
         Err(ProjectTaskProgressValidationError::InvalidTotals)
     ));
     assert!(matches!(
-        ProjectTaskProgress::new(0, 0, true),
+        ProjectTaskProgress::new(0, 0, 0, true),
         Err(ProjectTaskProgressValidationError::UnavailableWithoutIncludedTask)
+    ));
+    assert!(matches!(
+        ProjectTaskProgress::new(1, 1, 1, false),
+        Err(ProjectTaskProgressValidationError::InvalidTotals)
     ));
 }
 
@@ -105,8 +118,8 @@ fn project_overview_serializes_only_the_fixed_sections_and_immediate_child_count
             non_task_documents: 3,
             chats: 4,
         },
-        progress: ProjectTaskProgress::new(1, 2, false).unwrap(),
-        risk: ProjectTaskRisk::new(1, 0, 1, true, false).unwrap(),
+        progress: ProjectTaskProgress::new(1, 1, 2, false).unwrap(),
+        risk: ProjectTaskRisk::new(1, 0, 1, 1, 1, true, false).unwrap(),
     };
 
     let value = serde_json::to_value(overview).unwrap();
@@ -153,7 +166,12 @@ fn project_overview_serializes_only_the_fixed_sections_and_immediate_child_count
             .keys()
             .map(String::as_str)
             .collect::<Vec<_>>(),
-        ["completedTasks", "hasUnavailableStatuses", "includedTasks"]
+        [
+            "completedTasks",
+            "hasUnavailableStatuses",
+            "includedTasks",
+            "wipTasks"
+        ]
     );
     let risk_schema = serde_json::to_value(ProjectTaskRisk::schema()).unwrap();
     assert_eq!(
@@ -165,8 +183,10 @@ fn project_overview_serializes_only_the_fixed_sections_and_immediate_child_count
             .collect::<Vec<_>>(),
         [
             "approachingTarget",
+            "atRiskMilestones",
             "blockedTasks",
             "hasUnavailableRiskData",
+            "openMilestones",
             "overdueTasks",
             "unassignedTasks"
         ]
