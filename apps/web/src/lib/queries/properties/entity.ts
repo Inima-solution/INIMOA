@@ -33,6 +33,7 @@ import {
   optimisticUpdateSoupEntity,
   type SoupTransaction,
 } from '../soup/cache';
+import { entityKeys } from '../storage/keys';
 import { type MutationCallbacks, withCallbacks } from '../utils';
 import {
   type AddEntityPropertyInput,
@@ -838,6 +839,7 @@ function invalidateDerivedTaskPropertyProjections(
 ): void {
   let invalidatesSubtaskProgress = false;
   let invalidatesDependencyRelations = false;
+  let invalidatesProjectOverview = false;
 
   for (const item of properties) {
     if (item.entityType !== 'TASK') continue;
@@ -846,6 +848,7 @@ function invalidateDerivedTaskPropertyProjections(
       case SYSTEM_PROPERTY_IDS.STATUS:
         invalidatesSubtaskProgress = true;
         invalidatesDependencyRelations = true;
+        invalidatesProjectOverview = true;
         break;
       case SYSTEM_PROPERTY_IDS.PARENT_TASK:
       case SYSTEM_PROPERTY_IDS.SUBTASKS:
@@ -853,6 +856,12 @@ function invalidateDerivedTaskPropertyProjections(
         break;
       case SYSTEM_PROPERTY_IDS.DEPENDS_ON:
         invalidatesDependencyRelations = true;
+        invalidatesProjectOverview = true;
+        break;
+      case SYSTEM_PROPERTY_IDS.ASSIGNEES:
+      case SYSTEM_PROPERTY_IDS.DUE_DATE:
+      case SYSTEM_PROPERTY_IDS.MILESTONE:
+        invalidatesProjectOverview = true;
         break;
     }
   }
@@ -865,6 +874,11 @@ function invalidateDerivedTaskPropertyProjections(
   if (invalidatesDependencyRelations) {
     void queryClient.invalidateQueries({
       queryKey: propertiesKeys.taskDependencyRelations._def,
+    });
+  }
+  if (invalidatesProjectOverview) {
+    void queryClient.invalidateQueries({
+      queryKey: entityKeys.projectOverview._def,
     });
   }
 }
