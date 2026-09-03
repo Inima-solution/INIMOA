@@ -41,6 +41,7 @@ services:
     networks:
       - databases
   kafka:
+    profiles: [agent, full]
     # Local analog of the MSK cluster's `3.9.x.kraft` version: single-node
     # KRaft where this node is both broker and controller.
     image: apache/kafka:3.9.1
@@ -76,6 +77,7 @@ services:
     networks:
       - databases
   search:
+    profiles: [search, full]
     build:
       context: ../infra/local/opensearch
     image: macro-local-opensearch:dev

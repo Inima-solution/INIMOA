@@ -246,9 +246,10 @@ pub fn up(mode: Mode, args: &UpArgs) -> Result<Instance> {
     binaries.pin_gc_root(&instance.artifact_dir())?;
     let active_binaries = binaries.host_dir().to_path_buf();
     super::bring_up_app(&stage, mode, &instance, &env)?;
-    let _sdk_webhook_tunnel = (mode == Mode::Local && !stage.is_dry_run())
-        .then(|| sdk_webhook::start(&instance))
-        .transpose()?;
+    let _sdk_webhook_tunnel =
+        (mode == Mode::Local && super::compose_profile_enabled("agent") && !stage.is_dry_run())
+            .then(|| sdk_webhook::start(&instance))
+            .transpose()?;
 
     // Headless "ready" means the backend answers through the proxy — the caller
     // (a CI step, an agent) acts on the URL the moment we return.

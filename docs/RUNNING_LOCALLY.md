@@ -86,6 +86,27 @@ Run this command from the repository root if you do not have Doppler access:
 just run_local --no-doppler
 ```
 
+By default this starts the core stack only: authentication, document storage
+and editing, local AWS emulation, the databases they require, the proxy, and
+the frontend. Enable additional feature groups with `COMPOSE_PROFILES`:
+
+```bash
+# Email API and background workers
+COMPOSE_PROFILES=email just run_local --no-doppler
+
+# Search and local agents (comma-separated groups compose together)
+COMPOSE_PROFILES=search,agent just run_local --no-doppler
+
+# Preserve the former all-services behavior
+COMPOSE_PROFILES=full just run_local --no-doppler
+```
+
+Available groups are `email`, `search`, `ai`, `notifications`, `agent`, and
+`extras`. Dependencies are closed within each group: for example, `ai` also
+starts the email API required by document cognition, and `agent` starts Kafka
+and the local SDK webhook relay. `extras` contains contacts, URL unfurling,
+image proxying, and the analytics proxy.
+
 The local stack does not need Doppler. It uses the code-defined local configuration with dummy AWS credentials and fixed test secrets. Most contributors are not on the team, so this is the common path.
 
 The stack boots with stubbed values for every config the services require, including the third-party integrations (Google, GitHub, Stripe, CloudFront). Those flows do not work against real services with the stubs. The rest of the stack is fully functional: auth, documents, email, and search.

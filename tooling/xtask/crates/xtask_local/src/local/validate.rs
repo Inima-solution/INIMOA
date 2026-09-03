@@ -52,7 +52,9 @@ fn local_compose_flavor(instance: &Instance, mode: Mode, static_frontend: bool) 
 
     let files = gen_compose::compose_files(instance);
     let mut cmd = gen_compose::docker_compose(instance, &files, &resolved.generated_path);
-    cmd.args(["config", "--format", "json"]);
+    // Validate the complete service graph even though the default local stack
+    // intentionally starts only the unprofiled core services.
+    cmd.args(["--profile", "full", "config", "--format", "json"]);
     let out = cmd.output().context("running `docker compose config`")?;
     if !out.status.success() {
         bail!(

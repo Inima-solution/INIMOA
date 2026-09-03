@@ -109,6 +109,7 @@ pub fn generate(
         services.insert(
             "gmail_forwarder".to_string(),
             Some(dct::Service {
+                profiles: vec!["email".to_string(), "full".to_string()],
                 image: Some(RUNTIME_IMAGE_TAG.to_string()),
                 volumes: mounts.iter().cloned().map(dct::Volumes::Simple).collect(),
                 command: Some(dct::Command::Args(
@@ -178,6 +179,7 @@ fn add_sdk_webhook_relay(
     services.insert(
         "sdk-webhook-relay".to_string(),
         Some(dct::Service {
+            profiles: vec!["agent".to_string(), "full".to_string()],
             image: Some(SDK_WEBHOOK_RELAY_IMAGE.to_string()),
             build_: Some(build),
             ports: dct::Ports::Short(vec![format!(
