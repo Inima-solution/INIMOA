@@ -1,0 +1,74 @@
+name: INIMOA Governance Check
+
+'on':
+  pull_request:
+    branches:
+      - main
+  push:
+    branches-ignore:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  governance:
+    name: Governance Contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Verify governance contract
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          PUSH_AFTER_SHA: ${{ github.event.after }}
+          PUSH_OLDEST_SHA: ${{ github.event.commits[0].id }}
+        run: |
+          set -eu
+          case "$EVENT_NAME" in
+            pull_request)
+              test -n "$PR_BASE_SHA"
+              test -n "$PR_HEAD_SHA"
+              git diff --check "$PR_BASE_SHA...$PR_HEAD_SHA"
+              ;;
+            push)
+              test -n "$PUSH_AFTER_SHA"
+              if test "$PUSH_BEFORE_SHA" = "0000000000000000000000000000000000000000"; then
+                if test -n "$PUSH_OLDEST_SHA"; then
+                  git diff --check "$PUSH_OLDEST_SHA^..$PUSH_AFTER_SHA"
+                else
+                  git diff --check "$PUSH_AFTER_SHA^..$PUSH_AFTER_SHA"
+                fi
+              else
+                test -n "$PUSH_BEFORE_SHA"
+                git diff --check "$PUSH_BEFORE_SHA..$PUSH_AFTER_SHA"
+              fi
+              ;;
+            *)
+              exit 1
+              ;;
+          esac
+
+          test "$(grep -Ec '^\* @Ahn-Hyun$' .github/CODEOWNERS)" -eq 1
+          grep -Fqx 'docs/INIMOA*.md' .gitignore
+          grep -Fqx 'docs/INIMAOS*.md' .gitignore
+          grep -Fqx '!docs/INIMAOS_BASELINE.md' .gitignore
+
+          grep -Fqx 'must not use the reserved `codex/` prefix. Commit subjects and bodies must be in' CONTRIBUTING.md
+          grep -Fqx '`Ahn-Hyun` is the repository review, release, and rollback owner until that' CONTRIBUTING.md
+          grep -Fqx 'AI tools are allowed, but contributors remain responsible for every submitted line. Do not commit assistant instructions, session transcripts, prompts, private development plans, or output that has not been reviewed and tested.' CONTRIBUTING.md
+
+          grep -Fqx '# INIMAOS baseline and delivery boundary' docs/INIMAOS_BASELINE.md
+          grep -Fqx 'This branch adds `.github/workflows/inimoa-governance-check.yml` as the only' docs/INIMAOS_BASELINE.md
+          grep -Fqx 'GitHub-hosted `ubuntu-latest` runner, declares only `contents: read`, receives' docs/INIMAOS_BASELINE.md
+          grep -Fqx '   display is `INIMOA Governance Check / Governance Contract`; treat that as an' docs/INIMAOS_BASELINE.md
+          grep -Fqx '5. Keep Code Owners documentary and do not require Code Owner approval while' docs/INIMAOS_BASELINE.md
+          grep -Fqx '6. Leave required status checks unset until the successful fork-native run' docs/INIMAOS_BASELINE.md

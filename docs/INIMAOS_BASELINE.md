@@ -39,8 +39,13 @@ delivery record.
 Read-only GitHub inspection on 2026-09-03 established:
 
 - `main` is not branch-protected and no repository ruleset exists;
-- repository Actions are disabled;
+- repository Actions are enabled with default read-only workflow permissions;
 - PR #1 has no review or check-run evidence;
+- PR #2 opened from `gate-foundation-closure`, but the upstream-generated
+  conventions workflow could not provide a fork gate: its jobs target the
+  unavailable `namespace-profile-linux-small` custom runner;
+- the upstream conventions workflow is now disabled manually and remains
+  unsuitable until a compatible runner is explicitly approved;
 - no release, deployment, or GitHub environment exists for the canonical
   commit;
 - merge commits, squash merges, and rebase merges are all enabled; and
@@ -49,42 +54,34 @@ Read-only GitHub inspection on 2026-09-03 established:
 Therefore no required-review, required-check, deployment, or release claim is
 currently valid.
 
-The workflow catalog contains active definitions that would perform external
-writes if repository Actions were enabled: hourly run cancellation, automatic
-development deployment on `main`, local-binary publication on every `main`
-push, path-triggered service deployments, pull-request preview deployments and
-cleanup, tag artifact publication, and production release deployment. Enabling
-Actions before disabling or gating those definitions is unsafe.
+This branch adds `.github/workflows/inimoa-governance-check.yml` as the only
+fork-native gate. It is not generated or upstream-owned. It uses a
+GitHub-hosted `ubuntu-latest` runner, declares only `contents: read`, receives
+no secrets, has no environment, cache, publication, deployment, repository
+mutation, browser, schedule, release, or manual-dispatch path, and has a bounded
+timeout. It checks pull requests to `main` and pushes to non-`main` branches so
+PR #2 can produce evidence before merge.
 
-The safe enforcement order, after explicit external-change approval, is:
+The enforcement sequence is:
 
-1. While repository Actions remains disabled, disable every workflow returned
-   by the repository Actions-workflows API; verify each reports
-   `disabled_manually`. This allowlist-first step covers checked-in, dynamic,
-   manual, reusable, tag, release, and future workflows without a brittle
-   denylist.
-2. Re-enable only `.github/workflows/code_check_conventions.yml`. Its declared
-   permission is `contents: read`; it has no secret input, deployment,
-   publication, repository-write permission, schedule, push, release, or
-   manual-dispatch trigger. For a documentation-only pull request, its path
-   check and aggregate status job run while its source scanner is skipped.
-3. Verify every other repository workflow remains `disabled_manually`. In
-   particular, do not enable build, cache-publication, deployment, preview,
-   migration, assignment, labeling, CLA, tag, release, scheduled, reusable, or
-   manually dispatched workflows until each is separately reviewed and
-   approved for the fork.
-4. Enable repository Actions and open a non-draft pull request limited to this
-   documentation/control change to observe the single allowlisted read-only
-   workflow. Do not manually dispatch any workflow.
-5. Protect `main` with pull requests required, zero required approvals,
+1. Keep `.github/workflows/code_check_conventions.yml` disabled until a
+   compatible custom runner is approved. Keep every other checked-in upstream
+   workflow disabled until it is individually reviewed and approved for this
+   fork.
+2. Commit and push the fork-native governance workflow. Its expected check
+   display is `INIMOA Governance Check / Governance Contract`; treat that as an
+   expectation until GitHub records the first successful run.
+3. Verify the branch-push and PR checks both pass on the exact commit. Do not
+   manually dispatch any workflow.
+4. Protect `main` with pull requests required, zero required approvals,
    conversation resolution, administrator enforcement, and force-push and
    deletion blocks.
-6. Keep Code Owners documentary and do not require Code Owner approval while
+5. Keep Code Owners documentary and do not require Code Owner approval while
    the repository has only one collaborator.
-7. Leave required status checks unset until successful checks have produced
-   stable context names on the fork; then require only observed aggregate
-   contexts.
-8. Keep the current merge methods unchanged until the owner separately chooses
+6. Leave required status checks unset until the successful fork-native run
+   exposes its stable context name; copy the observed context exactly rather
+   than inferring it from this document.
+7. Keep the current merge methods unchanged until the owner separately chooses
    a merge strategy.
 
 ## Branch, commit, and ownership rules
