@@ -9,6 +9,10 @@ Thank you for helping build INIMOA. Contributions are licensed under the [GNU Af
 3. Keep the change within the existing domain/port/adapter architecture and Macro-native UI patterns.
 4. Do not include private planning documents, local AI-agent configuration, credentials, or generated build output.
 
+Create work on a dedicated branch rather than directly on `main`. Branch names
+must not use the reserved `codex/` prefix. Commit subjects and bodies must be in
+English so release and rollback evidence remains searchable by every reviewer.
+
 ## Pull requests
 
 Use a concise Conventional Commit-style title:
@@ -19,6 +23,13 @@ fix(teams): prevent role restoration after rejoin
 ```
 
 The pull request should explain what changed, why it belongs in INIMOA, how it was verified, and what remains unverified. Link the issue and include migration or rollback notes when persistence changes.
+
+`Ahn-Hyun` is the repository review, release, and rollback owner until that
+responsibility is explicitly reassigned. The repository currently has one
+collaborator, so pull requests are required by policy but an approving review
+cannot be required without deadlocking the owner. See
+[the baseline and delivery boundary](docs/INIMAOS_BASELINE.md) for the exact
+GitHub enforcement state and release evidence contract.
 
 ## Development checks
 

@@ -60,6 +60,9 @@ infra/local/generated/
 docs/INIMOA*.md
 docs/INIMAOS*.md
 
+# This public-safe baseline is the exception to the private-plan rules above.
+!docs/INIMAOS_BASELINE.md
+
 # Raw SSE captures from CURSOR_ACP_RECORD_DIR; sanitize into
 # crates/cursor_acp/fixtures/real/ before committing one.
 /recordings/
